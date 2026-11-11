@@ -1,0 +1,97 @@
+name: Checks
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    # Pinned rather than ubuntu-latest: an image that changes on a date nobody chose is a
+    # green result discovered rather than confirmed. Bump it deliberately, in a PR.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
+
+      # rustup on the runner reads rust-toolchain.toml and installs that exact toolchain
+      # on the first cargo call, so the version lives in one file for laptop and CI alike.
+      - name: Restore cargo cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Sync dependencies
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Type check
+        run: uv run mypy
+
+      - name: Test
+        run: uv run pytest
+
+      - name: Instruction files
+        run: uv run python scripts/check_instructions.py
+
+      - name: Rust format check
+        run: cargo fmt --check
+
+      - name: Rust lint
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Rust test
+        run: cargo test --locked
+
+  # Its own job rather than a step in `check`: scripts/check_instructions.py compares that
+  # job's run steps to AGENTS.md's Tooling block for equality, and a laptop need not
+  # cross-build. The arm runner builds aarch64 natively, so musl needs no cross linker.
+  image:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Restore cargo cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: image-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: image-${{ runner.os }}-
+
+      - name: Build the release for the phone
+        run: cargo build --release --locked --target aarch64-unknown-linux-musl
+
+  secrets:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # .gitignore is the one list of what must never be tracked — secrets and anything
+      # read off the phone; this asks it rather than keeping a second copy that drifts.
+      - name: Fail if a secret or a device file is tracked
+        run: |
+          if git ls-files | git check-ignore --no-index --stdin; then
+            echo "The files above are tracked in git and .gitignore says they must not be"
+            exit 1
+          fi

@@ -1,0 +1,16 @@
+name: PR
+
+on:
+  pull_request:
+    branches: [main, production]
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    uses: ./.github/workflows/checks.yml

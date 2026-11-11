@@ -1,0 +1,43 @@
+name: PR closing references
+
+on:
+  pull_request:
+    branches: [main, production]
+    # edited, because a body fixed without a push has to re-run this. That trigger is why
+    # the gate is not a step in checks.yml: there it would re-run every offline check on
+    # every edit of a description.
+    types: [opened, edited, synchronize, reopened]
+
+# Its own group, keyed the same way as pr.yml's but not shared: pr.yml cancels in
+# progress, and a shared group would have the two cancelling each other.
+concurrency:
+  group: pr-closes-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# issues: read is load-bearing. closingIssuesReferences returns Issue nodes, and with
+# contents and pull-requests alone the GraphQL call succeeds and returns an EMPTY list —
+# no error, no warning — so the gate would pass every PR. The script prints what it read.
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+jobs:
+  closing-references:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --locked
+
+      - name: Only its own issue, and never a research issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run python scripts/check_pr_closes.py ${{ github.event.pull_request.number }}
