@@ -42,8 +42,9 @@ Only `alarm-core` exists so far. The rest arrive with the roadmap phases that ne
 | `hardware` | the traits `Clock`, `WakeAlarm`, `Suspend`, `Vibrator`, and `HardwareError` |
 | `schedule` | `arm_next`: read the clock, pick the earliest alarm, arm or disarm the RTC |
 
-Display and input traits are not defined yet. Whether the panel is driven through DRM or
-the legacy framebuffer, and what the touch controller reports, is read off the device first.
+Display and input traits are not defined yet. The panel is the legacy framebuffer,
+`/dev/graphics/fb0`, with no DRM (ADR 0004); what the touch controller reports is read off
+the device first.
 
 ### The loop, as intended
 

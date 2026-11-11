@@ -28,7 +28,7 @@ pasted into a source line, which the `secrets` job does not.
 ## Licensing
 
 The vendor kernel is GPL-2.0 and stays where it is, on the phone. When an image built here
-is distributed, the kernel's corresponding source is Huawei's published tree, and that is
+is distributed, the kernel's corresponding source is the tree ADR 0004 names, and that is
 named beside the release. The code in this repository is MIT.
 
 ## Supply chain

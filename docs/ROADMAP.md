@@ -12,9 +12,9 @@ scheduling logic tested on the host.
 
 ## Research before P1
 
-- **Which kernel the image boots.** The kernel in the current ROM's `boot.img`, whether
-  postmarketOS has a `huawei-anne` port and what its kernel config and notes say, and
-  Huawei's published source. Ends in an ADR.
+- **Which kernel the image boots.** **Decided** — the kernel already on the phone, in
+  ADR 0004. The candidates were the current ROM's kernel, a postmarketOS `huawei-anne`
+  port, and Huawei's published source.
 - **Reaching and flashing the phone safely.** Whether Huawei's fastboot supports a
   tethered `fastboot boot`, how the stock `boot.img` is backed up, and the rollback. Ends
   in an ADR, the `using-the-phone` and `flashing-the-phone` skills, and a device preflight.

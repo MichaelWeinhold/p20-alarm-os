@@ -22,7 +22,7 @@ documentation, starting from the vendor kernel rather than from nothing.
 |---|---|
 | Repository, workflow and CI | **Built.** Guards, a pipeline that matches the local checks, rulesets. |
 | Alarm logic (`alarm-core`) | **Built, host-tested.** When each alarm next fires, in local time, and arming the RTC for the earliest one. |
-| Which kernel to boot | **Research.** The current ROM's kernel, a postmarketOS `huawei-anne` port, or Huawei's source. |
+| Which kernel to boot | **Decided.** The kernel already on the phone, `4.9.319`, unchanged — [ADR 0004](docs/adr/0004-boot-the-kernel-already-on-the-phone.md). |
 | Boot image round trip | Planned — P1. |
 | Debug shell over USB | Planned — P2. |
 | Clock on screen, touch, RTC wake, vibration | Planned — P3 to P6. |
