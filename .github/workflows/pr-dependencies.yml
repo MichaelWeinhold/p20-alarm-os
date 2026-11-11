@@ -1,0 +1,40 @@
+name: PR dependencies
+
+on:
+  pull_request:
+    branches: [main, production]
+    # edited, because a Dependency section added to the body without a push has to re-run
+    # this — the same reason pr-closes.yml is not a step in checks.yml.
+    types: [opened, edited, synchronize, reopened]
+
+concurrency:
+  group: pr-dependencies-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  dependencies:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # The whole history, because the script reads every manifest at the PR's base and
+      # head commits, and the default shallow checkout holds only the merge.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --locked
+
+      - name: Every new package has its Dependency section
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run python scripts/check_dependencies.py ${{ github.event.pull_request.number }}

@@ -1,0 +1,20 @@
+name: Production
+
+on:
+  push:
+    branches: [production]
+  workflow_dispatch:
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    uses: ./.github/workflows/checks.yml
+
+# There is no flash job and none is planned: ADR 0001 D6 keeps every write to the phone
+# a hand-run step over USB, from a checkout of `production`.

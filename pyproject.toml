@@ -1,0 +1,60 @@
+[project]
+name = "p20-alarm-os-tools"
+version = "0.1.0"
+description = "Host tooling for p20-alarm-os: the repository's guards and the boot image scripts"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "coverage>=7.17.0",
+    "mypy>=2.3",
+    "pytest>=9.1",
+    "pytest-randomly>=5.0.0",
+    "pytest-timeout>=2.4.0",
+    "pytest-xdist>=3.8.0",
+    "ruff>=0.16.5",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["scripts", "tests"]
+extend-exclude = ["target"]
+
+[tool.ruff.lint]
+select = ["ANN", "B", "E", "F", "I", "N", "RUF", "S", "SIM", "UP", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106"]
+"scripts/check_issue_umbrellas.py" = ["S603", "S607"]
+"scripts/check_dependencies.py" = ["S603", "S607"]
+"scripts/check_pr_closes.py" = ["S603", "S607"]
+"scripts/next_issue.py" = ["S603", "S607"]
+"scripts/prompt_audit.py" = ["S603", "S607"]
+".claude/hooks/*.py" = ["S603", "S607"]
+"tests/test_git_commit_guard.py" = ["S603", "S607"]
+"tests/test_next_issue.py" = ["S603", "S607"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["scripts", "tests", ".claude/hooks"]
+mypy_path = ["scripts"]
+strict = true
+warn_unreachable = true
+enable_error_code = ["redundant-expr", "truthy-bool", "ignore-without-code"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["scripts"]
+filterwarnings = ["error"]
+addopts = "-n auto --dist worksteal --durations=10"
+timeout = 5
+
+[tool.coverage.run]
+source = ["scripts", ".claude/hooks"]
+dynamic_context = "test_function"
+data_file = ".coverage"
