@@ -57,6 +57,41 @@ one command.
 get-product-model`, `oem get-build-number`, `oem lock-state info` and `getvar
 max-download-size` answer.
 
-**Open.** How an image is tried and flashed, and how the phone is rolled back, is issue 7.
+⚠️ `fastboot boot` answers `invalid command`: an image is tried only by writing it to
+`kernel`. → ADR 0005, D1.
+
+**Fastboot without adb.** With the cable in, hold Power until the screen goes black, then
+hold Volume Down until *Fastboot & Rescue mode* shows.
+
+**Flash.** After the USB reset, with an image no larger than 25165824 bytes whose sha256
+was just checked:
+
+```bash
+shasum -a 256 <image>
+timeout 120 fastboot flash kernel <image> reboot
+```
+
+⚠️ `Warning: skip copying kernel image avb footer (kernel partition size: 0 …)` is
+expected: the bootloader reports no partition size, so the host checks the size itself.
+
+**Roll back.** The same write, with the backup:
+
+```bash
+shasum -a 256 ~/p20-backups/kernel-mmcblk0p31-stock.img
+timeout 120 fastboot flash kernel ~/p20-backups/kernel-mmcblk0p31-stock.img reboot
+adb wait-for-device && adb root
+adb shell sha256sum /dev/block/mmcblk0p31
+# both: fe6e372eaf56b4358905443e3c475bde05851d7acd1cadbce395a376b4986a84
+```
+
+**TWRP**, the way back when fastboot cannot be reached: hold Power until black, then
+Volume Up and Power together. `adb devices` lists it as `recovery`, with a root shell;
+`adb reboot` returns to the ROM.
+
+⚠️ Swipe nothing in TWRP, and write nothing from it without a yes. → ADR 0005, D3 and D4.
+
+**Open.** The flashing skill, the device preflight and the narrowed device-safety rule
+are issue 7's follow-ups; what the boot-fail monitor counts is read when an image of ours
+first fails. → ADR 0005, D5.
 
 The readings: [docs/device-history/phone.md](../device-history/phone.md).

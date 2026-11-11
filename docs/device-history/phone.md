@@ -154,3 +154,54 @@ without touching the cable: four reset-then-query rounds in a row all answered, 
 query sent without a reset in between hung. Within one invocation, `fastboot getvar
 max-download-size getvar max-download-size` answered both. `fastboot` 37.0.1-15733141,
 libusb 1.0.30, from Homebrew.
+
+**No tethered boot.** `fastboot boot ~/p20-backups/kernel-mmcblk0p31-stock.img` sent the
+image and the bootloader refused to run it:
+
+```
+Sending 'boot.img' (24576 KB)                      OKAY [  0.682s]
+Booting                                            FAILED (remote: 'invalid command')
+```
+
+**The rollback, run once on purpose.** The backup hashed to the sha256 above, the USB was
+reset, and the stock image was written back to `kernel` in one invocation:
+
+```
+fastboot flash kernel ~/p20-backups/kernel-mmcblk0p31-stock.img reboot
+Warning: skip copying kernel image avb footer (kernel partition size: 0, kernel image size: 25165824).
+Sending 'kernel' (24576 KB)                        OKAY [  0.658s]
+Writing 'kernel'                                   OKAY [  0.141s]
+Rebooting                                          OKAY [  0.029s]
+```
+
+The warning is the host's: the bootloader answers no `partition-size:kernel`, so
+`fastboot` cannot look for an AVB footer, and the image has none. The ROM came back to
+`sys.boot_completed=1` with `4.9.319-Abdelhay-KSU-`, `ro.boot.bootreason=bootloader`, and:
+
+```
+adb shell sha256sum /dev/block/mmcblk0p31
+fe6e372eaf56b4358905443e3c475bde05851d7acd1cadbce395a376b4986a84
+```
+
+**The boot-fail monitor, read further in D1's source.** With `hw_bfm_enable=1` on the
+command line, `bfmr_init` registers `/dev/hw_bfm` and starts the boot timer at kernel
+init, before any userspace runs; nothing has to send an ioctl for it to count. On expiry
+without `/eng` the kernel itself sets `STAGE_BOOT_SUCCESS`, which stops the timer. A
+failure is recorded only when something raises `boot_fail_err`; `bfr_core.c` maps
+kernel-range error numbers to `ENTER_ERECOVERY_REASON_BECAUSE_KERNEL_BOOT_FAIL`, with
+`FRM_GOTO_ERECOVERY_DOWNLOAD_RECOVERY` and `FRM_GOTO_ERECOVERY_FACTORY_RESET` among the
+methods. How many recorded failures the bootloader takes before it starts eRecovery is not
+in the kernel; it is read off the phone when an image of ours first fails.
+
+**Fastboot answers nothing about partitions.** `getvar partition-size:kernel`,
+`partition-type:kernel`, `is-userspace`, `current-slot` and `version` all answer
+`invalid command`.
+
+**The keys.** From fastboot, with the cable in: holding Power until the screen went black,
+then Volume Down, brought the phone back to *Fastboot & Rescue mode*, and `fastboot oem
+lock-state info` answered after a USB reset. Holding Power until black, then Volume Up and
+Power together, started TWRP, which came up on the Mac as
+`recovery product:omni_anne model:P20_Lite device:anne` with `ro.twrp.version=3.7.0_9-0`
+and a root shell (`uid=0`, `u:r:su:s0`). From there `/dev/block/by-name/kernel` pointed
+at `mmcblk0p31`, which hashed to the backup's sha256; `adb reboot` returned to the ROM.
+Nothing was written from TWRP.

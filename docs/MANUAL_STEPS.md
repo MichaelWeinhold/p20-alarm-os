@@ -21,7 +21,4 @@ and a new row. A reference to another file's heading is a relative link.
 |---|---|---|
 | 1 | [github.md](manual-steps/github.md) | The repository's settings, security features, labels and rulesets |
 | 2 | [before-every-promotion-to-production.md](manual-steps/before-every-promotion-to-production.md) | The checklist that repeats on every promotion |
-| 3 | [phone.md](manual-steps/phone.md) | The ROM and kernel on the phone, its partitions, and the stock image's backup |
-
-How an image is tried and flashed, and the rollback, joins `phone.md` once the flashing
-research issue has decided them.
+| 3 | [phone.md](manual-steps/phone.md) | The ROM and kernel on the phone, its partitions, the stock image's backup, fastboot, the flash and the rollback |
