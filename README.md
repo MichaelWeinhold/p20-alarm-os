@@ -38,8 +38,8 @@ boot.img = vendor kernel (unchanged) + our initramfs
 
 `alarmd` runs as PID 1. It mounts `/dev`, `/sys` and `/proc`, draws to the framebuffer or
 DRM device, reads `/dev/input/event*`, arms `/dev/rtc0` for the next alarm, and suspends
-with `echo mem > /sys/power/state`. Only the `boot` partition is ever written, so recovery
-and fastboot stay intact and the stock image restores the phone.
+with `echo mem > /sys/power/state`. Only the `kernel` partition is ever written, so
+recovery and fastboot stay intact and the stock image restores the phone.
 
 The logic is kept apart from the hardware: `alarm-core` knows nothing about devices and
 takes each one as a trait, so the scheduling rules are tested on a laptop and in CI, and

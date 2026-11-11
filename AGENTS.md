@@ -68,10 +68,13 @@ The numbers are stable: cite them, and keep them consecutive when one is added.
 
 ## Device safety
 
-**Write only the `boot` partition.** Never flash, erase or format `recovery`, `system`,
-`vendor`, `oeminfo`, `nvme` or any partition but `boot`, and never relock the bootloader.
+**Write only the `kernel` partition**, which holds the boot image; there is no `boot`.
+Never flash, erase or format `recovery_ramdisk`, `recovery_vendor`, `recovery_vbmeta`,
+`erecovery_kernel`, `erecovery_ramdisk`, `vbmeta`, `system`, `vendor`, `oeminfo`, `nvme`
+or any partition but `kernel`, and never relock the bootloader.
 
-**Back up the stock `boot.img` before the first write**, and keep it off the repository.
+**Back up the stock `boot.img` in `kernel` before the first write**, and keep it off the
+repository.
 → `docs/SECURITY.md`, *Bricking*.
 
 **Never commit an image, kernel, firmware, device tree or anything read off the phone.**
