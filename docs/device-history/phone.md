@@ -104,3 +104,53 @@ were not read as root.
 ```
 fe6e372eaf56b4358905443e3c475bde05851d7acd1cadbce395a376b4986a84
 ```
+
+## 2026-11-11 — fastboot and the way back, for issue 7
+
+**Before leaving the ROM**, `kernel` still matched the backup:
+
+```
+adb shell sha256sum /dev/block/mmcblk0p31
+fe6e372eaf56b4358905443e3c475bde05851d7acd1cadbce395a376b4986a84
+```
+
+**Recovery is TWRP.** `recovery_ramdisk` (`mmcblk0p33`, 32 MiB) holds a header-v0 image
+with no kernel and a 16023684-byte gzip ramdisk whose properties read
+`ro.build.display.id=omni_anne-eng 16.1.0 PQ2A.190405.003` and `ro.twrp.version`. It was
+copied to a scratch directory to be read, never into the repository. `erecovery_kernel`
+(`mmcblk0p28`, 24 MiB) and `erecovery_ramdisk` (`mmcblk0p29`, 32 MiB) were not read.
+
+**The boot-fail monitor.** The partitions it keeps state in are `bootfail_info`
+(`mmcblk0p49`) and `rrecord` (`mmcblk0p50`); its device is `/dev/hw_bfm`. The ROM starts
+`/system/bin/bfm-ctl` (`init.hi6250.rc`, `class main`, oneshot), whose only strings are
+`/dev/hw_bfm` and `BFMR_ENABLE_CTRL ioctl failed!`. `ro.boot.bootreason=shutdown,userrequested`.
+
+In D1's source tree (`drivers/hwbfm/bfm/core/bfm_timer.c`), the boot timer runs a
+10-minute short and a 30-minute long timeout; when one expires it raises
+`KERNEL_BOOT_TIMEOUT` only if the directory `/eng` exists, and otherwise sets the stage to
+`STAGE_BOOT_SUCCESS`. `boot_fail_err` returns early while `hw_bfm_enable` is off. What the
+bootloader counts across reboots is not in the kernel source.
+
+**Fastboot.** `adb reboot bootloader` reaches it. The bootloader enumerates on the Mac as
+`Fastboot2.0`, `18d1:d00d`, and answers:
+
+```
+fastboot oem get-product-model     (bootloader) ANE-LX1
+fastboot oem get-build-number      (bootloader) :ANE-LX1 9.1.0.401(C432E13R1P7)
+fastboot oem lock-state info       (bootloader)  FB LockState: UNLOCKED
+                                   (bootloader)  USER LockState: UNLOCKED
+fastboot getvar max-download-size  max-download-size: 471859200
+fastboot getvar all                FAILED (remote: 'invalid command')
+fastboot getvar product            FAILED (remote: 'invalid command')
+fastboot getvar unlocked           FAILED (remote: 'invalid command')
+```
+
+**One invocation per enumeration.** After the first answered `fastboot` invocation, every
+later one hung with no output until killed, `reboot-bootloader` included, while
+`fastboot devices` still listed the phone. Unplugging and replugging the cable restored one
+invocation, printing `ERROR: could not clear output pipe; result e00002ed, ignoring....`
+before the answer. A libusb `reset_device` on `18d1:d00d` from the Mac does the same
+without touching the cable: four reset-then-query rounds in a row all answered, and a
+query sent without a reset in between hung. Within one invocation, `fastboot getvar
+max-download-size getvar max-download-size` answered both. `fastboot` 37.0.1-15733141,
+libusb 1.0.30, from Homebrew.
