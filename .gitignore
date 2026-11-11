@@ -1,0 +1,42 @@
+# Secrets — never commit
+.env
+.env.*
+config.toml
+*.pem
+*.key
+
+# Anything taken off the phone — never commit. Images, kernels and firmware carry vendor
+# code that is not ours to redistribute, and a dump can carry personal data.
+*.img
+*.img.*
+*.lz4
+*.dtb
+*.ko
+boot/
+firmware/
+dumps/
+out/
+
+# A session's own worktree, which lives inside the repository.
+.claude/worktrees/
+
+# Rust
+target/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+.coverage
+.coverage.*
