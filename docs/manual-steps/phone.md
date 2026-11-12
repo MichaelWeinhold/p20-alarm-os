@@ -174,6 +174,20 @@ characters first; a line that stops short means one was not.
 ⚠️ `/proc/device-tree` is readable only as root, so read the charging limits from TWRP:
 `tr '\0' '\n' < /proc/device-tree/SCUDATL_2900_39k_4400/temp_para`.
 
+**The debug `/init`**, `crates/debug-init`, swapped in as above. It serves the ROM's shell
+on a CDC-ACM gadget, starts it again if it is killed, and reboots into TWRP on `exit`.
+→ ADR 0009.
+
+```bash
+cargo build --release --locked -p debug-init --target aarch64-unknown-linux-musl
+ls /dev/cu.usbmodem*          # /dev/cu.usbmodemp20_alarm_os1, about 50 s after the reboot
+```
+
+Open the port raw and send a command, then read to its end, as with any serial line. The
+shell is root: ADR 0005, D4's hard-brick list holds for every `dd` typed into it.
+
+⚠️ No `adb` reaches a phone running it. `exit` returns to TWRP; so do the keys.
+
 **The boot-fail monitor.** One `/init` that panicked the kernel was enough for the next
 boot to start eRecovery. → ADR 0005, D5.
 

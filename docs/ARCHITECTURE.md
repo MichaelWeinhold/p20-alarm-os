@@ -26,7 +26,10 @@ nothing else in the image will. Until our image outgrows it, the ROM's own files
 crates/
   alarm-core/   logic only: time, alarms, scheduling, the charge stop, and the hardware traits
   battery/      the adapter for the battery and the charger, over sysfs
+  pid1/         what every /init takes from the kernel: mounts, the kernel log, a child
+                on a terminal, reaping, the reboot into recovery
   init-probe/   a probe /init that runs the charge stop and logs the power nodes
+  debug-init/   the debug /init: the ROM's shell on a USB serial gadget (ADR 0009)
   (adapters)    one crate per device family, each implementing alarm-core's traits
   (alarmd)      the binary: opens the adapters, runs the loop, is PID 1
 ```
