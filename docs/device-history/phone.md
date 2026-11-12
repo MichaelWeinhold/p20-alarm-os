@@ -252,8 +252,8 @@ mode*: `adb devices` listed nothing, and `device_preflight.py --reset` exited 0.
 `fe6e372eaf56b4358905443e3c475bde05851d7acd1cadbce395a376b4986a84`, `ANE-LX1`, and `FB
 UNLOCKED, USER UNLOCKED`.
 
-**The flash**, `timeout 120 fastboot flash kernel ~/p20-backups/kernel-mmcblk0p31-stock.img
-reboot`, as the next invocation, exit 0:
+**The flash**, as the next invocation, exit 0:
+`timeout 120 fastboot flash kernel ~/p20-backups/kernel-mmcblk0p31-stock.img reboot`
 
 ```
 Warning: skip copying kernel image avb footer (kernel partition size: 0, kernel image size: 25165824).
