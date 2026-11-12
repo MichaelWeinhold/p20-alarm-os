@@ -625,3 +625,80 @@ read `Not charging` 5 s after both. A stop that is not yet visible in `status` i
 read back from `enable_charger`. The stop from below the limit, a charge climbing to 80 %,
 was not run on the phone; the phone was full. The ROM's `/init` was renamed back, hashing
 to `e8e2768e…78ef`, and the ROM reached `sys.boot_completed` 1.
+
+## 2026-11-12 — a shell and a log without a console, for issue 15
+
+Read over `adb root` from the ROM and from TWRP. Nothing was written to a partition but
+`misc`'s command field, zeroed after `adb reboot recovery`.
+
+**The rest of the config**, from `/proc/config.gz`, beyond issue 6's reading:
+
+```
+# CONFIG_NETCONSOLE is not set     # CONFIG_VT is not set     # CONFIG_LOGO is not set
+CONFIG_USB_F_ACM=y  CONFIG_USB_U_SERIAL=y  CONFIG_USB_F_FS=y  # CONFIG_USB_CONFIGFS_SERIAL is not set
+CONFIG_SERIAL_AMBA_PL011=y  CONFIG_SERIAL_AMBA_PL011_CONSOLE=y   # CONFIG_DEVMEM is not set
+CONFIG_PSTORE_ZLIB_COMPRESS=y  CONFIG_MAGIC_SYSRQ=y  CONFIG_MAGIC_SYSRQ_DEFAULT_ENABLE=0x1
+CONFIG_PANIC_TIMEOUT=0  # CONFIG_PANIC_ON_OOPS is not set  # CONFIG_KGDB is not set
+CONFIG_HISI_BB=y  # CONFIG_HISI_DFX_CORE is not set
+```
+
+`FRAMEBUFFER_CONSOLE` is absent, since it needs `VT`. The host side has
+`USB_NET_CDC_NCM`, `CDCETHER` and `RNDIS_HOST`, which do not make the phone a gadget.
+
+**pstore**, `/sys/module/ramoops/parameters`: `mem_size` 1048576, `console_size` 524288,
+`pmsg_size` 131072, `record_size` 131072, `dump_oops` 1, `ecc` 0. The device tree reserves
+`pstore-mem` and Huawei's `bbox-mem`. `/dev/pmsg0` is `c-w--w--w- root log 253,0`. `dfx`
+is `mmcblk0p41`, 32768 sectors, 16 MiB.
+
+**A CDC-ACM function beside adb, in the ROM.** The ROM's gadget is
+`/config/usb_gadget/g1`, `12d1:103a`, class 0, on UDC `hisi-usb-otg`, with only `ffs.adb`
+in `configs/b.1`. A script run with `setsid nohup` made `functions/acm.dbg` (`port_num` 0,
+`/dev/ttyGS0` at `244,0`), unbound the UDC, linked it as `f2`, and bound it again. The Mac
+showed `/dev/cu.usbmodem101` and `/dev/tty.usbmodem101` within 12 s, with no driver
+installed, and the phone as `P20 Lite`, `12d1:103a`. A Python script on the Mac, with the
+port raw, wrote `mac-to-phone hello`, read for 8 s and wrote `mac-to-phone bye`:
+
+```
+b'mac-to-phone hello\r\np20-acm-test 12\r\np20-acm-test 13\r\np20-acm-test 14\r\np20-acm-test 15\r\n'
+```
+
+The phone's `cat /dev/ttyGS0` received both lines; the first came back as the tty's echo.
+Writes 1 to 39 returned; nobody read the first 11 on the Mac.
+
+**The restore lost USB.** By the script's restore the ROM had already removed the `f2`
+link (`rm: … f2: No such file or directory`), and binding the UDC again left it empty. The
+Mac saw no USB device at all, not after a replug, and not after the operator restarted
+the phone with Power. *Fastboot & Rescue mode*, reached with the keys, enumerated; `fastboot reboot`
+brought the ROM back on adb. In the ROM, Android's init owns the gadget.
+
+**A panic after boot**, from the ROM: a `p20-alarm-os: panic test kmsg marker` line to
+`/dev/kmsg`, a `p20-alarm-os: panic test pmsg marker` line to `/dev/pmsg0`, then
+`echo c > /proc/sysrq-trigger` at 70 s. The ROM was back on adb 39 s later, with no
+eRecovery, and its `/proc/cmdline` carried `reboot_reason=AP_S_PANIC
+normal_reset_type=AP_S_PANIC enter_recovery=0`. `/sys/fs/pstore` held:
+
+```
+console-ramoops-0   202750 bytes   the boot before, to `Kernel panic - not syncing: Fatal exception`
+dmesg-ramoops-0     218346 bytes   the oops dump, with the kmsg marker at 58.611755 s
+pmsg-ramoops-0      131060 bytes   the ROM's logd records, ending in the pmsg marker
+```
+
+So a warm reboot after a panic keeps all three, and a panic once the boot has counted as
+good does not start eRecovery. A panic in `/init` did (*our `/init` on `system`*).
+
+**The ROM's shell without Android**, from TWRP: `system` mounted read-only, its `/system`
+bound into a `tmpfs` root with `devtmpfs`, `proc` and `sysfs` beside it, and no property
+area. `/init` on `system` still hashed to `e8e2768e…`.
+
+```
+chroot … /system/bin/sh -c 'echo sh ran as $(id); echo $0 $KSH_VERSION'
+sh ran as uid=0(root) gid=0(root) …
+/system/bin/sh @(#)MIRBSD KSH R56 2018/01/14 Android        exit 0
+PATH=/system/bin: ls /sys/class/power_supply, cat /proc/version, dmesg | tail -2, uname -r   all answered
+getprop ro.build.type                                         empty, exit 0
+/system/bin/adbd --version                                    Android Debug Bridge Daemon version 1.0.40
+```
+
+`system` also holds `toybox` (473816 bytes), `linker64`, `gdbserver`, `gdbserver64` and
+`strace`. Its root has `/config`, `/dev`, `/proc`, `/sys`, `/mnt`, `/acct` and `/storage`
+to mount on. `misc` was cleared and the ROM reached `sys.boot_completed` 1.

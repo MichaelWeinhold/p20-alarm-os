@@ -12,6 +12,9 @@ pipeline can do.
 - [ ] The `kernel` and `system` backups exist off-repository and their checksums are the
       ones recorded in `docs/manual-steps/phone.md`.
 
+- [ ] `/init` on `system` hashes to the `alarmd` built from the commit being promoted, not
+      to the debug `/init`. → ADR 0009, D6.
+
 - [ ] Run `uv run python scripts/prompt_audit.py` at the repository root and read the report
       it prints. A tick on this box means a report was read, never that a command exited
       `0`. Nobody types the command into a session; it runs headless without pausing.

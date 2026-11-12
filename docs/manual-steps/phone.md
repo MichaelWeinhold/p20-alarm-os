@@ -137,9 +137,14 @@ boot, Huawei's `dfx` partition still holds it:
 
 ```bash
 adb shell 'grep p20-alarm-os /sys/fs/pstore/console-ramoops-0'
+adb shell 'grep -a p20-alarm-os /sys/fs/pstore/dmesg-ramoops-0'   # after a panic past boot
 adb exec-out 'dd if=/dev/block/by-name/dfx 2>/dev/null' > <scratch>/dfx.bin
 strings -n 6 <scratch>/dfx.bin | grep -E 'jump to execute /init|Kernel panic|p20-alarm-os'
 ```
+
+⚠️ Never change the ROM's gadget under `/config/usb_gadget/g1`: Android's init owns it,
+and a changed one leaves the phone off USB until it is restarted from fastboot. → ADR 0009,
+D5.
 
 **Undo.**
 

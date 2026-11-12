@@ -41,5 +41,5 @@ named beside the release. The code in this repository is MIT.
 ## The program on the phone
 
 `alarmd` runs as PID 1 with every privilege the kernel has. It opens no network socket in
-the release image. The debug image's SSH server listens only on the USB gadget interface
-and is never in a `production` image.
+the release image. The debug image's root shell is reachable only over its USB serial
+gadget, and is never in a `production` image. → ADR 0009, D6.

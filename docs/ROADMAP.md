@@ -32,7 +32,8 @@ before.
 
 ## P2 — Debug lifeline
 
-A minimal `/init` on `system` that brings up USB gadget networking and SSH, or `ramoops`.
+A minimal `/init` on `system` that serves a shell on a USB serial gadget, with the log in
+pstore. → ADR 0009, issue 9.
 
 **Done when:** the laptop reaches a shell on the phone over USB, and a failed boot leaves a
 log that can be read.
