@@ -1,0 +1,15 @@
+[package]
+name = "clock"
+description = "The clock adapter over the kernel's realtime clock"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+alarm-core = { path = "../alarm-core" }
+
+[lints]
+workspace = true
