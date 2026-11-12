@@ -25,6 +25,7 @@ documentation, starting from the vendor kernel rather than from nothing.
 | Which kernel to boot | **Decided.** The kernel already on the phone, `4.9.319`, unchanged — [ADR 0004](docs/adr/0004-boot-the-kernel-already-on-the-phone.md). |
 | Flashing and rollback | **Decided.** No tethered boot; flash `kernel` from fastboot and write the stock image back — [ADR 0005](docs/adr/0005-flash-kernel-and-roll-back-from-fastboot.md). |
 | Boot image round trip | **Built, host-tested.** `scripts/boot_image.py` repacks the stock image byte for byte. |
+| Where `/init` lives | **Decided.** On `system`, since the bootloader loads no ramdisk from `kernel` — [ADR 0006](docs/adr/0006-put-our-init-on-system.md). |
 | Debug shell over USB | Planned — P2. |
 | Clock on screen, touch, RTC wake, vibration | Planned — P3 to P6. |
 | Speaker | Parked. |
@@ -32,14 +33,14 @@ documentation, starting from the vendor kernel rather than from nothing.
 ## How it works
 
 ```
-boot.img = vendor kernel (unchanged) + our initramfs
-                                         └── /init = alarmd (static, aarch64-musl, Rust)
+kernel = vendor kernel (unchanged)  ──mounts──▶  system as /
+                                                   └── /init = alarmd (static, aarch64-musl, Rust)
 ```
 
 `alarmd` runs as PID 1. It mounts `/dev`, `/sys` and `/proc`, draws to the framebuffer or
 DRM device, reads `/dev/input/event*`, arms `/dev/rtc0` for the next alarm, and suspends
-with `echo mem > /sys/power/state`. Only the `kernel` partition is ever written, so
-recovery and fastboot stay intact and the stock image restores the phone.
+with `echo mem > /sys/power/state`. Only `system` is ever written — `kernel` stays stock
+— so recovery and fastboot stay intact and the `system` backup restores the phone.
 
 The logic is kept apart from the hardware: `alarm-core` knows nothing about devices and
 takes each one as a trait, so the scheduling rules are tested on a laptop and in CI, and

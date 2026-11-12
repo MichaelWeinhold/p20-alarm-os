@@ -22,14 +22,15 @@ scheduling logic tested on the host.
 
 ## P1 — Boot image round trip
 
-**Done** — issue 8. Unpack the current `boot.img` and repack it unchanged, byte for byte.
+**Done** — issue 8. Unpack the stock image in `kernel` and repack it unchanged, byte for
+byte. Our image no longer needs it — `kernel` stays stock (ADR 0006).
 
 **Done when:** the repacked image equals the original, by test, and boots the ROM as
 before.
 
 ## P2 — Debug lifeline
 
-A minimal initramfs that brings up USB gadget networking and SSH, or `ramoops`.
+A minimal `/init` on `system` that brings up USB gadget networking and SSH, or `ramoops`.
 
 **Done when:** the laptop reaches a shell on the phone over USB, and a failed boot leaves a
 log that can be read.

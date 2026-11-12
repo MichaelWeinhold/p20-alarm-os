@@ -1,6 +1,6 @@
 # 5. Flash `kernel` from fastboot, and roll back the same way
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by ADR 0006
 - **Date:** 2026-11-11
 - **Issue:** #7
 
@@ -104,7 +104,7 @@ before any userspace, and nothing needs to talk to `/dev/hw_bfm` for it to run. 
 such as a kernel-range error; `bfr_core.c` maps those to eRecovery, with downloading a
 recovery and a factory reset among its methods.
 
-So an image of ours is counted as booted after ten minutes up, if its initramfs never
+So an image of ours is counted as booted after ten minutes up, if its `/init` never
 creates `/eng`, and a try that panics or is cut short before that may be counted as
 failed. How many failures the bootloader takes before it starts eRecovery, and whether
 eRecovery touches `kernel`, is not in the kernel source. It is read off the phone the
@@ -155,5 +155,7 @@ a last resort that gives up the custom ROM.
   hard-brick list never runs. `docs/SECURITY.md`'s *Bricking* follows. Issue 21.
 - **No separate `using-the-phone` skill.** Reading the phone over adb is D4's left column;
   reading it over the debug lifeline is issue 15's.
-- **The initramfs never creates `/eng`**, so the kernel itself counts the boot as
+- **Our `/init` never creates `/eng`**, so the kernel itself counts the boot as
   finished (D5).
+- **Our `/init` goes on `system`, not in `kernel`** (ADR 0006): this ADR's flash and
+  rollback stay the way back for `kernel`, which stays stock.

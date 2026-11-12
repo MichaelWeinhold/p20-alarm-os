@@ -1,6 +1,6 @@
 # 4. Boot the kernel already on the phone
 
-- **Status:** Accepted
+- **Status:** Accepted; D3 superseded by ADR 0006
 - **Date:** 2026-11-11
 - **Issue:** #6
 
@@ -33,7 +33,7 @@ is not recorded in the binary.
 | The image needs | The running kernel has |
 |---|---|
 | `/dev` without a userspace | `DEVTMPFS=y`; `DEVTMPFS_MOUNT` is off, so `alarmd` mounts it |
-| an initramfs | `BLK_DEV_INITRD=y`, `RD_GZIP=y`, `RD_LZ4=y` — but see D3 |
+| a root with our `/init` | the bootloader's `root=PARTUUID=<system> init=/init`; `BLK_DEV_INITRD=y` goes unused, since no ramdisk is loaded (ADR 0006) |
 | the RTC, with a wake alarm | `RTC_DRV_HISI_PMIC=y`, `RTC_INTF_DEV=y`, `RTC_INTF_SYSFS=y`; in D1's source the driver implements `set_alarm` and `alarm_irq_enable` and marks itself a wakeup source |
 | suspend | `PM_SLEEP=y`, `SUSPEND=y`, with `PM_WAKELOCKS` and `PM_AUTOSLEEP` |
 | a USB lifeline | `USB_CONFIGFS=y` with `RNDIS`, `ACM` and `F_FS`; no `NCM`, `ECM` or `EEM` |
@@ -46,6 +46,10 @@ the ACM serial function, which macOS drives natively, or RNDIS to a Linux host; 
 NCM to the Mac would need a rebuilt kernel (D4).
 
 ### D3. The first image proves its initramfs runs; a renamed parameter is the fallback
+
+**Superseded by ADR 0006.** Issue 17's try disproved the assumption: the bootloader loads
+no ramdisk from `kernel` at all, and adds `skip_initramfs` whatever the image carries.
+The decision as accepted:
 
 The bootloader may add `skip_initramfs` only because today's image carries no ramdisk.
 That is an assumption: LineageOS 20 for `anne` packs its ramdisk into the `kernel` image
@@ -67,7 +71,8 @@ Both 4.9 trees build with published toolchains — the running kernel's with Lin
 LineageOS 20's with clang `r416183b` — from the config in `/proc/config.gz`. Neither build
 has been tried here. A rebuild costs a cross toolchain on the laptop and in CI, and a
 kernel nobody has booted on this phone. It is taken only for one of: SSH to the Mac over
-NCM or ECM, Huawei's boot-fail monitor getting in the way, or D3's rename failing.
+NCM or ECM, Huawei's boot-fail monitor getting in the way, or the kernel refusing our
+`/init` on `system` (ADR 0006).
 
 ## Rejected alternatives
 

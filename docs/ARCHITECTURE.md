@@ -3,24 +3,22 @@
 ## The image
 
 ```
-┌──────────────────────────────────────────────┐
-│ kernel partition (boot.img)                  │
-│                                              │
-│  ┌────────────────┐  ┌─────────────────────┐ │
-│  │ vendor kernel  │  │ initramfs           │ │
-│  │ (stock, as the │  │  /init = alarmd     │ │
-│  │  ROM ships it) │  │  /dev, /sys, /proc  │ │
-│  └────────────────┘  └─────────────────────┘ │
-└──────────────────────────────────────────────┘
-recovery_*, erecovery_*, vbmeta, system, vendor, … — not written by the image
+┌───────────────────────────┐      ┌──────────────────────────────┐
+│ kernel (mmcblk0p31)       │      │ system (mmcblk0p52), ext4    │
+│  vendor kernel, stock,    │ ───▶ │  mounted read-only as /      │
+│  as the ROM ships it      │      │  /init = alarmd              │
+└───────────────────────────┘      └──────────────────────────────┘
+     bootloader appends: skip_initramfs root=PARTUUID=<system> init=/init
+recovery_*, erecovery_*, vbmeta, vendor, … — not written by the image
 ```
 
-The kernel is reused as it is (ADR 0002). `boot.img` is unpacked, its ramdisk replaced by
-our initramfs, and repacked with the kernel, command line, base addresses and header
-version unchanged. The image is written only to `kernel`; the phone has no `boot`.
+The kernel is reused as it is (ADR 0002), and `kernel` keeps the stock image byte for
+byte. The bootloader loads no ramdisk from it: it mounts `system` as `/` and runs `/init`
+from there, so that is where our binary goes (ADR 0006). The phone has no `boot`.
 
-The initramfs holds one static binary at `/init`, which mounts `devtmpfs`, `sysfs` and
-`proc` itself, since nothing else in the image will.
+`/init` is one static binary, which mounts `devtmpfs`, `sysfs` and `proc` itself, since
+nothing else in the image will. Until our image outgrows it, the ROM's own files stay on
+`system` beside it, with the ROM's init renamed to `/init.rom`.
 
 ## The program
 
@@ -57,7 +55,7 @@ the device first.
 ## Host tooling
 
 ```
-scripts/        the repository's guards and the boot image round trip; later the initramfs builder
+scripts/        the repository's guards and the boot image round trip
 tests/          their tests
 ```
 
@@ -67,6 +65,6 @@ stock image in `kernel`.
 
 ## Debugging without a console
 
-There is no serial port. The first image built is a debug initramfs that brings up USB
+There is no serial port. The first image built is a debug `/init` that brings up USB
 gadget networking and an SSH server, or keeps logs in `ramoops`, so that a boot that does
 not draw can still be read. → `docs/ROADMAP.md`, P2.

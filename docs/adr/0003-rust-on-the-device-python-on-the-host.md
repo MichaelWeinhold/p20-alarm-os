@@ -8,15 +8,15 @@
 
 Two kinds of code live here. One program runs on the phone as PID 1, with nothing beneath
 it but the kernel; if it panics, the phone shows a black screen. The rest runs on the
-laptop: the repository's guards, and later the scripts that unpack and repack `boot.img`
-and build the initramfs.
+laptop: the repository's guards, and later the scripts that unpack and repack the stock
+image and put `/init` on the phone.
 
 ## Decisions
 
 ### D1. The on-device program is Rust, built static for `aarch64-unknown-linux-musl`
 
 Memory safety matters most where there is no debugger and no console. A static musl binary
-is one file in the initramfs with no loader and no libc beside it. `clippy` pedantic with
+is one file at `/init` with no loader and no libc beside it. `clippy` pedantic with
 warnings denied, `unwrap`/`expect`/`panic!` warned on outside tests, and `unsafe` forbidden
 outside adapter crates make the compiler hold most of `AGENTS.md`'s architecture rules.
 The toolchain is pinned in `rust-toolchain.toml`.

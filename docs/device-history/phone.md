@@ -296,3 +296,123 @@ image …/repacked.img: 12969984 bytes, sha256 a8d27ec65ab9d6596980a9aad00d8f22c
 `a8d27ec6…f686`, and the backup still hashed to `fe6e372e…6a84`. The repacked image is
 the stock image without the partition's leftover tail, which booted the ROM on the
 rollback above; it was not flashed.
+
+## 2026-11-12 — an initramfs in `kernel`, for issue 17
+
+**Before**, in the ROM, `kernel` hashed to `fe6e372e…6a84`, `/sys/fs/pstore` was mounted
+(`console-ramoops-0`, `pmsg-ramoops-0`), and `console-ramoops-0` held no `p20-alarm-os`
+line. Its last lines were the previous boot's `adb reboot bootloader`:
+
+```
+[hisi_poweroff]:hisi_pm_system_reset cmd is bootloader
+[blackbox]:[set_reboot_reason]:set reboot_reason is 0x1
+```
+
+**The image** was the stock image with a 181604-byte gzip `newc` ramdisk added — `dev`,
+`dev/console`, `dev/null`, `proc` and the `initramfs-probe` binary, 334832 bytes, static,
+as `init` — by `uv run python scripts/initramfs.py
+target/aarch64-unknown-linux-musl/release/initramfs-probe
+~/p20-backups/kernel-mmcblk0p31-stock.img <scratch>/probe.img`:
+
+```
+image …/probe.img: 13152256 bytes, sha256 2e206472f970fab6788778b3c30a674c83662b6fd50d4c301464f688c986e83d
+```
+
+Unpacked again, its kernel was the stock image's 12966737 bytes and its header fields the
+stock ones. The preflight exited 0 and printed that sha256, then:
+
+```
+timeout 120 fastboot flash kernel <scratch>/probe.img reboot
+Sending 'kernel' (12844 KB)                        OKAY [  0.351s]
+Writing 'kernel'                                   OKAY [  0.103s]
+Rebooting                                          OKAY [  0.029s]
+```
+
+**The ROM came up**, on adb 37 s after the reboot, with `sys.boot_completed` 1 and the
+first 13152256 bytes of `mmcblk0p31` hashing to `2e206472…e83d`. `/proc/cmdline` still
+carried `skip_initramfs root=PARTUUID=<system> init=/init`, and `console-ramoops-0` held
+no `p20-alarm-os` line, so `/init` never ran.
+
+**The bootloader never reads the image's ramdisk.** Its own log, which the ROM copies into
+the kernel log as `[fastbootlog]:current_bootloader_log:`, read for this boot:
+
+```
+load_kernel: avb verify failed: 3
+load_kernel: kernel load @ 0x00480000 (0x00c5db51 bytes), read from emmc kernel @ 0x00000800
+load_kernel: load_decompress_kernel, lasted 485 ms
+load_kernel: ramdisk body load @ 0x10400000 (0x00000000 bytes), read from partition ramdisk mode 0
+load_kernel: ramdisk body load @ 0x10400000 (0x00000000 bytes), read from partition eng_system mode 0
+load_kernel: ramdisk body load @ 0x10400000 (0x00000000 bytes), read from partition eng_vendor mode 0
+load_kernel: ramdisk body load @ 0x10400000 (0x00000000 bytes), read from partition recovery_ramdisk mode 0
+load_kernel: ramdisk body load @ 0x10400000 (0x00000000 bytes), read from partition recovery_vendor mode 0
+load_kernel: ramdisk body load @ 0x10400000 (0x00000000 bytes), read from partition erecovery_ramdisk mode 0
+load_kernel: ramdisk body load @ 0x10400000 (0x00000000 bytes), read from partition erecovery_vendor mode 0
+load_kernel: cmdline size = 1797
+```
+
+It takes `kernel_size` bytes from `kernel` at the first page and nothing else from that
+partition; the ramdisk comes from a partition of its own, and for a normal boot that is
+`ramdisk`, which this phone does not have. `/dev/block/by-name` lists `kernel`,
+`recovery_ramdisk`, `recovery_vendor`, `erecovery_ramdisk`, `erecovery_vendor`,
+`eng_system` and `eng_vendor`, and no `ramdisk`. With 0 bytes loaded, the bootloader adds
+`skip_initramfs`. Renaming the parameter inside the kernel (ADR 0004, D3's fallback) would
+not help: there is no ramdisk for the kernel to unpack.
+
+`fastboot flash kernel` also logged `hisi_secboot_download_verification: kernel vrl copy
+error ret(0x000f0003)!` before `partition 'kernel' updated`; the write went through, and
+the image's kernel booted.
+
+**The rollback**, with the preflight exiting 0 on the backup's `fe6e372e…6a84`:
+
+```
+timeout 120 fastboot flash kernel ~/p20-backups/kernel-mmcblk0p31-stock.img reboot
+Sending 'kernel' (24576 KB)                        OKAY [  0.691s]
+Writing 'kernel'                                   OKAY [  0.142s]
+Rebooting                                          OKAY [  0.029s]
+```
+
+The ROM came back to `sys.boot_completed` 1, and `mmcblk0p31` hashed to
+`fe6e372eaf56b4358905443e3c475bde05851d7acd1cadbce395a376b4986a84`.
+
+**Recovery mode does get a ramdisk.** `adb reboot recovery` started TWRP, running the
+same kernel out of `kernel` — `uname -r` `4.9.319-Abdelhay-KSU-`, the same `Linux
+version` line — with its ramdisk from `recovery_ramdisk`. Its `/proc/cmdline`, 1633 bytes,
+carried `loglevel=4` and `androidboot.mode=normal` and no `skip_initramfs`, `root=` or
+`init=`, and the kernel logged `Freeing initrd memory: 75768K`. TWRP's kernel log held no
+`fastbootlog` lines to say which partitions the ramdisk was read from. Nothing was written
+from TWRP before the `misc` reading below.
+
+**`adb reboot` from TWRP came back to TWRP**, twice in a row, because `adb reboot recovery`
+from the ROM had left the bootloader control block in `misc` (`mmcblk0p20`, 2097152
+bytes) set, and the bootloader honours it on every boot until it is cleared:
+
+```
+dd if=/dev/block/by-name/misc bs=64 count=1 | od -c
+0000000   b   o   o   t   -   r   e   c   o   v   e   r   y  \0  \0  \0
+```
+
+`misc` was streamed to `~/p20-backups/misc-mmcblk0p20-boot-recovery.img` first, both ends
+hashing to `8c712148fdf3a771f4e19e2876a86b9428ee57df00dd540db54f2f81031402d4`. From TWRP,
+`dd if=/dev/zero of=/dev/block/by-name/misc bs=32 count=1` zeroed the 32-byte command
+field — TWRP's `dd` refuses `conv=notrunc` — and everything after byte 32 still hashed to
+the backup's (`794dbcb5…e1e2`). `adb reboot` then reached the ROM, `sys.boot_completed` 1,
+with `mmcblk0p31` at `fe6e372e…6a84` and the command field all zero.
+
+## 2026-11-12 — what a normal boot runs as `/init`, for issue 33
+
+In the ROM — `lineage_anne-userdebug`, `ro.lineage.display.version`
+`0.23-p-20250919-UNOFFICIAL-anne` — `/proc/cmdline` puts the image header's command line
+first (`loglevel=4 coherent_pool=512K … buildvariant=user`) and the bootloader's
+parameters after it, among them, in this order:
+
+```
+androidboot.veritymode=enforcing efuse_status=0 skip_initramfs root=PARTUUID=f9f21f33-a8d4-5f0e-9746-594869aec34e
+… init=/init eng_system=PARTUUID=… eng_vendor=PARTUUID=… cache=PARTUUID=…/recovery/ patch=PARTUUID=…
+```
+
+The command line has no `dm=` table and no `rw`. **`system`** is `mmcblk0p52`, 7634944
+sectors (3909091328 bytes), and `/proc/mounts` reads `/dev/root / ext4 ro,seclabel,relatime`:
+the kernel mounts it read-only as `/`, by `PARTUUID`, and runs its `/init`, the ROM's
+init, `-rwxr-x--- root shell 2216944`. Beside it sit `/init.rc`, `/init.environ.rc`,
+`/init.usb.rc`, `/init.usb.configfs.rc` and the two `init.zygote*.rc`. Nothing was
+written.

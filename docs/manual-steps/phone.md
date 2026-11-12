@@ -3,7 +3,8 @@
 **State.** The phone runs an unofficial LineageOS build for Android 9
 (`0.23-p-20250919-UNOFFICIAL-anne`, `userdebug`) with the kernel `4.9.319-Abdelhay-KSU-`.
 The bootloader is unlocked. The boot image lives in the partition named `kernel`
-(`mmcblk0p31`); there is no `boot` partition. → ADR 0004.
+(`mmcblk0p31`), and stays stock; there is no `boot` partition. Our `/init` goes on
+`system` (`mmcblk0p52`), from TWRP. → ADR 0004 and 0006.
 
 The stock image of `kernel` is backed up off the repository, at
 `~/p20-backups/kernel-mmcblk0p31-stock.img`, with the sha256 below.
@@ -57,8 +58,8 @@ one command.
 get-product-model`, `oem get-build-number`, `oem lock-state info` and `getvar
 max-download-size` answer.
 
-⚠️ `fastboot boot` answers `invalid command`: an image is tried only by writing it to
-`kernel`. → ADR 0005, D1.
+⚠️ `fastboot boot` answers `invalid command`: nothing is tried without writing it.
+→ ADR 0005, D1.
 
 **Fastboot without adb.** With the cable in, hold Power until the screen goes black, then
 hold Volume Down until *Fastboot & Rescue mode* shows.
@@ -94,6 +95,19 @@ Volume Up and Power together. `adb devices` lists it as `recovery`, with a root 
 `adb reboot` returns to the ROM.
 
 ⚠️ From TWRP, write no partition on ADR 0005, D4's hard-brick list. → ADR 0005, D3 and D4.
+
+⚠️ `adb reboot recovery` from the ROM leaves `boot-recovery` in `misc`'s bootloader control
+block, and every boot then starts TWRP. Clear its 32-byte command field from TWRP; `misc`
+(`mmcblk0p20`) is backed up at `~/p20-backups/misc-mmcblk0p20-boot-recovery.img`:
+
+```bash
+adb shell 'dd if=/dev/zero of=/dev/block/by-name/misc bs=32 count=1'
+adb reboot
+```
+
+**The image's ramdisk is never loaded.** The bootloader reads only the kernel from
+`kernel`, and the ramdisk from a partition named `ramdisk`, which this phone does not have;
+recovery mode loads one, from `recovery_ramdisk`. → ADR 0006.
 
 **Open.** What the boot-fail monitor counts is read when an image of ours first fails. →
 ADR 0005, D5.
