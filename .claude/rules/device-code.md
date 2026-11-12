@@ -12,8 +12,8 @@ paths:
 - **Open a device once, at start-up**, and hand the adapter to the loop; a device that
   does not open is a `HardwareError::Absent` before anything is drawn.
 - **Keep the binary static.** No dependency that needs a C library at run time or a
-  `build.rs` that links one; the initramfs carries nothing else.
-- **Use `std` only until a crate earns its place** under ADR 0001, D7 — the binary's size
-  is the initramfs's size.
+  `build.rs` that links one; `/init` runs with nothing beside it.
+- **Use `std` only until a crate earns its place** under ADR 0001, D7 — the binary is all
+  of the image that is ours.
 - **Log to the kernel log** (`/dev/kmsg`) once a logger exists; there is no console to
   read.

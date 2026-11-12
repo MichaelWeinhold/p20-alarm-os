@@ -380,7 +380,7 @@ version` line — with its ramdisk from `recovery_ramdisk`. Its `/proc/cmdline`,
 carried `loglevel=4` and `androidboot.mode=normal` and no `skip_initramfs`, `root=` or
 `init=`, and the kernel logged `Freeing initrd memory: 75768K`. TWRP's kernel log held no
 `fastbootlog` lines to say which partitions the ramdisk was read from. Nothing was written
-from TWRP; `adb reboot` returned to the ROM.
+from TWRP before the `misc` reading below.
 
 **`adb reboot` from TWRP came back to TWRP**, twice in a row, because `adb reboot recovery`
 from the ROM had left the bootloader control block in `misc` (`mmcblk0p20`, 2097152
@@ -397,3 +397,22 @@ hashing to `8c712148fdf3a771f4e19e2876a86b9428ee57df00dd540db54f2f81031402d4`. F
 field — TWRP's `dd` refuses `conv=notrunc` — and everything after byte 32 still hashed to
 the backup's (`794dbcb5…e1e2`). `adb reboot` then reached the ROM, `sys.boot_completed` 1,
 with `mmcblk0p31` at `fe6e372e…6a84` and the command field all zero.
+
+## 2026-11-12 — what a normal boot runs as `/init`, for issue 33
+
+In the ROM — `lineage_anne-userdebug`, `ro.lineage.display.version`
+`0.23-p-20250919-UNOFFICIAL-anne` — `/proc/cmdline` puts the image header's command line
+first (`loglevel=4 coherent_pool=512K … buildvariant=user`) and the bootloader's
+parameters after it, among them, in this order:
+
+```
+androidboot.veritymode=enforcing efuse_status=0 skip_initramfs root=PARTUUID=f9f21f33-a8d4-5f0e-9746-594869aec34e
+… init=/init eng_system=PARTUUID=… eng_vendor=PARTUUID=… cache=PARTUUID=…/recovery/ patch=PARTUUID=…
+```
+
+The command line has no `dm=` table and no `rw`. **`system`** is `mmcblk0p52`, 7634944
+sectors (3909091328 bytes), and `/proc/mounts` reads `/dev/root / ext4 ro,seclabel,relatime`:
+the kernel mounts it read-only as `/`, by `PARTUUID`, and runs its `/init`, the ROM's
+init, `-rwxr-x--- root shell 2216944`. Beside it sit `/init.rc`, `/init.environ.rc`,
+`/init.usb.rc`, `/init.usb.configfs.rc` and the two `init.zygote*.rc`. Nothing was
+written.

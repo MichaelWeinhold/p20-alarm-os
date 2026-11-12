@@ -26,8 +26,8 @@ itself is folded in or deleted, never left as a truth nobody sees.
 ## What this is
 
 A single-purpose alarm-clock image for the Huawei P20 Lite (`anne`, Kirin 659): the
-vendor Linux kernel the phone already boots, and an initramfs whose only program is ours.
-→ README, the opening section; ADR 0002.
+vendor Linux kernel the phone already boots, running one program of ours as `/init` on
+`system`. → README, the opening section; ADR 0002 and 0006.
 
 - **Write on-device code in Rust**, under `crates/`, built as one static
   `aarch64-unknown-linux-musl` binary.
@@ -84,7 +84,8 @@ writing it**, and record the role there.
 **Back up a partition off the repository before its first write**, under
 `~/p20-backups/`, and never delete a backup there. → `docs/SECURITY.md`, *Bricking*.
 
-**Flash the boot image to `kernel`**; there is no `boot`.
+**Leave `kernel` stock and put the image's `/init` on `system`**; the bootloader loads no
+ramdisk from `kernel`, and there is no `boot`. → ADR 0006.
 
 **Write an image only after its sha256 and size are checked.** → ADR 0005, D1.
 

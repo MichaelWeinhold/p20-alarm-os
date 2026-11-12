@@ -1,6 +1,6 @@
 # 2. Boot the vendor kernel, and replace everything above it with one program
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by ADR 0006
 - **Date:** 2026-11-11
 - **Recorded with:** the bootstrap, issue 1. Which kernel build exactly is open, and is
   its own research issue.
@@ -12,21 +12,22 @@ The Huawei P20 Lite (`anne`) runs a HiSilicon Kirin 659, for which there is esse
 public hardware documentation. The display panel, touchscreen, power-management IC,
 charger, RTC and audio each need a driver.
 
-Huawei publishes the kernel source for the phone under the GPL, and the `boot.img` of the
-ROM already on the phone carries a kernel that drives all of that hardware.
+Huawei publishes the kernel source for the phone under the GPL, and the image of the ROM
+already on the phone carries a kernel that drives all of that hardware.
 
 ## Decision
 
-**Keep the vendor kernel and replace the userspace.** The image is the existing kernel plus
-a minimal initramfs whose `/init` is one static Rust binary, `alarmd`, which:
+**Keep the vendor kernel and replace the userspace.** The image is the existing kernel,
+which runs one static Rust binary, `alarmd`, as `/init`. It is not an initramfs: the
+bootloader loads no ramdisk from `kernel`, so `/init` sits on `system` (ADR 0006). It:
 
 - draws the clock to the framebuffer or DRM device,
 - reads touch and buttons from `/dev/input/event*`,
 - arms the wake alarm on `/dev/rtc0` and suspends with `echo mem > /sys/power/state`,
 - rings through the vibrator, and later perhaps the speaker.
 
-Only the `boot` partition is written, so recovery and fastboot stay intact and the stock
-`boot.img` restores the phone.
+Only `system` is written — the phone has no `boot`, and `kernel` stays stock — so
+recovery and fastboot stay intact, and the `system` backup restores the phone.
 
 ## Rejected alternatives
 
@@ -51,6 +52,6 @@ one; the single-program userspace stands either way.
   mixer routing which Android's audio HAL normally sets up. The vibrator comes first; the
   speaker is a separate, parked research issue.
 - **There is no serial console.** A boot that fails is a black screen, so the second
-  step is a debug initramfs with SSH over USB gadget networking, or `ramoops`.
+  step is a debug `/init` with SSH over USB gadget networking, or `ramoops`.
 - **Waking from the RTC must be proven early** — the alarm depends on it — and the battery
   gain over stock Android in airplane mode may be small.

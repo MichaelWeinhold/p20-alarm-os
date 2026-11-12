@@ -9,8 +9,8 @@ pipeline can do.
 - [ ] Any hand-made step the release needs is written into `docs/manual-steps/` **before**
       the promotion, rather than discovered with the phone in hand.
 
-- [ ] The stock `boot.img` backup exists off-repository and its checksum is the one recorded
-      in the flashing manual step.
+- [ ] The `kernel` and `system` backups exist off-repository and their checksums are the
+      ones recorded in `docs/manual-steps/phone.md`.
 
 - [ ] Run `uv run python scripts/prompt_audit.py` at the repository root and read the report
       it prints. A tick on this box means a report was read, never that a command exited

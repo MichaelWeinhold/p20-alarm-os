@@ -9,13 +9,13 @@ phone, and publishing something that should not be.
 |---|---|
 | Writing the wrong partition | A soft brick is accepted on this test phone and needs no approval; the partitions that would hard-brick it are never written, erased or formatted. `AGENTS.md`, *Device safety*; ADR 0005, D4. |
 | Losing the way back | Every partition is backed up off-repository before its first write; `fastboot` and everything before it are never touched, so flashing a backup from fastboot restores the phone. |
-| A boot that never draws | The debug initramfs (P2) comes before anything else boots; Huawei refuses a tethered `fastboot boot`, so every try writes `kernel` and the rollback is the stock image written back (ADR 0005). |
+| A boot that never draws | The debug `/init` (P2) comes before anything else boots; there is no tethered boot, so every try writes `/init` on `system` from TWRP, and the rollback is the ROM's `/init` renamed back or the `system` backup written back (ADR 0006). |
 | Relocking the bootloader | Never done. A relocked bootloader with a modified image is a state that may not recover. |
 | `oeminfo` / `nvme` | Hold the phone's identity and calibration. Never read into the repository, never written. |
 
 ## What must never be published
 
-- **Anything read off the phone** — `boot.img`, the kernel, device trees, firmware, partition
+- **Anything read off the phone** — boot images, the kernel, device trees, firmware, partition
   dumps. They carry vendor code that is not ours to redistribute, and a dump can carry the
   IMEI, serial numbers or personal data. `.gitignore` lists them, and `checks / secrets`
   fails the build if one is tracked.
