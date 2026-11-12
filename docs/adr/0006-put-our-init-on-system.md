@@ -38,14 +38,18 @@ ours is written there. No ramdisk is involved, and `skip_initramfs` is harmless.
 
 From TWRP, with `system` backed up under `~/p20-backups/` first: mount `system`, rename
 `/init` to `/init.rom`, push the probe as `/init` with mode 0755, and reboot. The probe
-writes its marker to `/dev/kmsg` and reboots into the bootloader; the marker is read from
+writes its marker to `/dev/kmsg` and reboots into recovery; the marker is read from
 `/sys/fs/pstore` in TWRP, and `/init.rom` is renamed back. The ROM's other files stay on
 `system` until our image needs the room.
 
-**Two assumptions, which the try proves or disproves.** The kernel mounts `system`
-without verity, so a changed file is not refused. File descriptors 0 to 2 are the console
-the kernel opens before it mounts `system`, so Rust's start-up check has nothing to
-reopen. A try that shows no marker is read for either of them first.
+**Two assumptions, which the try proved and disproved** on 2026-11-12. The kernel mounts
+`system` without verity, so a changed file is not refused: it held. File descriptors 0 to
+2 are the console the kernel opens before it mounts `system`: it did not hold — the
+kernel finds no `/dev/console`, and Rust's start-up aborts on the closed descriptors before
+`main`, which panics the kernel. **Our `/init` therefore takes no Rust start-up**: it is
+built `#![no_main]` with an `extern "C" fn main`, and opens what it writes to itself. The
+second probe built so ran as pid 1. The readings are in `docs/device-history/phone.md`,
+*our `/init` on `system`*.
 
 ### D3. `system` is written from TWRP, and its way back is TWRP
 

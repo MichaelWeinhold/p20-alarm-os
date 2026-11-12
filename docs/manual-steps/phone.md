@@ -91,8 +91,8 @@ adb shell sha256sum /dev/block/mmcblk0p31
 ```
 
 **TWRP**, the way back when fastboot cannot be reached: hold Power until black, then
-Volume Up and Power together. `adb devices` lists it as `recovery`, with a root shell;
-`adb reboot` returns to the ROM.
+Volume Up and Power together; it works from eRecovery too. `adb devices` lists it as
+`recovery`, with a root shell; `adb reboot` returns to the ROM.
 
 ⚠️ From TWRP, write no partition on ADR 0005, D4's hard-brick list. → ADR 0005, D3 and D4.
 
@@ -109,7 +109,48 @@ adb reboot
 `kernel`, and the ramdisk from a partition named `ramdisk`, which this phone does not have;
 recovery mode loads one, from `recovery_ramdisk`. → ADR 0006.
 
-**Open.** What the boot-fail monitor counts is read when an image of ours first fails. →
-ADR 0005, D5.
+**Our `/init` on `system`.** From TWRP; `system` (`mmcblk0p52`) is backed up at
+`~/p20-backups/system-mmcblk0p52-stock.img`, 3909091328 bytes, sha256
+`4d61f9e3a12ddcba2fdd425b5661510aa604c254ae5d33353d2ce5c525412047`. → ADR 0006, D2 and D3.
+
+```bash
+shasum -a 256 <binary>
+adb push <binary> /tmp/init
+adb shell 'mkdir -p /mnt/sys && mount -o rw /dev/block/mmcblk0p52 /mnt/sys'
+adb shell 'mv /mnt/sys/init /mnt/sys/init.rom && cp /tmp/init /mnt/sys/init && chmod 755 /mnt/sys/init'
+adb shell 'sha256sum /mnt/sys/init /mnt/sys/init.rom && umount /mnt/sys'
+adb shell 'dd if=/dev/zero of=/dev/block/by-name/misc bs=32 count=1'
+adb reboot
+```
+
+⚠️ `/mnt/sys/init.rom` must hash to
+`e8e2768ea78c453caf783281cfe835b95fc4f72f73928775d4f30609761978ef` before the reboot.
+
+⚠️ TWRP's `/tmp` is emptied by every reboot; push the binary again in each session.
+
+⚠️ `/init` starts with file descriptors 0 to 2 closed and no `/dev/null`. A binary built
+with Rust's start-up aborts before `main`, the kernel panics, and the next boot starts
+eRecovery. Choose nothing there; reach TWRP with the keys.
+
+**Read it.** Back in TWRP, the kernel log of the boot before is in pstore; after a cold
+boot, Huawei's `dfx` partition still holds it:
+
+```bash
+adb shell 'grep p20-alarm-os /sys/fs/pstore/console-ramoops-0'
+adb exec-out 'dd if=/dev/block/by-name/dfx 2>/dev/null' > <scratch>/dfx.bin
+strings -n 6 <scratch>/dfx.bin | grep -E 'jump to execute /init|Kernel panic|p20-alarm-os'
+```
+
+**Undo.**
+
+```bash
+adb shell 'mount -o rw /dev/block/mmcblk0p52 /mnt/sys && rm /mnt/sys/init && mv /mnt/sys/init.rom /mnt/sys/init'
+adb shell 'sha256sum /mnt/sys/init && umount /mnt/sys'
+adb reboot
+# e8e2768ea78c453caf783281cfe835b95fc4f72f73928775d4f30609761978ef
+```
+
+**The boot-fail monitor.** One `/init` that panicked the kernel was enough for the next
+boot to start eRecovery. → ADR 0005, D5.
 
 The readings: [docs/device-history/phone.md](../device-history/phone.md).

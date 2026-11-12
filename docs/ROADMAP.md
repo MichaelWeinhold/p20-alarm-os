@@ -19,6 +19,8 @@ scheduling logic tested on the host.
   tethered `fastboot boot`, so every try writes `kernel` from fastboot, and the rollback
   writes the stock image back. It leaves a `flashing-the-phone` skill to build; the device
   preflight is `scripts/device_preflight.py`, issue 19.
+- **Where the image's `/init` lives.** **Decided** — on `system`, in ADR 0006, with
+  `kernel` left stock; issue 17's probe ran there as PID 1.
 
 ## P1 — Boot image round trip
 

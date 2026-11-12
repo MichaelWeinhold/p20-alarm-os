@@ -416,3 +416,71 @@ the kernel mounts it read-only as `/`, by `PARTUUID`, and runs its `/init`, the 
 init, `-rwxr-x--- root shell 2216944`. Beside it sit `/init.rc`, `/init.environ.rc`,
 `/init.usb.rc`, `/init.usb.configfs.rc` and the two `init.zygote*.rc`. Nothing was
 written.
+
+## 2026-11-12 — our `/init` on `system`, for issue 17
+
+**`system`'s role**: the root the kernel mounts read-only on a normal boot and whose
+`/init` it runs (above). It was streamed off the phone before its first write,
+`adb exec-out 'dd if=/dev/block/mmcblk0p52 bs=4194304'`, to
+`~/p20-backups/system-mmcblk0p52-stock.img`, 3909091328 bytes, both ends hashing to
+`4d61f9e3a12ddcba2fdd425b5661510aa604c254ae5d33353d2ce5c525412047`. The ROM's `/init`
+hashed to `e8e2768ea78c453caf783281cfe835b95fc4f72f73928775d4f30609761978ef`, `-rwxr-x---
+root shell`, `u:object_r:init_exec:s0`.
+
+**The swap**, from TWRP, ADR 0006, D2: `mount -o rw /dev/block/mmcblk0p52 /mnt/sys`,
+`mv /mnt/sys/init /mnt/sys/init.rom`, the probe pushed to `/mnt/sys/init` with mode 0755,
+`umount`, `misc`'s command field zeroed, `adb reboot`. `system`'s root already holds an
+empty `/dev` and `/proc`.
+
+**The first probe killed the kernel.** The phone came up in eRecovery, not TWRP; it was
+left without choosing anything and taken to TWRP with the keys. The cold boot had emptied
+pstore, but Huawei's `dfx` partition (`mmcblk0p41`, read with `dd`) held the boot's kernel
+log:
+
+```
+[   14.022216s][pid:1,cpu2,swapper/0]Warning: unable to open an initial console.
+[   14.030303s][pid:1,cpu2,swapper/0]EXT4-fs (mmcblk0p52): couldn't mount as ext3 due to feature incompatibilities
+[   14.035125s][pid:1,cpu1,swapper/0]Kernel init end, jump to execute /init
+[   14.045806s][pid:1,cpu0,init]Kernel panic - not syncing: Attempted to kill init! exitcode=0x0000000b
+```
+
+and the bootloader's, on the boot after it:
+
+```
+bfm_save_log_to_bfi_and_try_to_recovery line: 1691, bootfail_errno: 0x03000001, hisi_reboot_reason: 0x00000060, bfmr_bootstage: 0x03000001, suggested_recovery_method 0
+recovery: bootmode is 1!
+load_kernel: ramdisk body load @ 0x10400000 (0x00000000 bytes), read from partition erecovery_ramdisk mode 0
+```
+
+So the kernel mounted `system` with the changed `/init` and ran it — no verity refused it
+— but **file descriptors 0 to 2 were closed**: the kernel found no `/dev/console` to open.
+Rust's start-up, before `main`, reopens a closed standard descriptor on `/dev/null` and
+aborts when it cannot; `system` has no `/dev/null`. In pid 1 the `SIGABRT` is ignored, and
+musl's `abort` falls through to a fault, `SIGSEGV`, exit code `0xb`, before the marker. In
+TWRP, `chroot /mnt/sys /init 0<&- 1>&- 2>&-` exited 134, `SIGABRT`, with nothing logged.
+One panicking `/init` was enough for the bootloader to start eRecovery on the next boot.
+
+**The second probe** is built `#![no_main]`, with an `extern "C" fn main` that musl calls
+directly and no Rust start-up, `e2048b3f885f724b476a400bfe4b0515deb4481a70301a76a599dd52ccaa83ed`,
+325288 bytes. In TWRP, from a `chroot` of a `tmpfs` holding only it and an empty `/dev`,
+with 0 to 2 closed, it logged its marker and rebooted; `misc` was clear, and the bootloader
+started TWRP with `reboot_reason=recovery`, not eRecovery.
+
+**As `/init` on `system`** it ran as pid 1 on a normal boot. TWRP's
+`console-ramoops-0` then read:
+
+```
+[   13.532470s][pid:1,cpu7,swapper/0]Warning: unable to open an initial console.
+[   13.546173s][pid:1,cpu4,swapper/0]Kernel init end, jump to execute /init
+[   13.553863s][pid:1,cpu7,init]p20-alarm-os: /init ran from system
+[   13.554931s][pid:1,cpu5,init]p20-alarm-os: cmdline 1/5: loglevel=4 coherent_pool=512K … enter_recovery=0 androidboot.mode=normal …
+```
+
+with the rest of the command line in parts 2 to 5, `skip_initramfs
+root=PARTUUID=f9f21f33-…` and `init=/init` among them, and TWRP's own `/proc/cmdline`
+carrying `reboot_reason=recovery`. From the kernel's jump to the marker took 7.7 ms.
+
+**The way back**, from TWRP: `rm /mnt/sys/init`, `mv /mnt/sys/init.rom /mnt/sys/init`,
+which hashed to `e8e2768e…78ef` with its label kept, `umount`, `adb reboot`. The ROM came
+back to `sys.boot_completed` 1, with `/init` at `e8e2768e…78ef` and `mmcblk0p31` at
+`fe6e372e…6a84`.
