@@ -15,9 +15,10 @@ scheduling logic tested on the host.
 - **Which kernel the image boots.** **Decided** — the kernel already on the phone, in
   ADR 0004. The candidates were the current ROM's kernel, a postmarketOS `huawei-anne`
   port, and Huawei's published source.
-- **Reaching and flashing the phone safely.** Whether Huawei's fastboot supports a
-  tethered `fastboot boot`, how the stock `boot.img` is backed up, and the rollback. Ends
-  in an ADR, the `using-the-phone` and `flashing-the-phone` skills, and a device preflight.
+- **Reaching and flashing the phone safely.** **Decided** — in ADR 0005: there is no
+  tethered `fastboot boot`, so every try writes `kernel` from fastboot, and the rollback
+  writes the stock image back. It leaves a `flashing-the-phone` skill and a device
+  preflight to build.
 
 ## P1 — Boot image round trip
 

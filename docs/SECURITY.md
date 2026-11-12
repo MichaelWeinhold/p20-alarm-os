@@ -9,7 +9,7 @@ phone, and publishing something that should not be.
 |---|---|
 | Writing the wrong partition | Only `boot` is ever written; `AGENTS.md`, *Device safety*. Every write is a command a person approves. |
 | Losing the way back | The stock `boot.img` is backed up off-repository before the first write; recovery and fastboot are never touched, so flashing the stock image restores the phone. |
-| A boot that never draws | The debug initramfs (P2) comes before anything else boots; a tethered `fastboot boot`, if Huawei supports it, tries an image without writing it. |
+| A boot that never draws | The debug initramfs (P2) comes before anything else boots; Huawei refuses a tethered `fastboot boot`, so every try writes `kernel` and the rollback is the stock image written back (ADR 0005). |
 | Relocking the bootloader | Never done. A relocked bootloader with a modified `boot` is the one state that may not recover. |
 | `oeminfo` / `nvme` | Hold the phone's identity and calibration. Never read into the repository, never written. |
 
