@@ -14,9 +14,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "debug-init"
+version = "0.1.0"
+dependencies = [
+ "pid1",
+]
+
+[[package]]
 name = "init-probe"
 version = "0.1.0"
 dependencies = [
  "alarm-core",
  "battery",
+ "pid1",
 ]
+
+[[package]]
+name = "pid1"
+version = "0.1.0"

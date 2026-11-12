@@ -1,7 +1,7 @@
 use alarm_core::battery::ChargeStep;
 use alarm_core::hardware::HardwareError;
 
-use crate::marker::{self, PREFIX};
+use pid1::kmsg::{self, PREFIX};
 
 pub const ENABLE_CHARGER: &str = "/sys/class/hw_power/charger/charge_data/enable_charger";
 pub const ENABLE_HIZ: &str = "/sys/class/hw_power/charger/charge_data/enable_hiz";
@@ -65,7 +65,7 @@ pub fn plan() -> Vec<Step> {
 pub fn stop(result: &Result<ChargeStep, HardwareError>) -> String {
     match result {
         Ok(step) => format!("{PREFIX}charge stop: {step:?}\n"),
-        Err(error) => marker::failure("charge stop", error),
+        Err(error) => kmsg::failure("charge stop", error),
     }
 }
 

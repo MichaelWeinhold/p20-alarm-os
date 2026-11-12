@@ -702,3 +702,47 @@ getprop ro.build.type                                         empty, exit 0
 `system` also holds `toybox` (473816 bytes), `linker64`, `gdbserver`, `gdbserver64` and
 `strace`. Its root has `/config`, `/dev`, `/proc`, `/sys`, `/mnt`, `/acct` and `/storage`
 to mount on. `misc` was cleared and the ROM reached `sys.boot_completed` 1.
+
+## 2026-11-12 — the debug `/init`, for issue 9
+
+**The binary**, `crates/debug-init` at
+`64caf049c1d498dc86cb0a18224d45ec66a6569bfa9182da42a40bce66ecddaa`, 383312 bytes, swapped
+onto `system` from TWRP as `docs/manual-steps/phone.md` says, with `init.rom` hashing to
+`e8e2768e…78ef`. `misc`'s command field was zeroed first.
+
+**A gadget with `acm` alone enumerates under our `/init`**, which ADR 0009, D1 assumed.
+49 s after `adb reboot` from TWRP, with no driver installed, the Mac showed
+`/dev/cu.usbmodemp20_alarm_os1`, the name built from the gadget's serial number, and
+`ioreg` read `1d6b:0104`, `debug shell`, `p20-alarm-os`. A Python script on the Mac, with
+the port raw, sent each command followed by an end marker:
+
+```
+uname -r                     4.9.319-Abdelhay-KSU-
+id                           uid=0(root) gid=0(root) groups=0(root)
+tty                          /dev/ttyGS0
+ls -l /sys/fs/pstore         console-ramoops-0 69509 bytes, pmsg-ramoops-0 954 bytes
+```
+
+`console-ramoops-0` held the boot before, TWRP's, ending in `reboot: Restarting system
+with command 'adb'`. The shell is `mksh` with the ROM's `mkshrc` prompt, `:/ #`, and
+`/dev/ttyGS0` as its controlling terminal. It survived the Mac closing and reopening the
+port between runs.
+
+**A killed shell starts again, and `exit` reboots into TWRP.** `kill -9 $$` was answered
+1 s later by a new shell; `exit` brought TWRP up 22 s later, with `reboot_reason=recovery
+enter_recovery=1` and `misc`'s command field still zero. TWRP's `console-ramoops-0`:
+
+```
+13.708404  debug /init ran from system
+13.708496  debug: mounted proc on /proc          … sysfs, pstore, configfs, tmpfs, each in 0.1 ms
+13.712829  debug: gadget bound to hisi-usb-otg
+13.719207  debug: /system/bin/sh started as 342
+90.107696  debug: /system/bin/sh ended with signal: 9 (SIGKILL), starting it again
+91.109130  debug: /system/bin/sh started as 360
+129.767120 debug: /system/bin/sh ended with exit status: 0, rebooting into recovery
+129.840545 reboot: Restarting system with command 'recovery'
+```
+
+`/sys/class/udc/hisi-usb-otg` was there at the first look, so the wait for it never ran.
+The ROM's `/init` was renamed back, hashing to `e8e2768e…78ef`, and the ROM reached
+`sys.boot_completed` 1.

@@ -1,0 +1,24 @@
+[package]
+name = "debug-init"
+description = "A debug /init that serves the ROM's shell on a USB serial gadget and reboots into recovery when it exits"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+pid1 = { path = "../pid1" }
+
+[lints.rust]
+unsafe_code = "allow"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
