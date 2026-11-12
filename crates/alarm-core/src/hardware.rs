@@ -3,7 +3,7 @@ use std::fmt;
 use crate::battery::BatteryReading;
 use crate::time::UnixSeconds;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HardwareError {
     Absent(&'static str),
     Failed {

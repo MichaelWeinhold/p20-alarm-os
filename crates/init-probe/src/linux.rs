@@ -4,6 +4,9 @@ use std::io::{self, Write};
 use std::thread;
 use std::time::Duration;
 
+use alarm_core::battery::{ChargeLimit, stop_at_limit};
+use battery::SysfsBattery;
+
 use crate::marker;
 use crate::power::{self, Step};
 
@@ -89,6 +92,7 @@ fn sampled(kmsg: &mut File) -> io::Result<()> {
         return kmsg.write_all(marker::failure("mounting /sys", &error).as_bytes());
     }
     kmsg.write_all(power::line("net", &[("interfaces", interfaces())]).as_bytes())?;
+    let mut battery = SysfsBattery::open();
     for step in power::plan() {
         match step {
             Step::Sample(phase) => {
@@ -103,6 +107,13 @@ fn sampled(kmsg: &mut File) -> io::Result<()> {
                     let step = format!("writing {value} to {path}");
                     kmsg.write_all(marker::failure(&step, &error).as_bytes())?;
                 }
+            }
+            Step::StopCharge => {
+                let result = match &mut battery {
+                    Ok(battery) => stop_at_limit(ChargeLimit::DEFAULT, battery),
+                    Err(error) => Err(error.clone()),
+                };
+                kmsg.write_all(power::stop(&result).as_bytes())?;
             }
             Step::Wait(seconds) => thread::sleep(Duration::from_secs(seconds)),
         }

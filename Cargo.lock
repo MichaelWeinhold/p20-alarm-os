@@ -16,3 +16,7 @@ dependencies = [
 [[package]]
 name = "init-probe"
 version = "0.1.0"
+dependencies = [
+ "alarm-core",
+ "battery",
+]
