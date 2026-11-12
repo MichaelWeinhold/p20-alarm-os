@@ -797,3 +797,22 @@ enable = 0`, the charge stop at 80 %. Swapped onto `system` from TWRP in place o
 `/init`, with `init.rom` at `e8e2768e…78ef` and `misc`'s command field zeroed, and rebooted
 at 19:53 UTC: the panel showed the local time once booted and changed at the next minute.
 `alarmd` is `/init` on `system` now.
+
+## 2026-11-12 — where the kernel comes from, for issue 46
+
+Nothing was read off the phone; the backup was compared with a published image. The
+kernel's build time, `Mon Apr 1 00:30:20 UTC 2024`, falls 29 s before release
+`2024-04-01-1230` of `Abdelhay-Ali/android_kernel_huawei_hi6250_KernelSU` was published;
+its asset is `Kernel-4.9.319-KSU-enforcing-01042024-1220.img`:
+
+```
+gh release download 2024-04-01-1230 -R Abdelhay-Ali/android_kernel_huawei_hi6250_KernelSU
+12969984 bytes, sha256 a8d27ec65ab9d6596980a9aad00d8f22cd0fe70606221058d684f374b605f686
+head -c 12969984 ~/p20-backups/kernel-mmcblk0p31-stock.img | shasum -a 256
+a8d27ec65ab9d6596980a9aad00d8f22cd0fe70606221058d684f374b605f686
+```
+
+The same hash as issue 8's repacked image. The tag `2024-04-01-1230` is commit
+`4a89ea72d610f5e3cd7d23d9d3b0919eba9fa8a2`. The release before it, `2024-04-01-1229`, was
+published at 00:29:23, before the build time. Where the ROM and TWRP were downloaded from
+was not found: a search for `0.23-p-20250919-UNOFFICIAL-anne` returned nothing.
