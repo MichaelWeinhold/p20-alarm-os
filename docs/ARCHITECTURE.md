@@ -4,7 +4,7 @@
 
 ```
 ┌──────────────────────────────────────────────┐
-│ boot partition (boot.img)                    │
+│ kernel partition (boot.img)                  │
 │                                              │
 │  ┌────────────────┐  ┌─────────────────────┐ │
 │  │ vendor kernel  │  │ initramfs           │ │
@@ -12,12 +12,12 @@
 │  │  ROM ships it) │  │  /dev, /sys, /proc  │ │
 │  └────────────────┘  └─────────────────────┘ │
 └──────────────────────────────────────────────┘
-recovery, system, vendor, … — never written
+recovery_*, erecovery_*, vbmeta, system, vendor, … — never written
 ```
 
 The kernel is reused as it is (ADR 0002). `boot.img` is unpacked, its ramdisk replaced by
 our initramfs, and repacked with the kernel, command line, base addresses and header
-version unchanged. Only the `boot` partition is ever written.
+version unchanged. Only the `kernel` partition is ever written; the phone has no `boot`.
 
 The initramfs holds one static binary at `/init`, which mounts `devtmpfs`, `sysfs` and
 `proc` itself, since nothing else in the image will.
