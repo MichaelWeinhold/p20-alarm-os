@@ -117,6 +117,7 @@ cargo test --locked
 | `.claude/skills/feature-lifecycle/SKILL.md` | before starting any feature, fix or chore; before every commit; before reporting anything finished |
 | `.claude/skills/picking-the-next-issue/SKILL.md` | when told to pick the next issue, before choosing one |
 | `.claude/skills/grooming-an-issue/SKILL.md` | when an issue number or a description is handed over, before a branch is cut |
+| `.claude/skills/flashing-the-phone/SKILL.md` | before every write to `kernel`, a rollback included |
 
 These are mechanisms, and hold whether or not a procedure is read:
 
