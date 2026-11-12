@@ -1,0 +1,15 @@
+[package]
+name = "battery"
+description = "The battery and charger adapter over the power_supply and hw_power sysfs nodes"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+alarm-core = { path = "../alarm-core" }
+
+[lints]
+workspace = true
