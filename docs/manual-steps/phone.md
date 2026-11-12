@@ -63,9 +63,10 @@ max-download-size` answer.
 **Fastboot without adb.** With the cable in, hold Power until the screen goes black, then
 hold Volume Down until *Fastboot & Rescue mode* shows.
 
-**Flash.** The preflight checks the model, both lock states, the backup and the image's
-size, prints the image's sha256, and ends on a USB reset; compare the sha256 with the one
-just built, then write:
+**Flash.** Every write, a rollback included, follows the `flashing-the-phone` skill. The
+preflight checks the model, both lock states, the backup and the image's size, prints the
+image's sha256, and ends on a USB reset; compare the sha256 with the one just built, then
+write:
 
 ```bash
 uv run python scripts/device_preflight.py <image>
@@ -94,7 +95,7 @@ Volume Up and Power together. `adb devices` lists it as `recovery`, with a root 
 
 ⚠️ From TWRP, write no partition on ADR 0005, D4's hard-brick list. → ADR 0005, D3 and D4.
 
-**Open.** The flashing skill is issue 7's follow-up; what the boot-fail monitor counts is
-read when an image of ours first fails. → ADR 0005, D5.
+**Open.** What the boot-fail monitor counts is read when an image of ours first fails. →
+ADR 0005, D5.
 
 The readings: [docs/device-history/phone.md](../device-history/phone.md).
