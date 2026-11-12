@@ -57,12 +57,13 @@ the device first.
 ## Host tooling
 
 ```
-scripts/        the repository's guards; later the boot image and initramfs builders
+scripts/        the repository's guards and the boot image round trip; later the initramfs builder
 tests/          their tests
 ```
 
-The boot image builder will be a Python round trip that is tested to reproduce the stock
-`boot.img` byte for byte before it changes anything.
+`scripts/boot_image.py` unpacks a header-v0 image into its sections and a `header.json`, and
+repacks it; it refuses an image it could not reproduce byte for byte, and reproduces the
+stock image in `kernel`.
 
 ## Debugging without a console
 
