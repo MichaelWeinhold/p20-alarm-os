@@ -24,12 +24,14 @@ nothing else in the image will. Until our image outgrows it, the ROM's own files
 
 ```
 crates/
-  alarm-core/   logic only: time, alarms, scheduling, and the hardware traits
+  alarm-core/   logic only: time, alarms, scheduling, the charge stop, and the hardware traits
+  battery/      the adapter for the battery and the charger, over sysfs
+  init-probe/   a probe /init that runs the charge stop and logs the power nodes
   (adapters)    one crate per device family, each implementing alarm-core's traits
   (alarmd)      the binary: opens the adapters, runs the loop, is PID 1
 ```
 
-Only `alarm-core` exists so far. The rest arrive with the roadmap phases that need them.
+`alarmd` and the other adapters arrive with the roadmap phases that need them.
 
 ### `alarm-core`
 
@@ -37,8 +39,9 @@ Only `alarm-core` exists so far. The rest arrive with the roadmap phases that ne
 |---|---|
 | `time` | `UnixSeconds`, `TimeOfDay`, `Weekday`, `UtcOffset` — civil time without a tz database |
 | `alarm` | `Alarm`, `Weekdays`, and when an alarm next fires after a given instant |
-| `hardware` | the traits `Clock`, `WakeAlarm`, `Suspend`, `Vibrator`, and `HardwareError` |
+| `hardware` | the traits `Clock`, `WakeAlarm`, `Suspend`, `Vibrator`, `Battery`, and `HardwareError` |
 | `schedule` | `arm_next`: read the clock, pick the earliest alarm, arm or disarm the RTC |
+| `battery` | `ChargeLimit`, `BatteryReading`, `stop_at_limit` and the 20 % mark — ADR 0008, D3 |
 
 Display and input traits are not defined yet. The panel is the legacy framebuffer,
 `/dev/graphics/fb0`, with no DRM (ADR 0004); what the touch controller reports is read off

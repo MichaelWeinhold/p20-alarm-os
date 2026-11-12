@@ -150,14 +150,18 @@ adb reboot
 # e8e2768ea78c453caf783281cfe835b95fc4f72f73928775d4f30609761978ef
 ```
 
-**The power probe**, `crates/init-probe`, swapped in as above. It cuts USB input, logs
-the battery, charger, CPU and panel nodes for about 105 s, restores the input, and reboots
-into TWRP. → ADR 0007.
+**The power probe**, `crates/init-probe`, swapped in as above. It stops a charge at 80 %
+through the battery adapter, writes `enable_charger` 1 in place of a plug-in, stops it
+again, writes 1 back, logs the battery and charger nodes after each step, and reboots
+into TWRP after about 20 s. → ADR 0008, D3.
 
 ```bash
 cargo build --release --locked -p init-probe --target aarch64-unknown-linux-musl
-adb shell 'grep -a "p20-alarm-os: power" /sys/fs/pstore/console-ramoops-0'
+adb shell 'grep -a -E "p20-alarm-os: (power|charge)" /sys/fs/pstore/console-ramoops-0'
 ```
+
+⚠️ `status` can lag a write to `enable_charger` by more than 5 s; read `enable_charger`
+and `current_now` beside it.
 
 ⚠️ The kernel log ends a record at a NUL, so a node read into it is stripped of control
 characters first; a line that stops short means one was not.

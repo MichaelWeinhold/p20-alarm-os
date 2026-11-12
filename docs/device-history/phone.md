@@ -589,3 +589,39 @@ So under our `/init` the phone draws about 350 mA, about 180 mA more than TWRP w
 panel timed out. `lcd_backlight0` reads 4000, the bootloader's level, from the first sample
 on. Whether the panel stayed lit was not looked at. Every probe rebooted into TWRP, and
 the ROM's `/init` was renamed back, hashing to `e8e2768e…78ef`.
+
+## 2026-11-12 — the charge stop under our `/init`, for issue 36
+
+**The nodes' bytes**, read with `od -c` over `adb root` from the ROM on the Mac's port, are
+the adapter's fixtures in `crates/battery/testdata/`: each value ends in one `\n`.
+`capacity` `100`, `status` `Full`, `voltage_now` `4339811`, `temp` `250`, `current_now`
+`0`, `health` `Good`, `enable_charger` `1`. With `enable_charger` 0, `status` read
+`Not charging` and `current_now` `0`. With `enable_hiz` 1, USB input cut and the cable in,
+`status` read `Full` and `current_now` `-34`: `status` says the cable is in, not that USB
+powers the phone. `Discharging` was not read, since that needs the cable pulled by hand.
+
+**The probe**, `crates/init-probe` at
+`374dbfd22827e9e63cde2edbefe47387e7bca1a724b4594ecf0eb72104253293`, 355616 bytes, runs
+`alarm_core::battery::stop_at_limit` with the default 80 % through `SysfsBattery`, writes
+`enable_charger` 1 to stand in for a plug-in, runs the stop again, and writes 1 back. It
+ran first from a `chroot` of a `tmpfs` in TWRP with 0 to 2 closed, then as `/init` on
+`system`, swapped in and back as `docs/manual-steps/phone.md` says. From
+`console-ramoops-0` after the boot as pid 1, at 100 % on the cable:
+
+```
+13.736  start          status=Full          current_now=0    ibus=548  enable_charger=1
+13.738  charge stop: Stopped
+18.779  stopped        status=Full          current_now=0    ibus=309  enable_charger=0
+23.846  plugged_in     status=Full          current_now=137  ibus=444  enable_charger=1
+23.855  charge stop: Stopped
+28.914  stopped_again  status=Not_charging  current_now=0    ibus=317  enable_charger=0
+33.964  restored       status=Full          current_now=137  ibus=497  enable_charger=1
+```
+
+**A charge stops under our `/init`**, and a reset `enable_charger` is stopped again on the
+next pass. `status` follows the write late: 5 s after the first stop it still read
+`Full`, with no current flowing; after the second it read `Not charging`. The TWRP run
+read `Not charging` 5 s after both. A stop that is not yet visible in `status` is still
+read back from `enable_charger`. The stop from below the limit, a charge climbing to 80 %,
+was not run on the phone; the phone was full. The ROM's `/init` was renamed back, hashing
+to `e8e2768e…78ef`, and the ROM reached `sys.boot_completed` 1.
