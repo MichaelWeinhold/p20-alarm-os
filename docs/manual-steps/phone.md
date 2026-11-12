@@ -188,6 +188,25 @@ shell is root: ADR 0005, D4's hard-brick list holds for every `dd` typed into it
 
 ⚠️ No `adb` reaches a phone running it. `exit` returns to TWRP; so do the keys.
 
+**`alarmd`**, `crates/alarmd`, the clock: it draws the local time on the panel each minute
+and holds the charge at 80 %. Try it from the debug shell first, pushed to `/mnt`, then
+swap it in as above; with the debug `/init` already on `system`, replace `init` alone and
+leave `init.rom` as it is. → `docs/device-history/phone.md`, issue 10.
+
+```bash
+cargo build --release --locked -p alarmd --target aarch64-unknown-linux-musl
+```
+
+⚠️ Run it as the first program to open `/dev/fb0` in a boot. The driver frees the buffer
+when the last holder closes it, and a later `mmap` can panic the kernel; before trying
+it again, `exit` to TWRP and `adb reboot`.
+
+⚠️ The RTC read 1970 once. Set it from the debug shell with the Mac's UTC:
+`date -u <MMDDhhmmYYYY.ss>` then `hwclock -w -u -f /dev/rtc0`.
+
+⚠️ Nothing but the keys reaches a phone running it: Power until black, then Volume Up and
+Power for TWRP.
+
 **The boot-fail monitor.** One `/init` that panicked the kernel was enough for the next
 boot to start eRecovery. → ADR 0005, D5.
 

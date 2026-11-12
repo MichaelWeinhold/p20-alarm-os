@@ -48,7 +48,7 @@ log that can be read.
 
 ## P3 — Draw
 
-`alarmd` as `/init` draws the time on the panel.
+**Done** — issue 10. `alarmd` as `/init` draws the time on the panel.
 
 ## P4 — Touch and buttons
 

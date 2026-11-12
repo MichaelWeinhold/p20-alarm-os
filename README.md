@@ -28,7 +28,8 @@ documentation, starting from the vendor kernel rather than from nothing.
 | Where `/init` lives | **Decided and proven.** On `system`, since the bootloader loads no ramdisk from `kernel` — [ADR 0006](docs/adr/0006-put-our-init-on-system.md); a probe of ours ran there as PID 1, issue 17. |
 | Battery and charging | **Decided.** The kernel charges under our `/init`; the phone sleeps between uses, lights the panel only when used, and stops a charge at 80 % — [ADR 0007](docs/adr/0007-hold-the-charge-and-leave-charging-to-the-kernel.md) and [ADR 0008](docs/adr/0008-sleep-between-uses-and-charge-to-eighty.md), issues 27 and 39. |
 | Debug shell over USB | **Decided.** A serial shell on a USB gadget, and the kernel log in pstore — [ADR 0009](docs/adr/0009-a-serial-shell-over-usb-and-logs-in-pstore.md), issue 15. Built in P2. |
-| Clock on screen, touch, RTC wake, vibration | Planned — P3 to P6. |
+| Clock on screen | **Built and on the phone.** `alarmd` as `/init` draws the local time each minute, issue 10. |
+| Touch, RTC wake, vibration | Planned — P4 to P6. |
 | Speaker | Parked. |
 
 ## How it works
@@ -38,8 +39,8 @@ kernel = vendor kernel (unchanged)  ──mounts──▶  system as /
                                                    └── /init = alarmd (static, aarch64-musl, Rust)
 ```
 
-`alarmd` runs as PID 1. It mounts `/dev`, `/sys` and `/proc`, draws to the framebuffer or
-DRM device, reads `/dev/input/event*`, arms `/dev/rtc0` for the next alarm, and suspends
+`alarmd` runs as PID 1. It mounts `/dev`, `/sys` and `/proc`, draws to the framebuffer,
+`/dev/fb0`, reads `/dev/input/event*`, arms `/dev/rtc0` for the next alarm, and suspends
 with `echo mem > /sys/power/state`. Only `system` is ever written — `kernel` stays stock
 — so recovery and fastboot stay intact and the `system` backup restores the phone.
 
