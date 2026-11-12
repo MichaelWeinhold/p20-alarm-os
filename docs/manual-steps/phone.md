@@ -45,7 +45,7 @@ second one hangs; re-enumerate the phone before every invocation, with `brew ins
 libusb` done once:
 
 ```bash
-uv run --no-project --with pyusb python -c 'import usb.core as c, usb.backend.libusb1 as b; c.find(idVendor=0x18d1, idProduct=0xd00d, backend=b.get_backend(find_library=lambda _: "/opt/homebrew/lib/libusb-1.0.dylib")).reset()'
+uv run python scripts/device_preflight.py --reset
 timeout 10 fastboot oem lock-state info
 ```
 
@@ -63,13 +63,17 @@ max-download-size` answer.
 **Fastboot without adb.** With the cable in, hold Power until the screen goes black, then
 hold Volume Down until *Fastboot & Rescue mode* shows.
 
-**Flash.** After the USB reset, with an image no larger than 25165824 bytes whose sha256
-was just checked:
+**Flash.** The preflight checks the model, both lock states, the backup and the image's
+size, prints the image's sha256, and ends on a USB reset; compare the sha256 with the one
+just built, then write:
 
 ```bash
-shasum -a 256 <image>
+uv run python scripts/device_preflight.py <image>
 timeout 120 fastboot flash kernel <image> reboot
 ```
+
+⚠️ Write only after the preflight exits 0, with no other `fastboot` invocation between
+them.
 
 ⚠️ `Warning: skip copying kernel image avb footer (kernel partition size: 0 …)` is
 expected: the bootloader reports no partition size, so the host checks the size itself.
@@ -77,7 +81,7 @@ expected: the bootloader reports no partition size, so the host checks the size 
 **Roll back.** The same write, with the backup:
 
 ```bash
-shasum -a 256 ~/p20-backups/kernel-mmcblk0p31-stock.img
+uv run python scripts/device_preflight.py ~/p20-backups/kernel-mmcblk0p31-stock.img
 timeout 120 fastboot flash kernel ~/p20-backups/kernel-mmcblk0p31-stock.img reboot
 adb wait-for-device && adb root
 adb shell sha256sum /dev/block/mmcblk0p31
@@ -90,7 +94,7 @@ Volume Up and Power together. `adb devices` lists it as `recovery`, with a root 
 
 ⚠️ From TWRP, write no partition on ADR 0005, D4's hard-brick list. → ADR 0005, D3 and D4.
 
-**Open.** The flashing skill and the device preflight are issue 7's follow-ups; what the
-boot-fail monitor counts is read when an image of ours first fails. → ADR 0005, D5.
+**Open.** The flashing skill is issue 7's follow-up; what the boot-fail monitor counts is
+read when an image of ours first fails. → ADR 0005, D5.
 
 The readings: [docs/device-history/phone.md](../device-history/phone.md).
