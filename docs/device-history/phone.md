@@ -265,3 +265,34 @@ Rebooting                                          OKAY [  0.029s]
 **After it**, the ROM booted (`sys.boot_completed` 1), and after `adb root`, `adb shell
 sha256sum /dev/block/mmcblk0p31` read
 `fe6e372eaf56b4358905443e3c475bde05851d7acd1cadbce395a376b4986a84`.
+
+## 2026-11-12 — the boot image round trip, for issue 8
+
+Run on the Mac against the backup; nothing touched the phone. The output went to a scratch
+directory, never into the repository.
+
+**Unpack**, `uv run python scripts/boot_image.py unpack
+~/p20-backups/kernel-mmcblk0p31-stock.img <scratch>/unpacked`, exit 0:
+
+```
+kernel: 12966737 bytes
+image …/kernel-mmcblk0p31-stock.img: header v0, page size 2048, 12969984 bytes, sha256 a8d27ec65ab9d6596980a9aad00d8f22cd0fe70606221058d684f374b605f686
+id: 7e5a3479aedd9e5e7bf1685b71ecca0cd7bc831b, the sha1 of its sections
+trailing: 12195840 bytes, 262900 of them non-zero
+```
+
+The stored `id` is the SHA-1 `mkbootimg` computes over the kernel, the empty ramdisk and
+second stage, and their sizes, so `repack` recomputes it rather than carrying it. Every
+byte of the header and the kernel's page that no field holds is zero.
+
+**Repack**, `uv run python scripts/boot_image.py repack <scratch>/unpacked
+<scratch>/repacked.img`, exit 0:
+
+```
+image …/repacked.img: 12969984 bytes, sha256 a8d27ec65ab9d6596980a9aad00d8f22cd0fe70606221058d684f374b605f686
+```
+
+`head -c 12969984 ~/p20-backups/kernel-mmcblk0p31-stock.img | shasum -a 256` read the same
+`a8d27ec6…f686`, and the backup still hashed to `fe6e372e…6a84`. The repacked image is
+the stock image without the partition's leftover tail, which booted the ROM on the
+rollback above; it was not flashed.

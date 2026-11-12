@@ -22,7 +22,7 @@ scheduling logic tested on the host.
 
 ## P1 — Boot image round trip
 
-Unpack the current `boot.img` and repack it unchanged, byte for byte.
+**Done** — issue 8. Unpack the current `boot.img` and repack it unchanged, byte for byte.
 
 **Done when:** the repacked image equals the original, by test, and boots the ROM as
 before.
