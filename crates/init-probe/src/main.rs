@@ -1,5 +1,8 @@
+#![cfg_attr(all(target_os = "linux", target_arch = "aarch64"), no_main)]
+
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-fn main() {
+#[unsafe(no_mangle)]
+pub extern "C" fn main() -> std::ffi::c_int {
     init_probe::linux::run();
 }
 
