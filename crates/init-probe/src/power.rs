@@ -1,25 +1,12 @@
-use crate::marker::PREFIX;
+use alarm_core::battery::ChargeStep;
+use alarm_core::hardware::HardwareError;
+
+use crate::marker::{self, PREFIX};
 
 pub const ENABLE_CHARGER: &str = "/sys/class/hw_power/charger/charge_data/enable_charger";
 pub const ENABLE_HIZ: &str = "/sys/class/hw_power/charger/charge_data/enable_hiz";
 pub const BACKLIGHT: &str = "/sys/class/leds/lcd_backlight0/brightness";
-pub const FB_BLANK: &str = "/sys/class/graphics/fb0/blank";
 pub const INTERFACES: &str = "/sys/class/net";
-
-const GOVERNORS: [&str; 2] = [
-    "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor",
-    "/sys/devices/system/cpu/cpu4/cpufreq/scaling_governor",
-];
-
-const SECONDARY_CPUS: [&str; 7] = [
-    "/sys/devices/system/cpu/cpu1/online",
-    "/sys/devices/system/cpu/cpu2/online",
-    "/sys/devices/system/cpu/cpu3/online",
-    "/sys/devices/system/cpu/cpu4/online",
-    "/sys/devices/system/cpu/cpu5/online",
-    "/sys/devices/system/cpu/cpu6/online",
-    "/sys/devices/system/cpu/cpu7/online",
-];
 
 pub const READINGS: [(&str, &str); 16] = [
     ("capacity", "/sys/class/power_supply/Battery/capacity"),
@@ -50,37 +37,36 @@ pub const READINGS: [(&str, &str); 16] = [
 pub enum Step {
     Sample(&'static str),
     Write(&'static str, &'static str),
+    StopCharge,
     Wait(u64),
 }
 
-fn sampled(steps: &mut Vec<Step>, phase: &'static str, count: usize, every: u64) {
-    for _ in 0..count {
-        steps.push(Step::Wait(every));
-        steps.push(Step::Sample(phase));
-    }
+const PLUG_IN: Step = Step::Write(ENABLE_CHARGER, "1");
+
+fn settled(steps: &mut Vec<Step>, phase: &'static str) {
+    steps.push(Step::Wait(5));
+    steps.push(Step::Sample(phase));
 }
 
 #[must_use]
 pub fn plan() -> Vec<Step> {
-    let mut steps = vec![Step::Sample("start"), Step::Write(ENABLE_HIZ, "1")];
-    sampled(&mut steps, "hiz_defaults", 5, 4);
-    for governor in GOVERNORS {
-        steps.push(Step::Write(governor, "powersave"));
-    }
-    sampled(&mut steps, "hiz_powersave", 5, 4);
-    for cpu in SECONDARY_CPUS {
-        steps.push(Step::Write(cpu, "0"));
-    }
-    sampled(&mut steps, "hiz_cpu0_only", 5, 4);
-    steps.push(Step::Write(FB_BLANK, "4"));
-    sampled(&mut steps, "hiz_fb_powerdown", 5, 4);
-    for cpu in SECONDARY_CPUS {
-        steps.push(Step::Write(cpu, "1"));
-    }
-    sampled(&mut steps, "hiz_fb_powerdown_all_cpus", 5, 4);
-    steps.push(Step::Write(ENABLE_HIZ, "0"));
-    sampled(&mut steps, "restored", 1, 5);
+    let mut steps = vec![Step::Sample("start"), Step::StopCharge];
+    settled(&mut steps, "stopped");
+    steps.push(PLUG_IN);
+    settled(&mut steps, "plugged_in");
+    steps.push(Step::StopCharge);
+    settled(&mut steps, "stopped_again");
+    steps.push(PLUG_IN);
+    settled(&mut steps, "restored");
     steps
+}
+
+#[must_use]
+pub fn stop(result: &Result<ChargeStep, HardwareError>) -> String {
+    match result {
+        Ok(step) => format!("{PREFIX}charge stop: {step:?}\n"),
+        Err(error) => marker::failure("charge stop", error),
+    }
 }
 
 fn token(value: &str) -> String {
@@ -109,30 +95,45 @@ pub fn line(phase: &str, readings: &[(&str, Result<String, String>)]) -> String 
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use super::*;
 
     #[test]
-    fn the_plan_leaves_the_input_on_and_every_cpu_online() {
-        let mut last: HashMap<&str, &str> = HashMap::new();
-        for step in plan() {
-            if let Step::Write(path, value) = step {
-                last.insert(path, value);
-            }
-        }
-        assert_eq!(last.get(ENABLE_HIZ), Some(&"0"));
-        for cpu in SECONDARY_CPUS {
-            assert_eq!(last.get(cpu), Some(&"1"), "{cpu}");
-        }
-        assert!(!last.contains_key(ENABLE_CHARGER));
+    fn the_plan_stops_twice_around_a_plug_in_and_leaves_the_charger_on() {
+        let steps = plan();
+        let positions: Vec<usize> = steps
+            .iter()
+            .enumerate()
+            .filter(|(_, step)| **step == Step::StopCharge)
+            .map(|(index, _)| index)
+            .collect();
+        assert_eq!(positions.len(), 2);
+        assert!(steps[positions[0]..positions[1]].contains(&PLUG_IN));
+        let last_write = steps
+            .iter()
+            .rev()
+            .find(|step| matches!(step, Step::Write(..)));
+        assert_eq!(last_write, Some(&PLUG_IN));
+        assert!(
+            !steps
+                .iter()
+                .any(|step| matches!(step, Step::Write(path, _) if *path != ENABLE_CHARGER))
+        );
     }
 
     #[test]
-    fn the_plan_samples_before_and_after_every_write() {
+    fn the_plan_samples_after_every_stop_and_write() {
         let steps = plan();
         assert_eq!(steps.first(), Some(&Step::Sample("start")));
         assert_eq!(steps.last(), Some(&Step::Sample("restored")));
+        for (index, step) in steps.iter().enumerate() {
+            if matches!(step, Step::StopCharge | Step::Write(..)) {
+                assert_eq!(steps.get(index + 1), Some(&Step::Wait(5)), "{index}");
+                assert!(
+                    matches!(steps.get(index + 2), Some(Step::Sample(_))),
+                    "{index}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -145,6 +146,18 @@ mod tests {
             })
             .sum();
         assert!(waited < 420, "{waited} s");
+    }
+
+    #[test]
+    fn a_stop_logs_its_step_or_its_failure() {
+        assert_eq!(
+            stop(&Ok(ChargeStep::Stopped)),
+            "<3>p20-alarm-os: charge stop: Stopped\n"
+        );
+        assert_eq!(
+            stop(&Err(HardwareError::Absent("Battery/capacity"))),
+            "<3>p20-alarm-os: charge stop failed: Battery/capacity is not present on this device\n"
+        );
     }
 
     #[test]
@@ -183,7 +196,7 @@ mod tests {
             .iter()
             .map(|(name, _)| (*name, Err(error.clone())))
             .collect();
-        let text = line("hiz_fb_powerdown_all_cpus", &readings);
+        let text = line("stopped_again", &readings);
         assert!(text.len() < 992, "{} bytes", text.len());
         assert_eq!(text.matches('\n').count(), 1);
     }

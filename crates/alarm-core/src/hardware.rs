@@ -1,8 +1,9 @@
 use std::fmt;
 
+use crate::battery::BatteryReading;
 use crate::time::UnixSeconds;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HardwareError {
     Absent(&'static str),
     Failed {
@@ -37,4 +38,10 @@ pub trait Suspend {
 
 pub trait Vibrator {
     fn vibrate(&mut self, milliseconds: u32) -> Result<(), HardwareError>;
+}
+
+pub trait Battery {
+    fn read(&self) -> Result<BatteryReading, HardwareError>;
+    fn charger_enabled(&self) -> Result<bool, HardwareError>;
+    fn set_charger_enabled(&mut self, enabled: bool) -> Result<(), HardwareError>;
 }

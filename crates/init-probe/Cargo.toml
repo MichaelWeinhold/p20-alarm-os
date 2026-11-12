@@ -1,12 +1,16 @@
 [package]
 name = "init-probe"
-description = "An /init that marks the kernel log, samples the battery and charger, and reboots into recovery"
+description = "An /init that marks the kernel log, stops a charge at the limit and samples the battery, and reboots into recovery"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = false
+
+[dependencies]
+alarm-core = { path = "../alarm-core" }
+battery = { path = "../battery" }
 
 [lints.rust]
 unsafe_code = "allow"
