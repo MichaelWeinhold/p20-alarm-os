@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-const PREFIX: &str = "<3>p20-alarm-os: ";
+pub(crate) const PREFIX: &str = "<3>p20-alarm-os: ";
 const CHUNK: usize = 400;
 
 pub const MARKER: &str = "/init ran from system";

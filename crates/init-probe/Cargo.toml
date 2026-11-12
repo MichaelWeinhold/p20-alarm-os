@@ -1,6 +1,6 @@
 [package]
 name = "init-probe"
-description = "An /init that marks the kernel log and reboots into recovery, proving our /init on system runs"
+description = "An /init that marks the kernel log, samples the battery and charger, and reboots into recovery"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
