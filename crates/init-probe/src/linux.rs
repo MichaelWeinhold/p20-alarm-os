@@ -5,6 +5,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::marker;
+use crate::power::{self, Step};
 
 const SYS_REBOOT: c_long = 142;
 const REBOOT_MAGIC1: c_long = 0xfee1_dead;
@@ -69,8 +70,48 @@ fn logged() -> io::Result<File> {
     Ok(kmsg)
 }
 
+fn node(path: &str) -> Result<String, String> {
+    fs::read_to_string(path).map_err(|error| error.to_string())
+}
+
+fn interfaces() -> Result<String, String> {
+    let entries = fs::read_dir(power::INTERFACES).map_err(|error| error.to_string())?;
+    let mut names: Vec<String> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    Ok(names.join(","))
+}
+
+fn sampled(kmsg: &mut File) -> io::Result<()> {
+    if let Err(error) = mounted(c"sysfs", c"/sys") {
+        return kmsg.write_all(marker::failure("mounting /sys", &error).as_bytes());
+    }
+    kmsg.write_all(power::line("net", &[("interfaces", interfaces())]).as_bytes())?;
+    for step in power::plan() {
+        match step {
+            Step::Sample(phase) => {
+                let readings: Vec<(&str, Result<String, String>)> = power::READINGS
+                    .iter()
+                    .map(|(name, path)| (*name, node(path)))
+                    .collect();
+                kmsg.write_all(power::line(phase, &readings).as_bytes())?;
+            }
+            Step::Write(path, value) => {
+                if let Err(error) = fs::write(path, value) {
+                    let step = format!("writing {value} to {path}");
+                    kmsg.write_all(marker::failure(&step, &error).as_bytes())?;
+                }
+            }
+            Step::Wait(seconds) => thread::sleep(Duration::from_secs(seconds)),
+        }
+    }
+    Ok(())
+}
+
 pub fn run() -> ! {
-    let kmsg = logged();
+    let kmsg = logged().and_then(|mut kmsg| sampled(&mut kmsg).map(|()| kmsg));
     let error = reboot_into(c"recovery");
     if let Ok(mut kmsg) = kmsg {
         let _ = kmsg.write_all(marker::failure("rebooting into recovery", &error).as_bytes());

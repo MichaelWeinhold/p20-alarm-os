@@ -150,6 +150,21 @@ adb reboot
 # e8e2768ea78c453caf783281cfe835b95fc4f72f73928775d4f30609761978ef
 ```
 
+**The power probe**, `crates/init-probe`, swapped in as above. It cuts USB input, logs
+the battery, charger, CPU and panel nodes for about 105 s, restores the input, and reboots
+into TWRP. → ADR 0007.
+
+```bash
+cargo build --release --locked -p init-probe --target aarch64-unknown-linux-musl
+adb shell 'grep -a "p20-alarm-os: power" /sys/fs/pstore/console-ramoops-0'
+```
+
+⚠️ The kernel log ends a record at a NUL, so a node read into it is stripped of control
+characters first; a line that stops short means one was not.
+
+⚠️ `/proc/device-tree` is readable only as root, so read the charging limits from TWRP:
+`tr '\0' '\n' < /proc/device-tree/SCUDATL_2900_39k_4400/temp_para`.
+
 **The boot-fail monitor.** One `/init` that panicked the kernel was enough for the next
 boot to start eRecovery. → ADR 0005, D5.
 

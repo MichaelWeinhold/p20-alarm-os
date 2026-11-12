@@ -37,6 +37,13 @@ A minimal `/init` on `system` that brings up USB gadget networking and SSH, or `
 **Done when:** the laptop reaches a shell on the phone over USB, and a failed boot leaves a
 log that can be read.
 
+## Research before P3
+
+- **How the phone charges and spares its old battery.** **Decided** — in ADR 0007: the
+  kernel charges under our `/init`, `alarmd` holds the charge between 75 and 80 % through
+  `enable_charger`, and the display adapter takes the panel over from the bootloader. Both
+  are follow-ups of issue 27, landing with P3.
+
 ## P3 — Draw
 
 `alarmd` as `/init` draws the time on the panel.
