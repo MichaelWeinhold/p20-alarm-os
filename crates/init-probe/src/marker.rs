@@ -1,6 +1,5 @@
-use std::fmt::Display;
+use pid1::kmsg::PREFIX;
 
-pub(crate) const PREFIX: &str = "<3>p20-alarm-os: ";
 const CHUNK: usize = 400;
 
 pub const MARKER: &str = "/init ran from system";
@@ -25,11 +24,6 @@ pub fn cmdline(text: &str) -> Vec<String> {
             )
         })
         .collect()
-}
-
-#[must_use]
-pub fn failure(step: &str, error: &impl Display) -> String {
-    format!("{PREFIX}{step} failed: {error}\n")
 }
 
 #[cfg(test)]
@@ -69,14 +63,6 @@ mod tests {
         assert_eq!(
             cmdline("console=ttyS0\n"),
             vec!["<3>p20-alarm-os: cmdline 1/1: console=ttyS0\n".to_owned()]
-        );
-    }
-
-    #[test]
-    fn a_failure_names_its_step_and_error() {
-        assert_eq!(
-            failure("mounting /proc", &"No such device"),
-            "<3>p20-alarm-os: mounting /proc failed: No such device\n"
         );
     }
 }
