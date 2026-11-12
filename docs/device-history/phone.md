@@ -484,3 +484,108 @@ carrying `reboot_reason=recovery`. From the kernel's jump to the marker took 7.7
 which hashed to `e8e2768e…78ef` with its label kept, `umount`, `adb reboot`. The ROM came
 back to `sys.boot_completed` 1, with `/init` at `e8e2768e…78ef` and `mmcblk0p31` at
 `fe6e372e…6a84`.
+
+## 2026-11-12 — the battery, the charger and the panel, for issue 27
+
+Read three ways: over `adb root` from the ROM; from TWRP's root shell, whose ramdisk runs
+the same kernel; and from a probe of ours as `/init` on `system`, swapped in as ADR 0006,
+D2 does and logged to pstore. The phone was on the Mac's USB port, a charging downstream
+port (`charger_type` 1), throughout.
+
+**The battery.** `power_supply/Battery`, from the ROM:
+
+```
+brand=SCUDATL technology=Li-poly health=Good status=Full capacity=100
+charge_full_design=3000 charge_full=2283 capacity_fcc=2283 batt_limit_fcc=2187 bat_qmax=2247
+voltage_max=4400 voltage_now=4385482 current_now=127 temp=260 cycle_count=7
+```
+
+The gauge has learned 2283 of 3000 mAh, 76 %. `cycle_count` 7 on a phone this old is not
+believable. Units: `capacity` in %, `current_now` in mA with a positive value flowing into
+the battery, `voltage_now` in µV, `temp` in tenths of a °C. Nobody looked at the battery
+for swelling.
+
+**The kernel's charging limits** are the device tree's, read in TWRP under
+`/proc/device-tree/SCUDATL_2900_39k_4400`: `fcc` 2900 mAh, `vbat_max` 4400 mV, and
+`temp_para` as rows of °C from, °C to, input current, charge current, termination voltage
+and hysteresis (−1 is the maximum):
+
+```
+< 0 °C     no charge            0–5 °C   290 mA  4400 mV    5–10 °C   870 mA  4400 mV
+10–45 °C   max     4400 mV      45–50 °C 1015 mA 4100 mV    > 50 °C   no charge
+```
+
+`charging_core` has `iterm` 100 mA and `high_temp_limit` 1, and `coul_core` cuts off below
+−20 °C and above 60 °C. `charging_core.c` applies the table, and lowers the termination
+voltage as the battery ages, from the charger's monitor work, with no userspace involved.
+
+**The charger's nodes**, `hw_power/charger/charge_data`, writable by root:
+
+| Write | Reading |
+|---|---|
+| `enable_charger` 0 | `status` `Not charging`, `current_now` 0, the coulomb counter frozen at −786 for 40 s; the phone runs from USB, `Ibus` 16–95 mA with the ROM asleep |
+| `enable_charger` 1 | `status` `Full`, `current_now` 123–130 within 5 s |
+| `enable_hiz` 1 | USB input cut, `Ibus` 0, `Vbus` 5210 mV; the battery powers the phone, −39 mA with the ROM asleep |
+
+At 100 % on the cable the battery takes 109–130 mA at 4.385 V, above `iterm`'s 100 mA,
+so the charger never terminates. It holds the battery full. `huawei_charger.c`'s
+`charge_start_charging`, which runs on every plug-in, clears the disable flag that
+`enable_charger` 0 set, and it takes `charge_wakelock`. That wake lock is released only on
+charge done at 100 % from a standard, non-standard, FCP or PD charger, never from the
+Mac's port.
+
+**The panel**, from the ROM with USB input cut and the ROM awake (`svc power stayon`),
+averaged over 12 s each:
+
+| State | `current_now` |
+|---|---|
+| ROM asleep, panel off | −38 mA |
+| panel on, `lcd_backlight0` 0 | −130 mA |
+| backlight 200 / 800 / 2000 | −141 / −157 / −185 mA |
+| backlight 4000 / 8081 (maximum) | −236 / −351 mA |
+
+The backlight costs about 27 mA per 1000 units over the panel's own 92 mA. The green
+notification LED at 255 costs about 5 mA.
+
+**TWRP**, USB input cut, panel timed out, averaged over 12 s each: −193 mA with every core
+on `performance`, −176 mA on `interactive` or `powersave` (cpu0 at 480 MHz), −167 mA on
+cpu0–3 alone, −166 mA on cpu0 alone. The three `cpuidle` states, WFI, cpu-sleep and
+cluster-sleep, are all in use. DDR runs pinned at 933 MHz under `pm_qos`. The modem reads
+`MODEM_STATE_OFF`.
+
+**The probe as `/init`**, three runs, read from pstore in TWRP. The first,
+`0e74662d66fd79631567389d6ccbbb9192ccd9326e8ace4eb00139e8754671fb`, 346728 bytes, sampled
+for 306 s:
+
+```
+start        capacity=100 status=Full current_now=-1  voltage_now=4345491 temp=240 ibus=704 backlight=4000 modem=MODEM_STATE_OFF
+charging     status=Full        current_now=126…116 temp=240…250 ibus=413…533   (8 samples, 105 s)
+charger_off  status=Not_charging current_now=0  ibus=293…354   (enable_charger 0, 4 samples)
+charger_on   status=Full        current_now=141, 136   (enable_charger 1)
+hiz          current_now=-347…-366   backlight 0, 200, 800, 2000 and 8081 alike
+restored     status=Full current_now=311 ibus=676
+```
+
+The interfaces in `/sys/class/net` are `lo`, `dummy0`, the tunnels and the modem's
+`rmnet*`; there is no `wlan0`. **The kernel charges with our binary as PID 1.**
+`enable_charger` stops and restarts charging as it does under the ROM. Writing
+`lcd_backlight0` changes nothing measurable, and it reads back what was written.
+
+The second probe, `184596263d6b3db95d313e22397f4f168e72aee14ab8f0e4708be4044d3cd1da`,
+logged nothing after `modem=`. `balong_power/modem_state` ends in a NUL, and the kernel log
+cut each record there. The third, `4ac4a9c18112ad153607d56ca77c44ebee0867d2f88629b1960b2c6ab64bb3ba`,
+347448 bytes, strips control characters from what it logs. With USB input cut, every
+write succeeded and was read back, and the draw did not move:
+
+| Step, 5 samples at 4 s | `cpus` | `freq0` / `freq4` | `current_now` |
+|---|---|---|---|
+| defaults | 0-7 | 1709000 / 2362000 | −350 to −357 mA |
+| `powersave` on cpu0 and cpu4 | 0-7 | 480000 / 1402000 | −347 to −351 mA |
+| cpu1–7 offline | 0 | 480000 | −347 to −352 mA |
+| `fb0/blank` 4, powerdown | 0 | 480000 | −347 to −353 mA |
+| cpu1–7 back online | 0-7 | 480000 / 1402000 | −349 to −353 mA |
+
+So under our `/init` the phone draws about 350 mA, about 180 mA more than TWRP with its
+panel timed out. `lcd_backlight0` reads 4000, the bootloader's level, from the first sample
+on. Whether the panel stayed lit was not looked at. Every probe rebooted into TWRP, and
+the ROM's `/init` was renamed back, hashing to `e8e2768e…78ef`.
