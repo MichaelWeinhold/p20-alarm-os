@@ -95,6 +95,19 @@ Volume Up and Power together. `adb devices` lists it as `recovery`, with a root 
 
 ⚠️ From TWRP, write no partition on ADR 0005, D4's hard-brick list. → ADR 0005, D3 and D4.
 
+⚠️ `adb reboot recovery` from the ROM leaves `boot-recovery` in `misc`'s bootloader control
+block, and every boot then starts TWRP. Clear its 32-byte command field from TWRP; `misc`
+(`mmcblk0p20`) is backed up at `~/p20-backups/misc-mmcblk0p20-boot-recovery.img`:
+
+```bash
+adb shell 'dd if=/dev/zero of=/dev/block/by-name/misc bs=32 count=1'
+adb reboot
+```
+
+**The image's ramdisk is never loaded.** The bootloader reads only the kernel from
+`kernel`, and the ramdisk from a partition named `ramdisk`, which this phone does not have;
+recovery mode loads one, from `recovery_ramdisk`. → issue 17's reading.
+
 **Open.** What the boot-fail monitor counts is read when an image of ours first fails. →
 ADR 0005, D5.
 
