@@ -59,19 +59,22 @@ fn cmdline() -> Vec<String> {
     }
 }
 
-fn probe() -> io::Result<()> {
+fn logged() -> io::Result<File> {
     mounted(c"devtmpfs", c"/dev")?;
     let mut kmsg: File = OpenOptions::new().write(true).open("/dev/kmsg")?;
     kmsg.write_all(marker::marker().as_bytes())?;
     for line in cmdline() {
         kmsg.write_all(line.as_bytes())?;
     }
-    let error = reboot_into(c"bootloader");
-    kmsg.write_all(marker::failure("rebooting into the bootloader", &error).as_bytes())
+    Ok(kmsg)
 }
 
 pub fn run() -> ! {
-    let _ = probe();
+    let kmsg = logged();
+    let error = reboot_into(c"recovery");
+    if let Ok(mut kmsg) = kmsg {
+        let _ = kmsg.write_all(marker::failure("rebooting into recovery", &error).as_bytes());
+    }
     loop {
         thread::sleep(Duration::from_secs(3600));
     }

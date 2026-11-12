@@ -7,5 +7,5 @@ name = "alarm-core"
 version = "0.1.0"
 
 [[package]]
-name = "initramfs-probe"
+name = "init-probe"
 version = "0.1.0"

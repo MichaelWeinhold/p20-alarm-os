@@ -1,6 +1,6 @@
 [package]
-name = "initramfs-probe"
-description = "An /init that marks the kernel log and reboots into the bootloader, proving an initramfs in kernel runs"
+name = "init-probe"
+description = "An /init that marks the kernel log and reboots into recovery, proving our /init on system runs"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
