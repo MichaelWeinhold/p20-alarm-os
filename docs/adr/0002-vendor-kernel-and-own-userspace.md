@@ -1,6 +1,6 @@
 # 2. Boot the vendor kernel, and replace everything above it with one program
 
-- **Status:** Accepted; amended by ADR 0006
+- **Status:** Accepted; amended by ADR 0006 and ADR 0009
 - **Date:** 2026-11-11
 - **Recorded with:** the bootstrap, issue 1. Which kernel build exactly is open, and is
   its own research issue.
@@ -52,6 +52,7 @@ one; the single-program userspace stands either way.
   mixer routing which Android's audio HAL normally sets up. The vibrator comes first; the
   speaker is a separate, parked research issue.
 - **There is no serial console.** A boot that fails is a black screen, so the second
-  step is a debug `/init` with SSH over USB gadget networking, or `ramoops`.
+  step is a debug `/init` with SSH over USB gadget networking, or `ramoops`. ADR 0009
+  makes it a serial shell over USB, with the log in pstore.
 - **Waking from the RTC must be proven early** — the alarm depends on it — and the battery
   gain over stock Android in airplane mode may be small.

@@ -68,6 +68,8 @@ stock image in `kernel`.
 
 ## Debugging without a console
 
-There is no serial port. The first image built is a debug `/init` that brings up USB
-gadget networking and an SSH server, or keeps logs in `ramoops`, so that a boot that does
-not draw can still be read. → `docs/ROADMAP.md`, P2.
+There is no serial port. The first image built is a debug `/init` that serves the ROM's
+`mksh` on a CDC-ACM USB gadget, `/dev/ttyGS0` on the phone and `/dev/cu.usbmodem*` on the
+Mac, and reboots into TWRP when the shell exits. Every `/init` logs to `/dev/kmsg`, which
+pstore keeps across a reboot; `dfx` keeps a panic in `/init`. → ADR 0009; `docs/ROADMAP.md`,
+P2.

@@ -27,7 +27,7 @@ documentation, starting from the vendor kernel rather than from nothing.
 | Boot image round trip | **Built, host-tested.** `scripts/boot_image.py` repacks the stock image byte for byte. |
 | Where `/init` lives | **Decided and proven.** On `system`, since the bootloader loads no ramdisk from `kernel` — [ADR 0006](docs/adr/0006-put-our-init-on-system.md); a probe of ours ran there as PID 1, issue 17. |
 | Battery and charging | **Decided.** The kernel charges under our `/init`; the phone sleeps between uses, lights the panel only when used, and stops a charge at 80 % — [ADR 0007](docs/adr/0007-hold-the-charge-and-leave-charging-to-the-kernel.md) and [ADR 0008](docs/adr/0008-sleep-between-uses-and-charge-to-eighty.md), issues 27 and 39. |
-| Debug shell over USB | Planned — P2. |
+| Debug shell over USB | **Decided.** A serial shell on a USB gadget, and the kernel log in pstore — [ADR 0009](docs/adr/0009-a-serial-shell-over-usb-and-logs-in-pstore.md), issue 15. Built in P2. |
 | Clock on screen, touch, RTC wake, vibration | Planned — P3 to P6. |
 | Speaker | Parked. |
 
@@ -61,7 +61,8 @@ only the thin adapters need the phone. → [docs/ARCHITECTURE.md](docs/ARCHITECT
 - **Audio.** Kirin audio goes through a DSP that needs firmware and mixer routing that
   Android's audio HAL normally sets up. The vibrator comes first, and the speaker is parked.
 - **Debugging blind.** There is no serial console; a boot that fails is a black screen. A
-  debug image with SSH over USB, or `ramoops`, is built before anything else.
+  debug image with a serial shell over USB, and the log in pstore, is built before anything
+  else.
 - **Deep sleep and RTC wake.** The vendor kernel may expect Android userspace pieces before
   it suspends properly, and the alarm depends on the RTC waking it. That is proven early.
 
