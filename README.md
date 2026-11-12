@@ -25,7 +25,7 @@ documentation, starting from the vendor kernel rather than from nothing.
 | Which kernel to boot | **Decided.** The kernel already on the phone, `4.9.319`, unchanged — [ADR 0004](docs/adr/0004-boot-the-kernel-already-on-the-phone.md). |
 | Flashing and rollback | **Decided.** No tethered boot; flash `kernel` from fastboot and write the stock image back — [ADR 0005](docs/adr/0005-flash-kernel-and-roll-back-from-fastboot.md). |
 | Boot image round trip | **Built, host-tested.** `scripts/boot_image.py` repacks the stock image byte for byte. |
-| Where `/init` lives | **Decided.** On `system`, since the bootloader loads no ramdisk from `kernel` — [ADR 0006](docs/adr/0006-put-our-init-on-system.md). |
+| Where `/init` lives | **Decided and proven.** On `system`, since the bootloader loads no ramdisk from `kernel` — [ADR 0006](docs/adr/0006-put-our-init-on-system.md); a probe of ours ran there as PID 1, issue 17. |
 | Debug shell over USB | Planned — P2. |
 | Clock on screen, touch, RTC wake, vibration | Planned — P3 to P6. |
 | Speaker | Parked. |

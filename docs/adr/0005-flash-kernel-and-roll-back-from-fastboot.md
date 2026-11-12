@@ -106,10 +106,12 @@ recovery and a factory reset among its methods.
 
 So an image of ours is counted as booted after ten minutes up, if its `/init` never
 creates `/eng`, and a try that panics or is cut short before that may be counted as
-failed. How many failures the bootloader takes before it starts eRecovery, and whether
-eRecovery touches `kernel`, is not in the kernel source. It is read off the phone the
-first time an image of ours fails: from eRecovery, accept nothing, reach fastboot with D2's
-keys, and run D3. If it gets in the way, the remedy is ADR 0004, D4's rebuild.
+failed. How many failures the bootloader takes before it starts eRecovery is not in the
+kernel source; on 2026-11-12 it was read off the phone: **one** `/init` that panicked the
+kernel was enough, and the next boot started eRecovery (`docs/device-history/phone.md`,
+*our `/init` on `system`*). Whether eRecovery touches `kernel` is still unread, since
+nothing was chosen there: from eRecovery, accept nothing, and reach TWRP or fastboot with
+the keys. If it gets in the way, the remedy is ADR 0004, D4's rebuild.
 
 ## Rejected alternatives
 
