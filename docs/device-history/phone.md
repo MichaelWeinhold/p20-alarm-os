@@ -205,3 +205,39 @@ Power together, started TWRP, which came up on the Mac as
 and a root shell (`uid=0`, `u:r:su:s0`). From there `/dev/block/by-name/kernel` pointed
 at `mmcblk0p31`, which hashed to the backup's sha256; `adb reboot` returned to the ROM.
 Nothing was written from TWRP.
+
+## 2026-11-12 — the device preflight, for issue 19
+
+Run on the Mac, with the phone in *Fastboot & Rescue mode* after `adb reboot bootloader`.
+Nothing was written to the phone.
+
+**Where fastboot answers.** Each invocation, after its own USB reset, wrote every line to
+stderr and nothing to stdout; the recordings are `tests/fixtures/fastboot/`. An invocation
+sent without a reset hung until `timeout 10` killed it, exit 124. An unknown `oem` command
+answered `FAILED (remote: 'invalid command')`, exit 1.
+
+**The reset without pyusb.** `libusb_init`, `libusb_open_device_with_vid_pid` on
+`18d1:d00d`, `libusb_reset_device` and `libusb_close`, called through `ctypes` on
+Homebrew's `libusb-1.0.dylib`, returned 0, and the next invocation answered. PyPI has no
+type stubs for `pyusb` under any name.
+
+**The preflight against the backup**, `uv run python scripts/device_preflight.py
+~/p20-backups/kernel-mmcblk0p31-stock.img`, exit 0:
+
+```
+image …/kernel-mmcblk0p31-stock.img: 25165824 bytes, sha256 fe6e372eaf56b4358905443e3c475bde05851d7acd1cadbce395a376b4986a84
+backup …/kernel-mmcblk0p31-stock.img: sha256 fe6e372eaf56b4358905443e3c475bde05851d7acd1cadbce395a376b4986a84
+device: ANE-LX1
+lock state: FB UNLOCKED, USER UNLOCKED
+ready: the next fastboot invocation is answered
+```
+
+`fastboot getvar max-download-size`, sent next with no reset of its own, answered
+`471859200`. The same after `device_preflight.py --reset`, with `oem lock-state info`.
+
+**The preflight against an image one byte over**, a 25165825-byte sparse file, exit 1,
+before any USB reset:
+
+```
+the image …/oversized.img is 25165825 bytes, over kernel's 25165824
+```

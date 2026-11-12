@@ -17,8 +17,8 @@ scheduling logic tested on the host.
   port, and Huawei's published source.
 - **Reaching and flashing the phone safely.** **Decided** — in ADR 0005: there is no
   tethered `fastboot boot`, so every try writes `kernel` from fastboot, and the rollback
-  writes the stock image back. It leaves a `flashing-the-phone` skill and a device
-  preflight to build.
+  writes the stock image back. It leaves a `flashing-the-phone` skill to build; the device
+  preflight is `scripts/device_preflight.py`, issue 19.
 
 ## P1 — Boot image round trip
 
