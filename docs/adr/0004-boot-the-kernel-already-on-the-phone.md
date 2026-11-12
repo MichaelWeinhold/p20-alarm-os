@@ -26,7 +26,9 @@ The image keeps the gzip kernel from the stock image byte for byte, with the hea
 candidate known to drive this phone's panel, touch, RTC and suspend, and its config
 already has every option the image needs (D2). Its source is
 `github.com/Abdelhay-Ali/android_kernel_huawei_hi6250_KernelSU`, 4.9.319; the exact commit
-is not recorded in the binary.
+is not recorded in the binary. The image equals that repository's release
+`2024-04-01-1230`, whose tag is commit `4a89ea72d610f5e3cd7d23d9d3b0919eba9fa8a2`
+(issue 46).
 
 ### D2. The config has what the image needs
 

@@ -57,6 +57,44 @@ only the thin adapters need the phone. → [docs/ARCHITECTURE.md](docs/ARCHITECT
 | Bootloader | unlocked; a custom ROM is already installed |
 | Connection | USB, `adb` and `fastboot` on the laptop |
 
+## Running it on your own P20 Lite
+
+The image brings no kernel of its own: it boots whatever is in the phone's `kernel`
+partition, and that has to be the kernel below. This is what the phone the project was
+built on runs.
+
+| | |
+|---|---|
+| Model | `ANE-LX1` (`devmodel` `ANE-L01`), firmware base `9.1.0.401(C432E13R1P7)` |
+| Bootloader | `Chipset-chicago9.1.0.6(1GA4)_FASTBOOT`, **unlocked** |
+| Kernel | `4.9.319-Abdelhay-KSU-`, with KernelSU, from [Abdelhay-Ali/android_kernel_huawei_hi6250_KernelSU](https://github.com/Abdelhay-Ali/android_kernel_huawei_hi6250_KernelSU) |
+| Kernel image | release [`2024-04-01-1230`](https://github.com/Abdelhay-Ali/android_kernel_huawei_hi6250_KernelSU/releases/tag/2024-04-01-1230), `Kernel-4.9.319-KSU-enforcing-01042024-1220.img`, 12969984 bytes, sha256 `a8d27ec65ab9d6596980a9aad00d8f22cd0fe70606221058d684f374b605f686` |
+| Kernel source | the release's tag, commit `4a89ea72d610f5e3cd7d23d9d3b0919eba9fa8a2`, GPL-2.0 |
+| ROM | unofficial LineageOS for Android 9, `0.23-p-20250919-UNOFFICIAL-anne`, `userdebug` |
+| Recovery | TWRP 3.7.0_9-0 in `recovery_ramdisk` |
+
+The release image is byte for byte what this phone's `kernel` partition holds, up to the
+partition's unused tail. To check yours, with `adb root` in the ROM or from TWRP:
+
+```bash
+adb shell 'dd if=/dev/block/by-name/kernel bs=12969984 count=1 2>/dev/null | sha256sum'
+# a8d27ec65ab9d6596980a9aad00d8f22cd0fe70606221058d684f374b605f686
+```
+
+Where the ROM and TWRP were downloaded from is not recorded; several Android 9 builds
+for `anne` were tried before this one stuck. The image uses little of the ROM: it keeps
+the ROM's `/init` on `system` as `/init.rom`, and the debug `/init` serves the ROM's
+shell. Any Android 9 ROM for `anne` with this kernel in `kernel`, `adb root` and TWRP
+should do, but only this one has been tried.
+
+**Untested:** writing the release image to `kernel` on a phone whose kernel differs.
+That is a write to `kernel` like any other — back the partition up first and follow
+[the flashing skill](.claude/skills/flashing-the-phone/SKILL.md). Unlocking the
+bootloader is not covered here.
+
+From there, [docs/manual-steps/phone.md](docs/manual-steps/phone.md) is how the phone was
+set up, backed up, and how our `/init` goes onto `system`.
+
 ## What is hard
 
 - **Audio.** Kirin audio goes through a DSP that needs firmware and mixer routing that
