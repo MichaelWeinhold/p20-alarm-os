@@ -1,6 +1,6 @@
 # 7. Hold the charge below full, and leave charging itself to the kernel
 
-- **Status:** Accepted
+- **Status:** Accepted; D2 and D4 superseded, D6 amended by ADR 0008
 - **Date:** 2026-11-12
 - **Issue:** #27
 
@@ -43,6 +43,10 @@ ever replaced, this decision reopens (ADR 0004).
 
 ### D2. `alarmd` holds the charge between 75 and 80 % with `enable_charger`
 
+**Superseded by ADR 0008, D3.** The phone runs on its battery and is charged now and then,
+so a charge stops at 80 % instead of a band being held on the cable. The decision as
+accepted:
+
 Answers question 2. It is the one cheap change that slows the battery's ageing, since the
 clock is on the cable most of the time:
 
@@ -79,6 +83,9 @@ at 1. A clock that cannot read its battery charges it to full rather than not at
 
 ### D4. On the cable the time stays on screen, dimmed at night; off the cable the panel sleeps
 
+**Superseded by ADR 0008, D2.** The panel is lit only while the clock is used, on the
+cable or off it. The decision as accepted:
+
 Answers question 4. On the cable, D2 keeps the battery resting, so the panel costs mains
 power, not battery wear. The clock shows the time all the time, with a low backlight at
 night: about 200 of 8081, about 11 mA over the panel. Off the cable, after a power cut,
@@ -99,6 +106,9 @@ one chip that a vendor daemon starts. `alarmd` starts none of them. **That the W
 draws nothing while unloaded is inferred**, from the missing interface.
 
 ### D6. The CPU is left as the kernel sets it; the saving that matters is the panel and suspend
+
+**Amended by ADR 0008, D1**: suspend between uses is the plan's main lever, and its draw
+is what issue 12 measures.
 
 Answers question 6. Measured under our `/init`, `powersave` and cores offline saved
 nothing measurable. In TWRP, the same changes saved 17–27 mA of 193, because the idle

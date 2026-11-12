@@ -39,10 +39,11 @@ log that can be read.
 
 ## Research before P3
 
-- **How the phone charges and spares its old battery.** **Decided** — in ADR 0007: the
-  kernel charges under our `/init`, `alarmd` holds the charge between 75 and 80 % through
-  `enable_charger`, and the display adapter takes the panel over from the bootloader. Both
-  are follow-ups of issue 27, landing with P3.
+- **How the phone charges and spares its old battery.** **Decided** — in ADR 0007 and
+  0008: the kernel charges under our `/init`; the phone runs on its battery, sleeps
+  between uses, lights the panel only when used, and `alarmd` stops a charge at 80 %
+  through `enable_charger`. The display adapter takes the panel over from the bootloader.
+  Both are follow-ups of issue 27, landing with P3; the suspend draw is P5's.
 
 ## P3 — Draw
 
@@ -57,8 +58,9 @@ Read `/dev/input/event*`; set an alarm and dismiss it.
 Arm `/dev/rtc0`, suspend, and wake on time. The whole project depends on this, so it is
 proven as early as P2 allows, even before the clock looks right.
 
-**Done when:** an alarm armed for five minutes ahead wakes a suspended phone, and the
-reading is in `docs/device-history/`.
+**Done when:** an alarm armed for five minutes ahead wakes a suspended phone, the draw
+while suspended is read with USB input cut, and both readings are in
+`docs/device-history/`. → ADR 0008, D1.
 
 ## P6 — Vibrate
 
