@@ -26,15 +26,19 @@ nothing else in the image will. Until our image outgrows it, the ROM's own files
 crates/
   alarm-core/   logic only: time, alarms, scheduling, the charge stop, and the hardware traits
   battery/      the adapter for the battery and the charger, over sysfs
+  clock/        the adapter for the clock, over the system time the kernel sets from the RTC
+  framebuffer/  the adapter for the panel: /dev/fb0, mapped once, drawn into a page and panned
   pid1/         what every /init takes from the kernel: mounts, the kernel log, a child
                 on a terminal, reaping, the reboot into recovery
+  alarmd/       the binary: opens the adapters, draws the time each minute, is PID 1
   init-probe/   a probe /init that runs the charge stop and logs the power nodes
   debug-init/   the debug /init: the ROM's shell on a USB serial gadget (ADR 0009)
-  (adapters)    one crate per device family, each implementing alarm-core's traits
-  (alarmd)      the binary: opens the adapters, runs the loop, is PID 1
 ```
 
-`alarmd` and the other adapters arrive with the roadmap phases that need them.
+The other adapters arrive with the roadmap phases that need them.
+
+`framebuffer` maps `fb0` once and holds it open for the life of the process: the vendor
+driver frees the buffer on the last close, and an `mmap` after that can panic the kernel.
 
 ### `alarm-core`
 
@@ -42,13 +46,14 @@ crates/
 |---|---|
 | `time` | `UnixSeconds`, `TimeOfDay`, `Weekday`, `UtcOffset` — civil time without a tz database |
 | `alarm` | `Alarm`, `Weekdays`, and when an alarm next fires after a given instant |
-| `hardware` | the traits `Clock`, `WakeAlarm`, `Suspend`, `Vibrator`, `Battery`, and `HardwareError` |
+| `hardware` | the traits `Clock`, `WakeAlarm`, `Suspend`, `Vibrator`, `Battery`, `Display`, and `HardwareError` |
 | `schedule` | `arm_next`: read the clock, pick the earliest alarm, arm or disarm the RTC |
 | `battery` | `ChargeLimit`, `BatteryReading`, `stop_at_limit` and the 20 % mark — ADR 0008, D3 |
+| `face` | `Frame` and `render`: `HH:MM` in seven-segment digits and the battery mark; `show_time` |
 
-Display and input traits are not defined yet. The panel is the legacy framebuffer,
-`/dev/graphics/fb0`, with no DRM (ADR 0004); what the touch controller reports is read off
-the device first.
+An input trait is not defined yet. The panel is the legacy framebuffer, `/dev/fb0` under
+our `devtmpfs`, with no DRM (ADR 0004); what the touch controller reports is read off the
+device first.
 
 ### The loop, as intended
 

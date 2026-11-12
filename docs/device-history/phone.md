@@ -746,3 +746,54 @@ enter_recovery=1` and `misc`'s command field still zero. TWRP's `console-ramoops
 `/sys/class/udc/hisi-usb-otg` was there at the first look, so the wait for it never ran.
 The ROM's `/init` was renamed back, hashing to `e8e2768e…78ef`, and the ROM reached
 `sys.boot_completed` 1.
+
+## 2026-11-12 — the panel, for issue 10
+
+**`fb0` is `hisifb0`, 1080×2280 XRGB8888 in three pages**, read from the debug shell
+under our `/init`, where `devtmpfs` names it `/dev/fb0`. `/sys/class/graphics/fb0` reads
+`modes` `U:1080x2280p-0`, `bits_per_pixel` 32, `stride` 4320, `pan` `0,0`.
+`FBIOGET_VSCREENINFO` and `FBIOGET_FSCREENINFO`, recorded byte for byte in
+`crates/framebuffer/testdata/`:
+
+```
+xres 1080  yres 2280  xres_virtual 1080  yres_virtual 6840  bits_per_pixel 32
+red 16/8  green 8/8  blue 0/8  transp 0/0
+type 0 (packed pixels)  visual 2 (truecolor)  line_length 4320  smem_len 29552640
+```
+
+**A draw reaches the panel only after a pan.** A probe filled page 1 with `ffff0000` over
+its complement and ran `FBIOPAN_DISPLAY` with `yoffset` 2280; the panel showed red on top
+and cyan below, so red is bits 16–23 and the pan is what puts a page on the panel.
+
+**`open` lights the panel and the last `close` turns it off and frees the buffer.** The
+kernel log shows `lcdkit_off` and `dpe_regulator_disable` on the last close. The backlight is `/sys/class/leds/lcd_backlight0/brightness`, 4000
+after a reboot; `alarmd` writes 2000, logged as `hisifb_set_backlight: … bkl_lvl = 2000`.
+
+**An `mmap` after the buffer was freed can take the kernel down.** Twice in one boot, a
+process mapped `fb0` after another had closed it:
+
+```
+alarmd: Unable to handle kernel NULL pointer dereference at virtual address 0000000c
+PC is at hisi_fb_mmap+0x1ec/0x360
+LR is at fb_mmap+0x6c/0x150
+Kernel panic - not syncing
+```
+
+and once mapped pages outside memory instead, `alarmd: Unhandled fault: level 3 address
+size fault (0x92000043)` on its first write, with the next probe's `mmap` panicking as
+above. Each panic rebooted into the debug `/init`. Thirty open, map, write, unmap, close
+cycles in one process before that raised nothing, so the cycles are not proof of safety.
+The first `mmap` of a boot never failed: `alarmd` maps `fb0` once and never closes it.
+
+**The RTC read 1970.** `date` under the debug `/init` gave 1 January 1970, against the
+issue's assumption. It was set from the Mac's UTC with `date -u` and `toybox hwclock -w -u
+-f /dev/rtc0`, and read back 1794512278 at 19:37:58 UTC.
+
+**`alarmd` draws the local time and moves it at the minute**, at
+`d1ccabdeab41d69d6c0e126b591a70cc2e448502bc574080eca7aa1b49639065`, 350328 bytes.
+Pushed to `/mnt` on a fresh boot and run as the first user of `fb0` at 19:48:46 UTC, the
+panel showed `20:48` in white on black, then `20:49`; its log had `RUNNINGTEST set charge
+enable = 0`, the charge stop at 80 %. Swapped onto `system` from TWRP in place of the debug
+`/init`, with `init.rom` at `e8e2768e…78ef` and `misc`'s command field zeroed, and rebooted
+at 19:53 UTC: the panel showed the local time once booted and changed at the next minute.
+`alarmd` is `/init` on `system` now.
