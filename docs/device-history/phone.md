@@ -816,3 +816,47 @@ The same hash as issue 8's repacked image. The tag `2024-04-01-1230` is commit
 `4a89ea72d610f5e3cd7d23d9d3b0919eba9fa8a2`. The release before it, `2024-04-01-1229`, was
 published at 00:29:23, before the build time. Where the ROM and TWRP were downloaded from
 was not found: a search for `0.23-p-20250919-UNOFFICIAL-anne` returned nothing.
+
+## 2026-11-12 — touch and the side keys, for issue 11
+
+**The input devices**, read from the debug shell under our `/init`, by
+`/sys/class/input/eventN/device/name`:
+
+| Node | Name | Reports |
+|---|---|---|
+| `event0` | `hisi_gpio_key` | `KEY_VOLUMEDOWN` 114, `KEY_VOLUMEUP` 115 |
+| `event1` | `hisi_on` | `KEY_POWER` 116 |
+| `event2` | `fingerprint` | — |
+| `event3` | `HI6250_hi6555c_CARD Headset Jack` | — |
+| `event4` | `huawei,ts_kit` | a Goodix GT1158, multi-touch protocol A |
+
+A record is the 24-byte aarch64 `input_event`: `tv_sec` and `tv_usec` as 64-bit, then
+`type` u16, `code` u16 and `value` i32, little-endian. A touch frame is
+`ABS_MT_PRESSURE`, `ABS_MT_POSITION_X` (0–1080), `ABS_MT_POSITION_Y` (0–2280),
+`ABS_MT_TRACKING_ID`, `SYN_MT_REPORT`, `BTN_TOUCH` 1 in the first frame only, and
+`SYN_REPORT`; the release is `SYN_MT_REPORT`, `BTN_TOUCH` 0, `SYN_REPORT`. There is no
+`ABS_MT_SLOT`. The keys send `EV_KEY` 1 and 0 with a `SYN_REPORT` each. Recorded in
+`crates/input/testdata/`: four taps, at (509, 1100), (564, 1142), (645, 1209) and
+(635, 1139), 5136 bytes; Volume Up then Volume Down twice, 288 bytes; Power, 96 bytes.
+
+**Under our `/init`, `huawei,ts_kit` waits for its firmware.** The driver asks for
+`ts/anne_gt1x_1158_auo.bin` through the kernel's user helper and waits 60 s in
+`/sys/class/firmware/ts!anne_gt1x_1158_auo.bin/`; no `event4` exists until it is answered.
+The file is on `odm` (`mmcblk0p44`, ext4, uevent `PARTNAME=odm`), under
+`etc/firmware/ts/`. Mounted read-only and answered with `loading` 1, the file into `data`,
+`loading` 0, `event4` appeared, and the driver asked next for
+`ts/anne_gt1x_anne54030_mutto.img`, the same version as the controller's, so it flashed
+nothing. `odm` is only ever mounted read-only.
+
+**Touch works only while `fb0` is open.** Closing the panel logs `lcdkit_off`, which
+suspends the GT1158; the taps above were recorded with a process holding `/dev/fb0`.
+
+**`alarmd` sets, rings, snoozes and dismisses**, at
+`e8d42ffeeab7825ce29ed53873e6fb9978ef1d06c74294d197c898752c2998ff`, 397688 bytes, swapped
+onto `system` from TWRP in place of the debug `/init`, with `init.rom` at `e8e2768e…78ef`
+and `misc`'s command field zeroed, and rebooted at 20:44:45 UTC with no cable attached. The
+alarm, grey, was stepped by taps to two minutes ahead and armed by a tap off it; at that
+minute the panel turned amber, and a volume key returned it to black. In a second boot at
+20:51:53 UTC, the user saw it ring again after the snooze and Power dismiss it. Leaving
+by the keys emptied pstore, and `dfx` held only an older boot, so neither run left a log.
+`alarmd` is `/init` on `system` now.

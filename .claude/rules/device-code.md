@@ -10,7 +10,9 @@ paths:
 - **Allow `unsafe` per adapter crate only**, in its own `[lints]` table, and wrap each
   block in a function whose signature is safe.
 - **Open a device once, at start-up**, and hand the adapter to the loop; a device that
-  does not open is a `HardwareError::Absent` before anything is drawn.
+  does not open is a `HardwareError::Absent` before anything is drawn. A device the kernel
+  registers late, as touch after its firmware, is opened when it appears, and the adapter
+  says which are still absent.
 - **Keep the binary static.** No dependency that needs a C library at run time or a
   `build.rs` that links one; `/init` runs with nothing beside it.
 - **Build `/init` `#![no_main]`, with an `extern "C" fn main`.** It starts with file
