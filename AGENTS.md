@@ -68,20 +68,28 @@ The numbers are stable: cite them, and keep them consecutive when one is added.
 
 ## Device safety
 
-**Write only the `kernel` partition**, which holds the boot image; there is no `boot`.
-Never flash, erase or format `recovery_ramdisk`, `recovery_vendor`, `recovery_vbmeta`,
-`erecovery_kernel`, `erecovery_ramdisk`, `vbmeta`, `system`, `vendor`, `oeminfo`, `nvme`
-or any partition but `kernel`, and never relock the bootloader.
+**Run any command on the phone without asking** — `adb`, `fastboot flash`, `erase` and
+`format`, `dd` from the ROM or TWRP. A soft brick is acceptable; a hard brick never is.
+→ ADR 0005, D4.
 
-**Back up the stock `boot.img` in `kernel` before the first write**, and keep it off the
-repository.
-→ `docs/SECURITY.md`, *Bricking*.
+**Never write, erase or format a partition that can hard-brick the phone**, by `fastboot`
+or by `dd`: the eMMC boot areas (`mmcblk0boot0`, `mmcblk0boot1`), `xloader`, the
+partition table (`ptable`), `vrl`, `vrl_backup`, `fastboot`, `nvme` or `oeminfo`.
+
+**Never relock the bootloader** — no `flashing lock`, `oem lock` or anything that relocks.
+
+**Read a partition whose role is not recorded in `docs/device-history/phone.md` before
+writing it**, and record the role there.
+
+**Back up a partition off the repository before its first write**, under
+`~/p20-backups/`, and never delete a backup there. → `docs/SECURITY.md`, *Bricking*.
+
+**Flash the boot image to `kernel`**; there is no `boot`.
+
+**Write an image only after its sha256 and size are checked.** → ADR 0005, D1.
 
 **Never commit an image, kernel, firmware, device tree or anything read off the phone.**
 `.gitignore` lists them, and `checks / secrets` fails the build if one is tracked.
-
-**Ask before any command that writes to the phone** — `fastboot flash`, `fastboot erase`,
-`dd` on the device — even when the procedure names it.
 
 ## Tooling
 

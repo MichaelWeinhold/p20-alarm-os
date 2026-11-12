@@ -62,24 +62,38 @@ booted, and the partition hashed to the backup.
 **When fastboot cannot be reached**, the second way back is TWRP: hold Power until black,
 then Volume Up and Power together. It comes up as an adb `recovery` device with a root
 shell that reads `mmcblk0p31`. Writing from it would be `adb push` of the stock image and
-a `dd` onto `/dev/block/by-name/kernel`; that write has not been tried, and is the one
-command in this ADR that still needs a yes each time (D4).
+a `dd` onto `/dev/block/by-name/kernel`; that write has not been tried.
 
-### D4. What an agent runs on its own
+### D4. An agent runs anything on the phone that cannot hard-brick it
 
-On 2026-11-11 the operator gave standing permission for `adb` and `fastboot`: "on adb and
-fastboot you have full access … allways". Within that, the line is drawn by what can
-brick the phone, not by whether a command writes:
+On 2026-11-11 the operator gave standing permission for `adb` and `fastboot`. On
+2026-11-12 they widened it to every command on this test phone, erases included: "do what
+ever you wanbt whcih does not brick the phone compleatly. a softbreak is not a problem
+only a hard one where it is compleatly death is". No command on the phone waits for a yes.
 
-| Runs without asking | Never runs |
+The line is a **hard brick**: a phone that can no longer reach fastboot, or that has lost
+what no backup restores. A soft brick — a ROM, recovery or image that no longer boots,
+with fastboot still answering — is accepted, since D3 or a reflash from fastboot undoes
+it.
+
+On the Kirin 659 the boot ROM loads `xloader` from the eMMC boot area, which loads
+`fastboot`, verified against `vrl`; the partition table says where each one is. So these
+are never written, erased or formatted, by `fastboot` or by `dd`:
+
+| Partition | Why it is a hard brick |
 |---|---|
-| `adb devices`, `adb shell` reads, `adb root`, `adb reboot` and `adb reboot bootloader` | a write to any partition but `kernel` |
-| `fastboot devices`, `getvar`, `oem get-product-model`, `oem get-build-number`, `oem lock-state info` | `fastboot erase`, `format`, `flashing lock`, `oem lock`, or anything that relocks |
-| `fastboot reboot`, `reboot-bootloader` and the USB reset | `fastboot flash` of an image whose sha256 and size were not checked first (D1) |
-| `fastboot flash kernel` of an image that passed D1, the stock image included | a `dd` that writes on the phone, without a yes |
+| the eMMC boot areas (`mmcblk0boot0`, `mmcblk0boot1`) and `xloader` | the first stage after the boot ROM |
+| the partition table (`ptable`, the GPT) | every later stage is found through it |
+| `vrl` (`mmcblk0p1`), `vrl_backup` (`mmcblk0p2`) | what the bootloader is verified against |
+| `fastboot` (`mmcblk0p5`) | the bootloader itself, and the only way back |
+| `nvme` (`mmcblk0p7`), `oeminfo` (`mmcblk0p8`) | the phone's identity, calibration and unlock state, which exist nowhere else |
 
-A `dd` that writes on the phone, from the ROM or from TWRP, needs a yes each time:
-its `of=` can name any partition, and `fastboot flash` can only name the one given.
+Neither is the bootloader ever relocked — `flashing lock`, `oem lock` or anything else
+that relocks — since a locked bootloader with a modified image may refuse to boot and to
+unlock again. A partition whose place in the boot chain is not yet known is read and its
+role recorded in `docs/device-history/phone.md` before it is written. Every partition is
+backed up off the repository before its first write, and `~/p20-backups/` is never
+deleted. An image is still written only after D1's sha256 and size check.
 
 ### D5. The boot-fail monitor counts only what raises an error
 
@@ -113,13 +127,17 @@ can name any partition. *Reopens if* fastboot can no longer be reached and the R
 boots.
 
 **TWRP as the first way to write.** It needs the phone in recovery, which is two steps
-from fastboot, and its write is a `dd` (D4). It stays the second way back. *Reopens if*
-`fastboot flash kernel` stops working.
+from fastboot, and its write is a `dd`, whose `of=` can name a partition on D4's list. It
+stays the second way back. *Reopens if* `fastboot flash kernel` stops working.
 
-**Asking before every write, as `AGENTS.md` says today.** The operator turned it down for
-`adb` and `fastboot`; the boundaries in D4 are what keep a write recoverable, and asking
-added none. *Reopens if* a write ever lands outside `kernel`, or a rollback ever fails to
-hash to the backup.
+**Asking before every write.** The operator turned it down; the hard-brick list in D4 is
+what keeps the phone recoverable, and asking added none. *Reopens if* a command ever
+leaves the phone unable to reach fastboot.
+
+**Writing only `kernel`, with a yes before any `dd`** — D4 as accepted on 2026-11-11. It
+kept every soft brick out too, which on a test phone costs a stop for approval and buys
+nothing D3 does not. *Reopens if* the phone stops being a test phone, or a soft brick
+ever fails to come back from fastboot.
 
 **Huawei's own update paths** — HiSuite, `dload` from an SD card, eRecovery's download.
 Each rewrites far more than `kernel`. *Reopens* never as a way to try an image; at most as
@@ -133,9 +151,8 @@ a last resort that gives up the custom ROM.
   `ANE-LX1`, both lock states are `UNLOCKED`, the backup is present and hashes to the
   value above, and the image passes D1. The USB reset belongs to it, and the PR that adds
   it answers ADR 0001, D7 for `pyusb`. Filed under this issue.
-- **`AGENTS.md`'s "Ask before any command that writes to the phone"** is narrowed to D4's
-  table, and `docs/SECURITY.md`'s *Bricking* with it. The narrowing is filed under this
-  issue, after issue 16 names `kernel` in the same section.
+- **`AGENTS.md`'s *Device safety* states D4**: no command on the phone asks, and the
+  hard-brick list never runs. `docs/SECURITY.md`'s *Bricking* follows. Issue 21.
 - **No separate `using-the-phone` skill.** Reading the phone over adb is D4's left column;
   reading it over the debug lifeline is issue 15's.
 - **The initramfs never creates `/eng`**, so the kernel itself counts the boot as
