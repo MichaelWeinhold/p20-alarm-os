@@ -241,3 +241,27 @@ before any USB reset:
 ```
 the image …/oversized.img is 25165825 bytes, over kernel's 25165824
 ```
+
+## 2026-11-12 — the flashing-the-phone skill, for issue 20
+
+The skill followed once end to end, with `~/p20-backups/kernel-mmcblk0p31-stock.img` as
+the image, so the flash was also the rollback. The phone was already in *Fastboot & Rescue
+mode*: `adb devices` listed nothing, and `device_preflight.py --reset` exited 0.
+
+**The preflight**, exit 0, printed the image's sha256 as
+`fe6e372eaf56b4358905443e3c475bde05851d7acd1cadbce395a376b4986a84`, `ANE-LX1`, and `FB
+UNLOCKED, USER UNLOCKED`.
+
+**The flash**, `timeout 120 fastboot flash kernel ~/p20-backups/kernel-mmcblk0p31-stock.img
+reboot`, as the next invocation, exit 0:
+
+```
+Warning: skip copying kernel image avb footer (kernel partition size: 0, kernel image size: 25165824).
+Sending 'kernel' (24576 KB)                        OKAY [  0.686s]
+Writing 'kernel'                                   OKAY [  0.125s]
+Rebooting                                          OKAY [  0.029s]
+```
+
+**After it**, the ROM booted (`sys.boot_completed` 1), and after `adb root`, `adb shell
+sha256sum /dev/block/mmcblk0p31` read
+`fe6e372eaf56b4358905443e3c475bde05851d7acd1cadbce395a376b4986a84`.
