@@ -88,10 +88,9 @@ adb shell sha256sum /dev/block/mmcblk0p31
 Volume Up and Power together. `adb devices` lists it as `recovery`, with a root shell;
 `adb reboot` returns to the ROM.
 
-⚠️ Swipe nothing in TWRP, and write nothing from it without a yes. → ADR 0005, D3 and D4.
+⚠️ From TWRP, write no partition on ADR 0005, D4's hard-brick list. → ADR 0005, D3 and D4.
 
-**Open.** The flashing skill, the device preflight and the narrowed device-safety rule
-are issue 7's follow-ups; what the boot-fail monitor counts is read when an image of ours
-first fails. → ADR 0005, D5.
+**Open.** The flashing skill and the device preflight are issue 7's follow-ups; what the
+boot-fail monitor counts is read when an image of ours first fails. → ADR 0005, D5.
 
 The readings: [docs/device-history/phone.md](../device-history/phone.md).

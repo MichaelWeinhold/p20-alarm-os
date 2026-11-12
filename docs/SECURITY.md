@@ -7,10 +7,10 @@ phone, and publishing something that should not be.
 
 | Risk | What holds it |
 |---|---|
-| Writing the wrong partition | Only `kernel` is ever written; `AGENTS.md`, *Device safety*. Every write is a command a person approves. |
-| Losing the way back | The stock `boot.img` is backed up off-repository before the first write; recovery and fastboot are never touched, so flashing the stock image restores the phone. |
+| Writing the wrong partition | A soft brick is accepted on this test phone and needs no approval; the partitions that would hard-brick it are never written, erased or formatted. `AGENTS.md`, *Device safety*; ADR 0005, D4. |
+| Losing the way back | Every partition is backed up off-repository before its first write; `fastboot` and everything before it are never touched, so flashing a backup from fastboot restores the phone. |
 | A boot that never draws | The debug initramfs (P2) comes before anything else boots; Huawei refuses a tethered `fastboot boot`, so every try writes `kernel` and the rollback is the stock image written back (ADR 0005). |
-| Relocking the bootloader | Never done. A relocked bootloader with a modified `kernel` is the one state that may not recover. |
+| Relocking the bootloader | Never done. A relocked bootloader with a modified image is a state that may not recover. |
 | `oeminfo` / `nvme` | Hold the phone's identity and calibration. Never read into the repository, never written. |
 
 ## What must never be published
