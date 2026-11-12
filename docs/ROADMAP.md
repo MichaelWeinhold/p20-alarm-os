@@ -54,6 +54,19 @@ reading is in `docs/device-history/`.
 
 Ring the alarm through the vibrator.
 
+## Research before P7
+
+- **Where settings persist across a reboot.** Issue 30. The initramfs lives in RAM, so an
+  alarm set on the phone needs a spare partition on the eMMC that the ROM can do without.
+
+## P7 — Settings and a timer
+
+Issue 31. A settings screen for the alarms, the clock and the UTC offset, and a countdown
+timer armed through the RTC like an alarm.
+
+**Done when:** an alarm and the clock set on the phone survive a reboot, and a timer wakes
+a suspended phone when it ends.
+
 ## Parked
 
 - **Speaker audio without Android** — the Kirin DSP, its firmware and mixer routing.
