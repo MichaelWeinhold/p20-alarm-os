@@ -2,6 +2,7 @@
 .env
 .env.*
 config.toml
+!/.cargo/config.toml
 *.pem
 *.key
 
