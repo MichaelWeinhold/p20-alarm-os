@@ -65,6 +65,22 @@ impl TimeOfDay {
     }
 
     #[must_use]
+    pub fn stepped_hour(self, step: i8) -> Self {
+        Self {
+            hour: wrapped(self.hour, step, 24),
+            minute: self.minute,
+        }
+    }
+
+    #[must_use]
+    pub fn stepped_minute(self, step: i8) -> Self {
+        Self {
+            hour: self.hour,
+            minute: wrapped(self.minute, step, 60),
+        }
+    }
+
+    #[must_use]
     pub fn at(now: UnixSeconds, offset: UtcOffset) -> Self {
         let seconds = (now.0 + offset.seconds()).rem_euclid(SECONDS_PER_DAY);
         Self {
@@ -72,6 +88,15 @@ impl TimeOfDay {
             minute: u8::try_from(seconds % SECONDS_PER_HOUR / SECONDS_PER_MINUTE).unwrap_or(0),
         }
     }
+}
+
+fn wrapped(value: u8, step: i8, modulo: i16) -> u8 {
+    u8::try_from((i16::from(value) + i16::from(step)).rem_euclid(modulo)).unwrap_or(0)
+}
+
+#[must_use]
+pub fn start_of_minute(now: UnixSeconds) -> UnixSeconds {
+    UnixSeconds(now.0 - now.0.rem_euclid(SECONDS_PER_MINUTE))
 }
 
 #[must_use]
@@ -201,6 +226,34 @@ mod tests {
             TimeOfDay::new(23, 30)?
         );
         Ok(())
+    }
+
+    #[test]
+    fn a_step_wraps_within_its_own_field() -> Result<(), TimeError> {
+        assert_eq!(
+            TimeOfDay::new(23, 59)?.stepped_hour(1),
+            TimeOfDay::new(0, 59)?
+        );
+        assert_eq!(
+            TimeOfDay::new(0, 0)?.stepped_hour(-1),
+            TimeOfDay::new(23, 0)?
+        );
+        assert_eq!(
+            TimeOfDay::new(7, 59)?.stepped_minute(1),
+            TimeOfDay::new(7, 0)?
+        );
+        assert_eq!(
+            TimeOfDay::new(7, 0)?.stepped_minute(-1),
+            TimeOfDay::new(7, 59)?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_minute_starts_on_its_first_second() {
+        assert_eq!(start_of_minute(UnixSeconds(179)), UnixSeconds(120));
+        assert_eq!(start_of_minute(UnixSeconds(120)), UnixSeconds(120));
+        assert_eq!(start_of_minute(UnixSeconds(-1)), UnixSeconds(-60));
     }
 
     #[test]
