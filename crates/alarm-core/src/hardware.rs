@@ -1,6 +1,7 @@
 use std::fmt;
 
 use crate::battery::BatteryReading;
+use crate::face::{Frame, Size};
 use crate::time::UnixSeconds;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,4 +45,9 @@ pub trait Battery {
     fn read(&self) -> Result<BatteryReading, HardwareError>;
     fn charger_enabled(&self) -> Result<bool, HardwareError>;
     fn set_charger_enabled(&mut self, enabled: bool) -> Result<(), HardwareError>;
+}
+
+pub trait Display {
+    fn size(&self) -> Size;
+    fn show(&mut self, frame: &Frame) -> Result<(), HardwareError>;
 }

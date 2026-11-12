@@ -63,6 +63,20 @@ impl TimeOfDay {
     pub fn seconds_into_day(self) -> i64 {
         i64::from(self.hour) * SECONDS_PER_HOUR + i64::from(self.minute) * SECONDS_PER_MINUTE
     }
+
+    #[must_use]
+    pub fn at(now: UnixSeconds, offset: UtcOffset) -> Self {
+        let seconds = (now.0 + offset.seconds()).rem_euclid(SECONDS_PER_DAY);
+        Self {
+            hour: u8::try_from(seconds / SECONDS_PER_HOUR).unwrap_or(0),
+            minute: u8::try_from(seconds % SECONDS_PER_HOUR / SECONDS_PER_MINUTE).unwrap_or(0),
+        }
+    }
+}
+
+#[must_use]
+pub fn seconds_to_next_minute(now: UnixSeconds) -> u64 {
+    (SECONDS_PER_MINUTE - now.0.rem_euclid(SECONDS_PER_MINUTE)).unsigned_abs()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -159,6 +173,42 @@ mod tests {
     fn a_time_of_day_counts_its_seconds() -> Result<(), TimeError> {
         assert_eq!(TimeOfDay::new(6, 45)?.seconds_into_day(), 24_300);
         Ok(())
+    }
+
+    #[test]
+    fn the_time_of_day_is_read_in_local_time() -> Result<(), TimeError> {
+        let evening = UnixSeconds(20_768 * SECONDS_PER_DAY + 19 * 3_600 + 37 * 60 + 58);
+        assert_eq!(
+            TimeOfDay::at(evening, UtcOffset::UTC),
+            TimeOfDay::new(19, 37)?
+        );
+        let berlin_winter = UtcOffset::from_seconds(3_600)?;
+        assert_eq!(
+            TimeOfDay::at(evening, berlin_winter),
+            TimeOfDay::new(20, 37)?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn the_local_day_wraps_past_midnight() -> Result<(), TimeError> {
+        let late = UnixSeconds(20_768 * SECONDS_PER_DAY + 23 * 3_600 + 30 * 60);
+        let plus_two = UtcOffset::from_seconds(7_200)?;
+        assert_eq!(TimeOfDay::at(late, plus_two), TimeOfDay::new(1, 30)?);
+        let minus_one = UtcOffset::from_seconds(-3_600)?;
+        assert_eq!(
+            TimeOfDay::at(UnixSeconds(1_800), minus_one),
+            TimeOfDay::new(23, 30)?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn the_next_minute_is_never_zero_seconds_away() {
+        assert_eq!(seconds_to_next_minute(UnixSeconds(120)), 60);
+        assert_eq!(seconds_to_next_minute(UnixSeconds(121)), 59);
+        assert_eq!(seconds_to_next_minute(UnixSeconds(179)), 1);
+        assert_eq!(seconds_to_next_minute(UnixSeconds(-1)), 1);
     }
 
     #[test]

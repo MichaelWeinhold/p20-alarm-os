@@ -124,6 +124,13 @@ pub fn shows_low_mark(capacity: Percent) -> bool {
     capacity <= LOW_MARK
 }
 
+#[must_use]
+pub fn wants_mark(battery: &impl Battery) -> bool {
+    battery
+        .read()
+        .map_or(true, |reading| shows_low_mark(reading.capacity))
+}
+
 pub fn stop_at_limit(
     limit: ChargeLimit,
     battery: &mut impl Battery,
@@ -300,6 +307,26 @@ mod tests {
         assert!(shows_low_mark(Percent::new(20)?));
         assert!(!shows_low_mark(Percent::new(21)?));
         Ok(())
+    }
+
+    #[test]
+    fn the_mark_follows_the_capacity() -> Result<(), BatteryError> {
+        assert!(wants_mark(&FakeBattery::new(
+            20,
+            ChargeStatus::Discharging,
+            true
+        )?));
+        assert!(!wants_mark(&FakeBattery::new(
+            21,
+            ChargeStatus::Discharging,
+            true
+        )?));
+        Ok(())
+    }
+
+    #[test]
+    fn an_unreadable_battery_shows_the_mark() {
+        assert!(wants_mark(&FakeBattery::unreadable(Some(true))));
     }
 
     #[test]
