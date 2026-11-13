@@ -2,6 +2,7 @@ use crate::alarm::{Alarm, Weekdays};
 use crate::face::{Face, Size, Step, Target, render, target};
 use crate::hardware::{Clock, Display, HardwareError, Input};
 use crate::input::{InputEvent, Key};
+use crate::light::Light;
 use crate::time::{TimeOfDay, UnixSeconds, UtcOffset, start_of_minute};
 
 pub const SNOOZE_SECONDS: i64 = 9 * 60;
@@ -121,13 +122,18 @@ pub fn show(
     clock: &impl Clock,
     offset: UtcOffset,
     ringer: &mut Ringer,
+    light: &mut Light,
     low_battery: bool,
     display: &mut impl Display,
 ) -> Result<UnixSeconds, HardwareError> {
     let now = clock.now()?;
     ringer.tick(now, offset);
-    let frame = render(display.size(), &ringer.face(now, offset, low_battery));
-    display.show(&frame)?;
+    light.tick(now, ringer.ring());
+    display.light(light.lit())?;
+    if light.lit() {
+        let frame = render(display.size(), &ringer.face(now, offset, low_battery));
+        display.show(&frame)?;
+    }
     Ok(now)
 }
 
@@ -138,11 +144,17 @@ pub fn listen(
     offset: UtcOffset,
     size: Size,
     ringer: &mut Ringer,
+    light: &mut Light,
 ) -> Result<Option<InputEvent>, HardwareError> {
     let Some(event) = input.wait(seconds)? else {
         return Ok(None);
     };
-    ringer.heard(event, size, clock.now()?, offset);
+    let now = clock.now()?;
+    let ring = ringer.ring();
+    if light.lit() {
+        ringer.heard(event, size, now, offset);
+    }
+    light.heard(event, ring, now);
     Ok(Some(event))
 }
 
@@ -153,6 +165,7 @@ mod tests {
 
     use super::*;
     use crate::face::Frame;
+    use crate::light::LIT_SECONDS;
     use crate::time::TimeError;
 
     const PANEL: Size = Size {
@@ -212,6 +225,7 @@ mod tests {
     #[derive(Default)]
     struct FakeDisplay {
         shown: Vec<Frame>,
+        lit: Vec<bool>,
     }
 
     impl Display for FakeDisplay {
@@ -223,6 +237,11 @@ mod tests {
             self.shown.push(frame.clone());
             Ok(())
         }
+
+        fn light(&mut self, on: bool) -> Result<(), HardwareError> {
+            self.lit.push(on);
+            Ok(())
+        }
     }
 
     fn drain(
@@ -230,8 +249,13 @@ mod tests {
         clock: &FakeClock,
         ringer: &mut Ringer,
     ) -> Result<(), HardwareError> {
-        while listen(input, 60, clock, UtcOffset::UTC, PANEL, ringer)?.is_some() {}
+        let mut light = always();
+        while listen(input, 60, clock, UtcOffset::UTC, PANEL, ringer, &mut light)?.is_some() {}
         Ok(())
+    }
+
+    fn always() -> Light {
+        Light::lit_at(UnixSeconds(0), i64::MAX / 2)
     }
 
     fn ringer(hour: u8, minute: u8) -> Result<Ringer, TimeError> {
@@ -255,10 +279,24 @@ mod tests {
 
         let mut display = FakeDisplay::default();
         clock.pass(60);
-        show(&clock, UtcOffset::UTC, &mut ringer, false, &mut display)?;
+        show(
+            &clock,
+            UtcOffset::UTC,
+            &mut ringer,
+            &mut always(),
+            false,
+            &mut display,
+        )?;
         assert_eq!(ringer.ring(), Ring::Quiet);
         clock.pass(60);
-        show(&clock, UtcOffset::UTC, &mut ringer, false, &mut display)?;
+        show(
+            &clock,
+            UtcOffset::UTC,
+            &mut ringer,
+            &mut always(),
+            false,
+            &mut display,
+        )?;
         assert_eq!(ringer.ring(), Ring::Ringing);
         assert!(ringer.face(clock.now()?, UtcOffset::UTC, false).ringing);
 
@@ -267,17 +305,38 @@ mod tests {
         let snoozed_until = UnixSeconds(20_768 * 86_400 + 7 * 3_600 + 9 * 60);
         assert_eq!(ringer.ring(), Ring::Snoozed(snoozed_until));
         clock.pass(8 * 60 + 24);
-        show(&clock, UtcOffset::UTC, &mut ringer, false, &mut display)?;
+        show(
+            &clock,
+            UtcOffset::UTC,
+            &mut ringer,
+            &mut always(),
+            false,
+            &mut display,
+        )?;
         assert_eq!(ringer.ring(), Ring::Snoozed(snoozed_until));
         clock.pass(1);
-        show(&clock, UtcOffset::UTC, &mut ringer, false, &mut display)?;
+        show(
+            &clock,
+            UtcOffset::UTC,
+            &mut ringer,
+            &mut always(),
+            false,
+            &mut display,
+        )?;
         assert_eq!(ringer.ring(), Ring::Ringing);
 
         drain(&mut FakeInput::with(&[DISMISS]), &clock, &mut ringer)?;
         assert_eq!(ringer.ring(), Ring::Quiet);
         assert!(ringer.armed());
         clock.pass(60);
-        show(&clock, UtcOffset::UTC, &mut ringer, false, &mut display)?;
+        show(
+            &clock,
+            UtcOffset::UTC,
+            &mut ringer,
+            &mut always(),
+            false,
+            &mut display,
+        )?;
         assert_eq!(ringer.ring(), Ring::Quiet);
         assert_eq!(display.shown.len(), 5);
         Ok(())
@@ -337,7 +396,7 @@ mod tests {
         let clock = FakeClock::at(6, 59, 0);
         let mut ringer = ringer(7, 0)?;
         drain(
-            &mut FakeInput::with(&[SNOOZE, DISMISS, ELSEWHERE]),
+            &mut FakeInput::with(&[SNOOZE, ELSEWHERE, DISMISS]),
             &clock,
             &mut ringer,
         )?;
@@ -362,7 +421,15 @@ mod tests {
         let mut input = FakeInput::default();
         input.events.push_back(Err(HardwareError::Absent("touch")));
         assert_eq!(
-            listen(&mut input, 30, &clock, UtcOffset::UTC, PANEL, &mut ringer),
+            listen(
+                &mut input,
+                30,
+                &clock,
+                UtcOffset::UTC,
+                PANEL,
+                &mut ringer,
+                &mut always()
+            ),
             Err(HardwareError::Absent("touch"))
         );
         assert_eq!(input.waited, [30]);
@@ -376,10 +443,140 @@ mod tests {
         let clock = FakeClock::at(5, 59, 0);
         let mut ringer = ringer(7, 0)?;
         let mut input = FakeInput::with(&[ELSEWHERE]);
-        listen(&mut input, 60, &clock, berlin_winter, PANEL, &mut ringer)?;
+        listen(
+            &mut input,
+            60,
+            &clock,
+            berlin_winter,
+            PANEL,
+            &mut ringer,
+            &mut always(),
+        )?;
         clock.pass(60);
         ringer.tick(clock.now()?, berlin_winter);
         assert_eq!(ringer.ring(), Ring::Ringing);
+        Ok(())
+    }
+
+    #[test]
+    fn a_dark_panel_draws_nothing_until_a_ringing_alarm_lights_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut ringer = ringer(7, 0)?;
+        drain(&mut FakeInput::with(&[ELSEWHERE]), &clock, &mut ringer)?;
+        let mut light = Light::dark(LIT_SECONDS);
+        let mut display = FakeDisplay::default();
+        clock.pass(30);
+        show(
+            &clock,
+            UtcOffset::UTC,
+            &mut ringer,
+            &mut light,
+            false,
+            &mut display,
+        )?;
+        assert_eq!(display.lit, [false]);
+        assert_eq!(display.shown, Vec::<Frame>::new());
+        clock.pass(30);
+        show(
+            &clock,
+            UtcOffset::UTC,
+            &mut ringer,
+            &mut light,
+            false,
+            &mut display,
+        )?;
+        assert_eq!(display.lit, [false, true]);
+        assert_eq!(display.shown.len(), 1);
+        assert!(ringer.face(clock.now()?, UtcOffset::UTC, false).ringing);
+        Ok(())
+    }
+
+    #[test]
+    fn a_press_on_a_dark_panel_lights_it_and_leaves_a_snooze_alone()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut ringer = ringer(7, 0)?;
+        drain(&mut FakeInput::with(&[ELSEWHERE]), &clock, &mut ringer)?;
+        clock.pass(60);
+        ringer.tick(clock.now()?, UtcOffset::UTC);
+        drain(&mut FakeInput::with(&[SNOOZE]), &clock, &mut ringer)?;
+        let snoozed = ringer.ring();
+        let mut light = Light::dark(LIT_SECONDS);
+        let mut input = FakeInput::with(&[DISMISS]);
+        listen(
+            &mut input,
+            60,
+            &clock,
+            UtcOffset::UTC,
+            PANEL,
+            &mut ringer,
+            &mut light,
+        )?;
+        assert_eq!(ringer.ring(), snoozed);
+        assert!(light.lit());
+        let mut display = FakeDisplay::default();
+        show(
+            &clock,
+            UtcOffset::UTC,
+            &mut ringer,
+            &mut light,
+            false,
+            &mut display,
+        )?;
+        assert_eq!(display.lit, [true]);
+        assert_eq!(display.shown.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn a_touch_on_a_dark_panel_steps_nothing() -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut ringer = ringer(7, 0)?;
+        let mut light = Light::dark(LIT_SECONDS);
+        let mut input = FakeInput::with(&[HOUR_UP, ELSEWHERE]);
+        while listen(
+            &mut input,
+            60,
+            &clock,
+            UtcOffset::UTC,
+            PANEL,
+            &mut ringer,
+            &mut light,
+        )?
+        .is_some()
+        {}
+        assert_eq!(ringer, Ringer::new(TimeOfDay::new(7, 0)?));
+        assert!(!light.lit());
+        Ok(())
+    }
+
+    #[test]
+    fn a_press_on_a_lit_quiet_panel_turns_it_off() -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut ringer = ringer(7, 0)?;
+        let mut light = Light::lit_at(clock.now()?, LIT_SECONDS);
+        let mut input = FakeInput::with(&[DISMISS]);
+        listen(
+            &mut input,
+            60,
+            &clock,
+            UtcOffset::UTC,
+            PANEL,
+            &mut ringer,
+            &mut light,
+        )?;
+        let mut display = FakeDisplay::default();
+        show(
+            &clock,
+            UtcOffset::UTC,
+            &mut ringer,
+            &mut light,
+            false,
+            &mut display,
+        )?;
+        assert_eq!(display.lit, [false]);
+        assert_eq!(display.shown, Vec::<Frame>::new());
         Ok(())
     }
 }

@@ -3,6 +3,7 @@ pub mod battery;
 pub mod face;
 pub mod hardware;
 pub mod input;
+pub mod light;
 pub mod ringer;
 pub mod schedule;
 pub mod time;
