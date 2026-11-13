@@ -1,6 +1,6 @@
 # 8. Sleep between uses, light the panel only when used, and stop a charge at 80 %
 
-- **Status:** Accepted
+- **Status:** Accepted; D1 superseded by ADR 0010
 - **Date:** 2026-11-12
 - **Issue:** #39
 - **Supersedes:** ADR 0007, D2 and D4; amends ADR 0007, D6

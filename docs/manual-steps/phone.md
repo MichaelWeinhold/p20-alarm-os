@@ -210,6 +210,30 @@ it again, `exit` to TWRP and `adb reboot`.
 ⚠️ Nothing but the keys reaches a phone running it: Power until black, then Volume Up and
 Power for TWRP. That reset empties pstore, and `dfx` keeps no log of a run without a panic.
 
+**A suspend, off the cable**, from the debug shell on a fresh boot. The serial shell and
+the suspend need the cable in and out, so a script in `/mnt` waits for the cable to come
+out, then suspends. → `docs/device-history/phone.md`, issue 12.
+
+```sh
+mkdir -p /mnt/dbg && mount -t debugfs none /mnt/dbg
+: < /dev/fb0                                  # panel off; only after uptime 90 s
+echo 0 > /sys/class/rtc/rtc0/wakealarm && echo +600 > /sys/class/rtc/rtc0/wakealarm
+echo mem > /sys/power/state                   # from the script, once USB/online reads 0
+grep -E 'SR:|wake up irq|SUSPEND!|iavg_ua' /mnt/dmesg-1   # dmesg saved after the wake
+```
+
+Start the script with `exec sh /mnt/run.sh < /dev/null > /mnt/run.out 2>&1` typed into
+the top-level shell, and end it with a loop that runs `sh -i` on `/dev/ttyGS0`, so the
+shell comes back when the cable does.
+
+⚠️ Never open `/dev/fb0` after a suspend in the same boot: it panicked the kernel.
+
+⚠️ The phone powers off with `echo o > /proc/sysrq-trigger`; `reboot` needs Android's
+`init`. An RTC `wakealarm` does not switch it back on. A `timerfd` of
+`CLOCK_POWEROFF_ALARM` (12) set with `TFD_TIMER_ABSTIME` before the power-off does, 60 s
+before its target; the boot then reads `normal_reset_type=BR_POWEROFF_ALARM` in
+`/proc/cmdline`. A cold boot empties pstore and `/mnt`.
+
 **The boot-fail monitor.** One `/init` that panicked the kernel was enough for the next
 boot to start eRecovery. → ADR 0005, D5.
 
