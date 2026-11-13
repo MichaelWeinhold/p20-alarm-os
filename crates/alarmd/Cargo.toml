@@ -1,6 +1,6 @@
 [package]
 name = "alarmd"
-description = "The alarm clock as /init: the local time on the panel each minute, the charge held at its limit"
+description = "The alarm clock as /init: the time and one alarm on the panel, set by touch, snoozed and dismissed by the side keys, the charge held at its limit"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,6 +13,7 @@ alarm-core = { path = "../alarm-core" }
 battery = { path = "../battery" }
 clock = { path = "../clock" }
 framebuffer = { path = "../framebuffer" }
+input = { path = "../input" }
 pid1 = { path = "../pid1" }
 
 [lints.rust]

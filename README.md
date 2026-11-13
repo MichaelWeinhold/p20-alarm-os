@@ -29,7 +29,8 @@ documentation, starting from the vendor kernel rather than from nothing.
 | Battery and charging | **Decided.** The kernel charges under our `/init`; the phone sleeps between uses, lights the panel only when used, and stops a charge at 80 % — [ADR 0007](docs/adr/0007-hold-the-charge-and-leave-charging-to-the-kernel.md) and [ADR 0008](docs/adr/0008-sleep-between-uses-and-charge-to-eighty.md), issues 27 and 39. |
 | Debug shell over USB | **Decided.** A serial shell on a USB gadget, and the kernel log in pstore — [ADR 0009](docs/adr/0009-a-serial-shell-over-usb-and-logs-in-pstore.md), issue 15. Built in P2. |
 | Clock on screen | **Built and on the phone.** `alarmd` as `/init` draws the local time each minute, issue 10. |
-| Touch, RTC wake, vibration | Planned — P4 to P6. |
+| Touch and the side keys | **Built and on the phone.** One daily alarm set by touch, ringing on the panel, snoozed by a volume key, dismissed by Power, issue 11. |
+| RTC wake, vibration | Planned — P5 and P6. |
 | Speaker | Parked. |
 
 ## How it works

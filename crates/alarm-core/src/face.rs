@@ -1,14 +1,16 @@
-use crate::hardware::{Clock, Display, HardwareError};
-use crate::time::{TimeOfDay, UnixSeconds, UtcOffset};
+use crate::time::TimeOfDay;
 
 pub const BACKGROUND: Colour = Colour(0x00_0000);
 pub const FOREGROUND: Colour = Colour(0xff_ffff);
 pub const WARNING: Colour = Colour(0xff_3b30);
+pub const RINGING: Colour = Colour(0xff_9f0a);
+pub const DIM: Colour = Colour(0x63_6366);
 
 const UNITS_ACROSS: usize = 21;
 const DIGIT_UNITS: usize = 4;
 const DIGIT_HEIGHT_UNITS: usize = 7;
 const MARK_GAP_UNITS: usize = 2;
+const MARK_HEIGHT_UNITS: usize = 2;
 
 const SEGMENTS: [u8; 10] = [
     0b011_1111, 0b000_0110, 0b101_1011, 0b100_1111, 0b110_0110, 0b110_1101, 0b111_1101, 0b000_0111,
@@ -22,6 +24,28 @@ pub struct Colour(pub u32);
 pub struct Size {
     pub width: usize,
     pub height: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Face {
+    pub time: TimeOfDay,
+    pub alarm: TimeOfDay,
+    pub armed: bool,
+    pub ringing: bool,
+    pub low_battery: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Step {
+    Up,
+    Down,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Target {
+    Hour(Step),
+    Minute(Step),
+    Elsewhere,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -61,7 +85,38 @@ impl Frame {
     }
 }
 
-fn digit(frame: &mut Frame, x: usize, y: usize, unit: usize, value: u8) {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Layout {
+    unit: usize,
+    clock: (usize, usize),
+    mark: (usize, usize),
+    alarm_unit: usize,
+    alarm: (usize, usize),
+}
+
+fn layout(size: Size) -> Option<Layout> {
+    let unit = size.width * 9 / 10 / UNITS_ACROSS;
+    let alarm_unit = unit / 2;
+    let height = DIGIT_HEIGHT_UNITS * unit;
+    if alarm_unit == 0 || height > size.height {
+        return None;
+    }
+    let top = (size.height - height) / 2;
+    let mark_top = top + height + MARK_GAP_UNITS * unit;
+    let alarm_top = mark_top + (MARK_HEIGHT_UNITS + MARK_GAP_UNITS) * unit;
+    if alarm_top + DIGIT_HEIGHT_UNITS * alarm_unit > size.height {
+        return None;
+    }
+    Some(Layout {
+        unit,
+        clock: ((size.width - UNITS_ACROSS * unit) / 2, top),
+        mark: ((size.width - DIGIT_UNITS * unit) / 2, mark_top),
+        alarm_unit,
+        alarm: ((size.width - UNITS_ACROSS * alarm_unit) / 2, alarm_top),
+    })
+}
+
+fn digit(frame: &mut Frame, x: usize, y: usize, unit: usize, value: u8, colour: Colour) {
     let segments = SEGMENTS[usize::from(value % 10)];
     let width = DIGIT_UNITS * unit;
     let right = x + width - unit;
@@ -76,15 +131,37 @@ fn digit(frame: &mut Frame, x: usize, y: usize, unit: usize, value: u8) {
     ];
     for (index, (left, top, across, down)) in bars.into_iter().enumerate() {
         if segments & (1 << index) != 0 {
-            frame.fill(left, top, across, down, FOREGROUND);
+            frame.fill(left, top, across, down, colour);
         }
     }
 }
 
-fn battery_mark(frame: &mut Frame, x: usize, y: usize, unit: usize) {
+fn time(
+    frame: &mut Frame,
+    (left, y): (usize, usize),
+    unit: usize,
+    value: TimeOfDay,
+    colour: Colour,
+) {
+    let mut x = left;
+    let advance = (DIGIT_UNITS + 1) * unit;
+    for figure in [value.hour() / 10, value.hour() % 10] {
+        digit(frame, x, y, unit, figure, colour);
+        x += advance;
+    }
+    frame.fill(x, y + 2 * unit, unit, unit, colour);
+    frame.fill(x, y + 4 * unit, unit, unit, colour);
+    x += 2 * unit;
+    for figure in [value.minute() / 10, value.minute() % 10] {
+        digit(frame, x, y, unit, figure, colour);
+        x += advance;
+    }
+}
+
+fn battery_mark(frame: &mut Frame, (x, y): (usize, usize), unit: usize) {
     let line = (unit / 4).max(1);
     let width = DIGIT_UNITS * unit;
-    let height = 2 * unit;
+    let height = MARK_HEIGHT_UNITS * unit;
     frame.fill(x, y, width, line, WARNING);
     frame.fill(x, y + height - line, width, line, WARNING);
     frame.fill(x, y, line, height, WARNING);
@@ -100,45 +177,48 @@ fn battery_mark(frame: &mut Frame, x: usize, y: usize, unit: usize) {
 }
 
 #[must_use]
-pub fn render(size: Size, time: TimeOfDay, low_battery: bool) -> Frame {
-    let mut frame = Frame::filled(size, BACKGROUND);
-    let unit = size.width * 9 / 10 / UNITS_ACROSS;
-    let height = DIGIT_HEIGHT_UNITS * unit;
-    if unit == 0 || height > size.height {
+pub fn render(size: Size, face: &Face) -> Frame {
+    let background = if face.ringing { RINGING } else { BACKGROUND };
+    let mut frame = Frame::filled(size, background);
+    let Some(layout) = layout(size) else {
         return frame;
+    };
+    let digits = if face.ringing { BACKGROUND } else { FOREGROUND };
+    time(&mut frame, layout.clock, layout.unit, face.time, digits);
+    if face.low_battery {
+        battery_mark(&mut frame, layout.mark, layout.unit);
     }
-    let mut x = (size.width - UNITS_ACROSS * unit) / 2;
-    let y = (size.height - height) / 2;
-    let advance = (DIGIT_UNITS + 1) * unit;
-    for value in [time.hour() / 10, time.hour() % 10] {
-        digit(&mut frame, x, y, unit, value);
-        x += advance;
-    }
-    frame.fill(x, y + 2 * unit, unit, unit, FOREGROUND);
-    frame.fill(x, y + 4 * unit, unit, unit, FOREGROUND);
-    x += 2 * unit;
-    for value in [time.minute() / 10, time.minute() % 10] {
-        digit(&mut frame, x, y, unit, value);
-        x += advance;
-    }
-    if low_battery {
-        let mark_y = y + height + MARK_GAP_UNITS * unit;
-        let mark_x = (size.width - DIGIT_UNITS * unit) / 2;
-        battery_mark(&mut frame, mark_x, mark_y, unit);
-    }
+    let alarm = if face.armed { digits } else { DIM };
+    time(
+        &mut frame,
+        layout.alarm,
+        layout.alarm_unit,
+        face.alarm,
+        alarm,
+    );
     frame
 }
 
-pub fn show_time(
-    clock: &impl Clock,
-    offset: UtcOffset,
-    low_battery: bool,
-    display: &mut impl Display,
-) -> Result<UnixSeconds, HardwareError> {
-    let now = clock.now()?;
-    let frame = render(display.size(), TimeOfDay::at(now, offset), low_battery);
-    display.show(&frame)?;
-    Ok(now)
+#[must_use]
+pub fn target(size: Size, x: usize, y: usize) -> Target {
+    let Some(layout) = layout(size) else {
+        return Target::Elsewhere;
+    };
+    let height = DIGIT_HEIGHT_UNITS * layout.alarm_unit;
+    let (_, top) = layout.alarm;
+    if y + height / 2 < top || y >= top + height + height / 2 {
+        return Target::Elsewhere;
+    }
+    let step = if y < top + height / 2 {
+        Step::Up
+    } else {
+        Step::Down
+    };
+    if x < size.width / 2 {
+        Target::Hour(step)
+    } else {
+        Target::Minute(step)
+    }
 }
 
 #[cfg(test)]
@@ -148,36 +228,12 @@ mod tests {
 
     const SMALL: Size = Size {
         width: 100,
-        height: 64,
+        height: 112,
     };
     const PANEL: Size = Size {
         width: 1080,
         height: 2280,
     };
-
-    struct FixedClock(Result<UnixSeconds, HardwareError>);
-
-    impl Clock for FixedClock {
-        fn now(&self) -> Result<UnixSeconds, HardwareError> {
-            self.0.clone()
-        }
-    }
-
-    struct FakeDisplay {
-        size: Size,
-        shown: Vec<Frame>,
-    }
-
-    impl Display for FakeDisplay {
-        fn size(&self) -> Size {
-            self.size
-        }
-
-        fn show(&mut self, frame: &Frame) -> Result<(), HardwareError> {
-            self.shown.push(frame.clone());
-            Ok(())
-        }
-    }
 
     fn picture(frame: &Frame) -> String {
         (0..frame.size().height)
@@ -188,6 +244,8 @@ mod tests {
                     .map(|&colour| match colour {
                         FOREGROUND => '#',
                         WARNING => '!',
+                        RINGING => '~',
+                        DIM => ':',
                         _ => '.',
                     })
                     .chain(['\n'])
@@ -196,20 +254,26 @@ mod tests {
             .collect()
     }
 
-    fn evening() -> UnixSeconds {
-        UnixSeconds(20_768 * 86_400 + 19 * 3_600 + 37 * 60 + 58)
+    fn face(armed: bool, ringing: bool, low_battery: bool) -> Result<Face, TimeError> {
+        Ok(Face {
+            time: TimeOfDay::new(19, 37)?,
+            alarm: TimeOfDay::new(6, 45)?,
+            armed,
+            ringing,
+            low_battery,
+        })
     }
 
     #[test]
-    fn the_time_is_drawn_as_recorded() -> Result<(), TimeError> {
-        let frame = render(SMALL, TimeOfDay::new(19, 37)?, false);
+    fn the_time_and_the_armed_alarm_are_drawn_as_recorded() -> Result<(), TimeError> {
+        let frame = render(SMALL, &face(true, false, false)?);
         assert_eq!(picture(&frame), include_str!("../testdata/face-1937.txt"));
         Ok(())
     }
 
     #[test]
-    fn a_low_battery_adds_the_mark_as_recorded() -> Result<(), TimeError> {
-        let frame = render(SMALL, TimeOfDay::new(19, 37)?, true);
+    fn a_low_battery_adds_the_mark_and_a_disarmed_alarm_is_dim() -> Result<(), TimeError> {
+        let frame = render(SMALL, &face(false, false, true)?);
         assert_eq!(
             picture(&frame),
             include_str!("../testdata/face-1937-low.txt")
@@ -218,10 +282,24 @@ mod tests {
     }
 
     #[test]
+    fn a_ringing_alarm_turns_the_face_amber() -> Result<(), TimeError> {
+        let frame = render(SMALL, &face(true, true, false)?);
+        assert_eq!(
+            picture(&frame),
+            include_str!("../testdata/face-1937-ringing.txt")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn every_digit_has_its_own_shape() -> Result<(), TimeError> {
         let mut seen = Vec::new();
         for value in 0..10 {
-            let shape = picture(&render(SMALL, TimeOfDay::new(0, value)?, false));
+            let face = Face {
+                time: TimeOfDay::new(0, value)?,
+                ..face(true, false, false)?
+            };
+            let shape = picture(&render(SMALL, &face));
             assert!(!seen.contains(&shape));
             seen.push(shape);
         }
@@ -230,13 +308,13 @@ mod tests {
 
     #[test]
     fn the_face_fits_the_panel_with_room_around_it() -> Result<(), TimeError> {
-        let frame = render(PANEL, TimeOfDay::new(8, 8)?, true);
+        let frame = render(PANEL, &face(true, false, true)?);
         assert_eq!(frame.size(), PANEL);
         let lit: Vec<usize> = (0..PANEL.height)
             .filter(|&y| frame.row(y).iter().any(|&colour| colour != BACKGROUND))
             .collect();
         assert!(lit.first().is_some_and(|&y| y > PANEL.height / 3));
-        assert!(lit.last().is_some_and(|&y| y < PANEL.height * 2 / 3));
+        assert!(lit.last().is_some_and(|&y| y < PANEL.height * 4 / 5));
         assert!(frame.row(PANEL.height / 2).contains(&FOREGROUND));
         assert!(lit.iter().any(|&y| frame.row(y).contains(&WARNING)));
         assert!((0..PANEL.height).all(|y| frame.row(y).len() == PANEL.width));
@@ -245,45 +323,29 @@ mod tests {
 
     #[test]
     fn a_frame_too_small_for_the_face_stays_blank() -> Result<(), TimeError> {
-        let tiny = Size {
-            width: 20,
-            height: 4,
+        let short = Size {
+            width: 100,
+            height: 64,
         };
-        let frame = render(tiny, TimeOfDay::new(12, 0)?, true);
-        assert_eq!(frame, Frame::filled(tiny, BACKGROUND));
+        let frame = render(short, &face(true, false, true)?);
+        assert_eq!(frame, Frame::filled(short, BACKGROUND));
+        assert_eq!(target(short, 10, 10), Target::Elsewhere);
         Ok(())
     }
 
     #[test]
-    fn the_clock_is_shown_in_local_time() -> Result<(), Box<dyn std::error::Error>> {
-        let clock = FixedClock(Ok(evening()));
-        let mut display = FakeDisplay {
-            size: SMALL,
-            shown: Vec::new(),
-        };
-        let berlin_winter = UtcOffset::from_seconds(3_600)?;
-        assert_eq!(
-            show_time(&clock, berlin_winter, false, &mut display)?,
-            evening()
-        );
-        assert_eq!(
-            display.shown,
-            [render(SMALL, TimeOfDay::new(20, 37)?, false)]
-        );
-        Ok(())
+    fn a_tap_on_the_alarm_steps_the_half_it_lands_on() {
+        assert_eq!(target(PANEL, 400, 1600), Target::Hour(Step::Up));
+        assert_eq!(target(PANEL, 400, 1700), Target::Hour(Step::Down));
+        assert_eq!(target(PANEL, 700, 1510), Target::Minute(Step::Up));
+        assert_eq!(target(PANEL, 1079, 1810), Target::Minute(Step::Down));
     }
 
     #[test]
-    fn a_failing_clock_draws_nothing() {
-        let clock = FixedClock(Err(HardwareError::Absent("clock")));
-        let mut display = FakeDisplay {
-            size: SMALL,
-            shown: Vec::new(),
-        };
-        assert_eq!(
-            show_time(&clock, UtcOffset::UTC, false, &mut display),
-            Err(HardwareError::Absent("clock"))
-        );
-        assert_eq!(display.shown, Vec::<Frame>::new());
+    fn a_tap_away_from_the_alarm_is_elsewhere() {
+        assert_eq!(target(PANEL, 509, 1100), Target::Elsewhere);
+        assert_eq!(target(PANEL, 400, 1490), Target::Elsewhere);
+        assert_eq!(target(PANEL, 700, 1820), Target::Elsewhere);
+        assert_eq!(target(PANEL, 540, 2279), Target::Elsewhere);
     }
 }

@@ -28,9 +28,12 @@ crates/
   battery/      the adapter for the battery and the charger, over sysfs
   clock/        the adapter for the clock, over the system time the kernel sets from the RTC
   framebuffer/  the adapter for the panel: /dev/fb0, mapped once, drawn into a page and panned
+  input/        the adapter for the side keys and touch: the evdev nodes, found by name, and
+                the touch firmware the kernel asks for, answered from odm
   pid1/         what every /init takes from the kernel: mounts, the kernel log, a child
                 on a terminal, reaping, the reboot into recovery
-  alarmd/       the binary: opens the adapters, draws the time each minute, is PID 1
+  alarmd/       the binary: opens the adapters, draws the time and the alarm, waits on input
+                until the next minute, is PID 1
   init-probe/   a probe /init that runs the charge stop and logs the power nodes
   debug-init/   the debug /init: the ROM's shell on a USB serial gadget (ADR 0009)
 ```
@@ -46,14 +49,22 @@ driver frees the buffer on the last close, and an `mmap` after that can panic th
 |---|---|
 | `time` | `UnixSeconds`, `TimeOfDay`, `Weekday`, `UtcOffset` — civil time without a tz database |
 | `alarm` | `Alarm`, `Weekdays`, and when an alarm next fires after a given instant |
-| `hardware` | the traits `Clock`, `WakeAlarm`, `Suspend`, `Vibrator`, `Battery`, `Display`, and `HardwareError` |
+| `hardware` | the traits `Clock`, `WakeAlarm`, `Suspend`, `Vibrator`, `Battery`, `Display`, `Input`, and `HardwareError` |
+| `input` | `InputEvent`: a touch at a panel pixel, or a press of `VolumeUp`, `VolumeDown` or `Power` |
 | `schedule` | `arm_next`: read the clock, pick the earliest alarm, arm or disarm the RTC |
 | `battery` | `ChargeLimit`, `BatteryReading`, `stop_at_limit` and the 20 % mark — ADR 0008, D3 |
-| `face` | `Frame` and `render`: `HH:MM` in seven-segment digits and the battery mark; `show_time` |
+| `face` | `Frame`, `Face` and `render`: the time in seven-segment digits, the battery mark, the alarm below, amber while ringing; `target` maps a tap to the alarm digit it steps |
+| `ringer` | `Ringer`: one daily alarm, armed or not, quiet, ringing or snoozed for 9 minutes; `show` and `listen` drive it from the clock and `Input` |
 
-An input trait is not defined yet. The panel is the legacy framebuffer, `/dev/fb0` under
-our `devtmpfs`, with no DRM (ADR 0004); what the touch controller reports is read off the
-device first.
+The panel is the legacy framebuffer, `/dev/fb0` under our `devtmpfs`, with no DRM (ADR
+0004).
+
+`input` finds `hisi_gpio_key`, `hisi_on` and `huawei,ts_kit` by name in
+`/sys/class/input`, and opens each when it appears rather than once at start-up: the touch
+panel registers only after its firmware request is answered, which on Android is
+`ueventd`'s job. A thread of `alarmd` mounts `odm` read-only and answers each request in
+`/sys/class/firmware` from `etc/firmware/`, refusing one it has no file for. The touch
+controller sleeps while the panel is off, so touch works only while `fb0` is held open.
 
 ### The loop, as intended
 

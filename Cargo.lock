@@ -14,6 +14,7 @@ dependencies = [
  "battery",
  "clock",
  "framebuffer",
+ "input",
  "pid1",
 ]
 
@@ -52,6 +53,13 @@ dependencies = [
  "alarm-core",
  "battery",
  "pid1",
+]
+
+[[package]]
+name = "input"
+version = "0.1.0"
+dependencies = [
+ "alarm-core",
 ]
 
 [[package]]

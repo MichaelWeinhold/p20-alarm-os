@@ -1,6 +1,6 @@
 use alarm_core::battery::{ChargeLimit, ChargeStep, stop_at_limit, wants_mark};
-use alarm_core::face::show_time;
 use alarm_core::hardware::{Battery, Clock, Display, HardwareError};
+use alarm_core::ringer::{Ringer, show};
 use alarm_core::time::{UtcOffset, seconds_to_next_minute};
 use pid1::kmsg;
 
@@ -10,17 +10,20 @@ pub mod linux;
 pub const LOCAL_OFFSET_SECONDS: i32 = 3_600;
 pub const BRIGHTNESS: u32 = 2_000;
 pub const RETRY_SECONDS: u64 = 10;
+pub const ALARM_HOUR: u8 = 7;
+pub const ALARM_MINUTE: u8 = 0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Minute {
     pub log: Vec<String>,
-    pub sleep_seconds: u64,
+    pub wait_seconds: u64,
 }
 
 pub fn minute(
     clock: &impl Clock,
     offset: UtcOffset,
     battery: &mut Result<impl Battery, HardwareError>,
+    ringer: &mut Ringer,
     display: &mut impl Display,
 ) -> Minute {
     let mut log = Vec::new();
@@ -34,27 +37,42 @@ pub fn minute(
         Err(error) => log.push(kmsg::failure("holding the charge limit", &error)),
     }
     let low = battery.as_ref().map_or(true, wants_mark);
-    let sleep_seconds = match show_time(clock, offset, low, display) {
+    let wait_seconds = match show(clock, offset, ringer, low, display) {
         Ok(now) => seconds_to_next_minute(now),
         Err(error) => {
             log.push(kmsg::failure("showing the time", &error));
             RETRY_SECONDS
         }
     };
-    Minute { log, sleep_seconds }
+    Minute { log, wait_seconds }
+}
+
+#[must_use]
+pub fn change(before: &Ringer, after: &Ringer) -> Option<String> {
+    let alarm = after.alarm();
+    let armed = if after.armed() { "armed" } else { "disarmed" };
+    (before != after).then(|| {
+        kmsg::line(&format!(
+            "alarm {:02}:{:02} {armed}, {:?}",
+            alarm.hour(),
+            alarm.minute(),
+            after.ring()
+        ))
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use alarm_core::battery::{BatteryReading, ChargeStatus, Health, Percent};
-    use alarm_core::face::{Frame, Size, WARNING, render};
+    use alarm_core::face::{Face, Frame, RINGING, Size, WARNING, render};
+    use alarm_core::input::InputEvent;
     use alarm_core::time::{TimeError, TimeOfDay, UnixSeconds};
 
     use super::*;
 
     const SIZE: Size = Size {
         width: 100,
-        height: 64,
+        height: 112,
     };
 
     struct FixedClock(Result<UnixSeconds, HardwareError>);
@@ -121,6 +139,20 @@ mod tests {
         })
     }
 
+    fn ringer() -> Result<Ringer, TimeError> {
+        Ok(Ringer::new(TimeOfDay::new(ALARM_HOUR, ALARM_MINUTE)?))
+    }
+
+    fn face(hour: u8, minute: u8, low_battery: bool) -> Result<Face, TimeError> {
+        Ok(Face {
+            time: TimeOfDay::new(hour, minute)?,
+            alarm: TimeOfDay::new(ALARM_HOUR, ALARM_MINUTE)?,
+            armed: false,
+            ringing: false,
+            low_battery,
+        })
+    }
+
     fn at(hour: i64, minute: i64, second: i64) -> FixedClock {
         FixedClock(Ok(UnixSeconds(
             20_768 * 86_400 + hour * 3_600 + minute * 60 + second,
@@ -133,36 +165,51 @@ mod tests {
         let mut battery = battery(55, ChargeStatus::Discharging);
         let mut display = FakeDisplay::default();
         let offset = UtcOffset::from_seconds(LOCAL_OFFSET_SECONDS)?;
-        let step = minute(&at(19, 37, 58), offset, &mut battery, &mut display);
+        let step = minute(
+            &at(19, 37, 58),
+            offset,
+            &mut battery,
+            &mut ringer()?,
+            &mut display,
+        );
         assert_eq!(
             step,
             Minute {
                 log: Vec::new(),
-                sleep_seconds: 2,
+                wait_seconds: 2,
             }
         );
-        assert_eq!(
-            display.shown,
-            [render(SIZE, TimeOfDay::new(20, 37)?, false)]
-        );
+        assert_eq!(display.shown, [render(SIZE, &face(20, 37, false)?)]);
         Ok(())
     }
 
     #[test]
-    fn at_the_limit_the_charge_stops_and_says_so() -> Result<(), HardwareError> {
+    fn at_the_limit_the_charge_stops_and_says_so() -> Result<(), Box<dyn std::error::Error>> {
         let mut battery = battery(80, ChargeStatus::Charging);
         let mut display = FakeDisplay::default();
-        let step = minute(&at(6, 0, 0), UtcOffset::UTC, &mut battery, &mut display);
+        let step = minute(
+            &at(6, 0, 0),
+            UtcOffset::UTC,
+            &mut battery,
+            &mut ringer()?,
+            &mut display,
+        );
         assert_eq!(step.log, [kmsg::line("charge stopped at the limit")]);
         assert!(!battery?.enabled);
         Ok(())
     }
 
     #[test]
-    fn a_low_battery_puts_the_mark_on_the_face() {
+    fn a_low_battery_puts_the_mark_on_the_face() -> Result<(), TimeError> {
         let mut battery = battery(20, ChargeStatus::Discharging);
         let mut display = FakeDisplay::default();
-        minute(&at(6, 0, 0), UtcOffset::UTC, &mut battery, &mut display);
+        minute(
+            &at(6, 0, 0),
+            UtcOffset::UTC,
+            &mut battery,
+            &mut ringer()?,
+            &mut display,
+        );
         assert!(
             display
                 .shown
@@ -170,6 +217,7 @@ mod tests {
                 .all(|frame| (0..SIZE.height).any(|y| frame.row(y).contains(&WARNING)))
         );
         assert_eq!(display.shown.len(), 1);
+        Ok(())
     }
 
     #[test]
@@ -177,7 +225,13 @@ mod tests {
         let mut battery: Result<FakeBattery, HardwareError> =
             Err(HardwareError::Absent("Battery/capacity"));
         let mut display = FakeDisplay::default();
-        let step = minute(&at(6, 0, 30), UtcOffset::UTC, &mut battery, &mut display);
+        let step = minute(
+            &at(6, 0, 30),
+            UtcOffset::UTC,
+            &mut battery,
+            &mut ringer()?,
+            &mut display,
+        );
         assert_eq!(
             step.log,
             [kmsg::failure(
@@ -185,17 +239,23 @@ mod tests {
                 &HardwareError::Absent("Battery/capacity")
             )]
         );
-        assert_eq!(step.sleep_seconds, 30);
-        assert_eq!(display.shown, [render(SIZE, TimeOfDay::new(6, 0)?, true)]);
+        assert_eq!(step.wait_seconds, 30);
+        assert_eq!(display.shown, [render(SIZE, &face(6, 0, true)?)]);
         Ok(())
     }
 
     #[test]
-    fn a_failing_clock_draws_nothing_and_retries_soon() {
+    fn a_failing_clock_draws_nothing_and_retries_soon() -> Result<(), TimeError> {
         let mut battery = battery(55, ChargeStatus::Discharging);
         let mut display = FakeDisplay::default();
         let clock = FixedClock(Err(HardwareError::Absent("realtime clock")));
-        let step = minute(&clock, UtcOffset::UTC, &mut battery, &mut display);
+        let step = minute(
+            &clock,
+            UtcOffset::UTC,
+            &mut battery,
+            &mut ringer()?,
+            &mut display,
+        );
         assert_eq!(
             step,
             Minute {
@@ -203,9 +263,63 @@ mod tests {
                     "showing the time",
                     &HardwareError::Absent("realtime clock")
                 )],
-                sleep_seconds: RETRY_SECONDS,
+                wait_seconds: RETRY_SECONDS,
             }
         );
         assert_eq!(display.shown, Vec::<Frame>::new());
+        Ok(())
+    }
+
+    #[test]
+    fn an_armed_alarm_turns_the_face_amber_at_its_minute() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut battery = battery(55, ChargeStatus::Discharging);
+        let mut display = FakeDisplay::default();
+        let mut ringer = ringer()?;
+        let before = at(6, 59, 0);
+        ringer.heard(
+            InputEvent::Touch { x: 0, y: 0 },
+            SIZE,
+            before.now()?,
+            UtcOffset::UTC,
+        );
+        minute(
+            &before,
+            UtcOffset::UTC,
+            &mut battery,
+            &mut ringer,
+            &mut display,
+        );
+        minute(
+            &at(7, 0, 0),
+            UtcOffset::UTC,
+            &mut battery,
+            &mut ringer,
+            &mut display,
+        );
+        let amber = |frame: &Frame| frame.row(0).contains(&RINGING);
+        assert_eq!(
+            display.shown.iter().map(amber).collect::<Vec<_>>(),
+            [false, true]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_change_to_the_ringer_is_logged_once() -> Result<(), Box<dyn std::error::Error>> {
+        let before = ringer()?;
+        let mut after = before;
+        assert_eq!(change(&before, &after), None);
+        after.heard(
+            InputEvent::Touch { x: 0, y: 0 },
+            SIZE,
+            at(6, 0, 0).now()?,
+            UtcOffset::UTC,
+        );
+        assert_eq!(
+            change(&before, &after),
+            Some(kmsg::line("alarm 07:00 armed, Quiet"))
+        );
+        Ok(())
     }
 }

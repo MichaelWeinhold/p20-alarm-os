@@ -2,6 +2,7 @@ use std::fmt;
 
 use crate::battery::BatteryReading;
 use crate::face::{Frame, Size};
+use crate::input::InputEvent;
 use crate::time::UnixSeconds;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,4 +51,8 @@ pub trait Battery {
 pub trait Display {
     fn size(&self) -> Size;
     fn show(&mut self, frame: &Frame) -> Result<(), HardwareError>;
+}
+
+pub trait Input {
+    fn wait(&mut self, seconds: u64) -> Result<Option<InputEvent>, HardwareError>;
 }

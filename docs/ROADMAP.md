@@ -54,6 +54,9 @@ log that can be read.
 
 Read `/dev/input/event*`; set an alarm and dismiss it.
 
+**Done** — issue 11. The alarm is set by touch, rings on the panel, a volume key snoozes it
+and Power dismisses it.
+
 ## P5 — Wake from suspend
 
 Arm `/dev/rtc0`, suspend, and wake on time. The whole project depends on this, so it is
