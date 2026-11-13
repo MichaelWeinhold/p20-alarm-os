@@ -29,6 +29,23 @@ const VISUAL: usize = 36;
 const LINE_LENGTH: usize = 48;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Change {
+    Unblank,
+    PowerDown,
+    Backlight,
+}
+
+#[must_use]
+pub fn changes(lit: Option<bool>, on: bool) -> &'static [Change] {
+    match (lit, on) {
+        (Some(true), true) | (Some(false), false) => &[],
+        (None, true) => &[Change::Backlight],
+        (Some(false), true) => &[Change::Unblank, Change::Backlight],
+        (_, false) => &[Change::PowerDown],
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Mode {
     pub size: Size,
     pub pages: usize,
@@ -306,5 +323,30 @@ mod tests {
             mode.encode(&Frame::filled(mode.size, BACKGROUND), &mut page[..8])
                 .is_err()
         );
+    }
+
+    #[test]
+    fn the_panel_open_left_lit_takes_only_the_backlight() {
+        assert_eq!(changes(None, true), [Change::Backlight]);
+    }
+
+    #[test]
+    fn a_dark_panel_is_unblanked_before_its_backlight() {
+        assert_eq!(
+            changes(Some(false), true),
+            [Change::Unblank, Change::Backlight]
+        );
+    }
+
+    #[test]
+    fn a_lit_or_untouched_panel_is_powered_down() {
+        assert_eq!(changes(Some(true), false), [Change::PowerDown]);
+        assert_eq!(changes(None, false), [Change::PowerDown]);
+    }
+
+    #[test]
+    fn a_panel_already_in_the_state_asked_for_is_left_alone() {
+        assert_eq!(changes(Some(true), true), []);
+        assert_eq!(changes(Some(false), false), []);
     }
 }

@@ -33,7 +33,7 @@ crates/
   pid1/         what every /init takes from the kernel: mounts, the kernel log, a child
                 on a terminal, reaping, the reboot into recovery
   alarmd/       the binary: opens the adapters, draws the time and the alarm, waits on input
-                until the next minute, is PID 1
+                until the next minute or until the panel is due off, is PID 1
   init-probe/   a probe /init that runs the charge stop and logs the power nodes
   debug-init/   the debug /init: the ROM's shell on a USB serial gadget (ADR 0009)
 ```
@@ -42,6 +42,7 @@ The other adapters arrive with the roadmap phases that need them.
 
 `framebuffer` maps `fb0` once and holds it open for the life of the process: the vendor
 driver frees the buffer on the last close, and an `mmap` after that can panic the kernel.
+It turns the panel off with `FBIOBLANK` on that descriptor, never by closing it.
 
 ### `alarm-core`
 
@@ -54,7 +55,8 @@ driver frees the buffer on the last close, and an `mmap` after that can panic th
 | `schedule` | `arm_next`: read the clock, pick the earliest alarm, arm or disarm the RTC |
 | `battery` | `ChargeLimit`, `BatteryReading`, `stop_at_limit` and the 20 % mark — ADR 0008, D3 |
 | `face` | `Frame`, `Face` and `render`: the time in seven-segment digits, the battery mark, the alarm below, amber while ringing; `target` maps a tap to the alarm digit it steps |
-| `ringer` | `Ringer`: one daily alarm, armed or not, quiet, ringing or snoozed for 9 minutes; `show` and `listen` drive it from the clock and `Input` |
+| `ringer` | `Ringer`: one daily alarm, armed or not, quiet, ringing or snoozed for 9 minutes; `show` and `listen` drive it and the `Light` from the clock and `Input` |
+| `light` | `Light`: the panel lit for 10 s by a press, kept lit by a touch or a ringing alarm, off at a press or the timeout — ADR 0008, D2; the ringer hears input only while it is lit |
 
 The panel is the legacy framebuffer, `/dev/fb0` under our `devtmpfs`, with no DRM (ADR
 0004).

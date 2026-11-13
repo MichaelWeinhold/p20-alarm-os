@@ -3,7 +3,8 @@ use std::io::{self, Write};
 use std::thread;
 use std::time::Duration;
 
-use alarm_core::hardware::Display;
+use alarm_core::hardware::{Clock, Display};
+use alarm_core::light::{LIT_SECONDS, Light};
 use alarm_core::ringer::{Ringer, listen};
 use alarm_core::time::{TimeOfDay, UtcOffset};
 use battery::SysfsBattery;
@@ -102,12 +103,31 @@ pub fn run() -> ! {
             &kmsg::failure("starting the firmware answers", &error),
         );
     }
+    let mut light = match SystemClock.now() {
+        Ok(now) => Light::lit_at(now, LIT_SECONDS),
+        Err(error) => {
+            logged(&mut log, &kmsg::failure("reading the clock", &error));
+            Light::dark(LIT_SECONDS)
+        }
+    };
     let mut battery = SysfsBattery::open();
     let mut input = EvdevInput::open();
     let mut absent = Vec::new();
     loop {
         let before = ringer;
-        let turn = minute(&SystemClock, offset, &mut battery, &mut ringer, &mut panel);
+        let was_lit = light.lit();
+        let turn = minute(
+            &SystemClock,
+            offset,
+            &mut battery,
+            &mut ringer,
+            &mut light,
+            &mut panel,
+        );
+        if light.lit() != was_lit {
+            let state = if light.lit() { "lit" } else { "off" };
+            logged(&mut log, &kmsg::line(&format!("panel {state}")));
+        }
         for line in &turn.log {
             logged(&mut log, line);
         }
@@ -119,6 +139,7 @@ pub fn run() -> ! {
             offset,
             size,
             &mut ringer,
+            &mut light,
         );
         if let Some(line) = change(&before, &ringer) {
             logged(&mut log, &line);
