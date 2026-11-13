@@ -70,7 +70,8 @@ controller sleeps while the panel is off, so touch works only while `fb0` is hel
 
 1. Read the clock; draw the time.
 2. Arm the RTC for the earliest alarm (`schedule::arm_next`).
-3. Turn the panel off and suspend.
+3. Turn the panel off and suspend; after two minutes without a press, arm the power-on
+   alarm and power off (ADR 0010).
 4. On wake — RTC or power button — decide which: ring for the alarm, or show the time.
 5. Snooze or dismiss from touch or the volume keys, then back to 2.
 

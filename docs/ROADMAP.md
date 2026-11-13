@@ -64,7 +64,11 @@ proven as early as P2 allows, even before the clock looks right.
 
 **Done when:** an alarm armed for five minutes ahead wakes a suspended phone, the draw
 while suspended is read with USB input cut, and both readings are in
-`docs/device-history/`. → ADR 0008, D1.
+`docs/device-history/`. → ADR 0010, which supersedes ADR 0008, D1.
+
+**Proven** — issue 12. The RTC woke a suspend to the second, a suspend draws about 53 mA,
+and a power-on alarm switched a powered-off phone on. The adapters, the two-minute window
+and the power-off are issue 12's follow-ups.
 
 ## P6 — Vibrate
 

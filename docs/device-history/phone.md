@@ -860,3 +860,96 @@ minute the panel turned amber, and a volume key returned it to black. In a secon
 20:51:53 UTC, the user saw it ring again after the snooze and Power dismiss it. Leaving
 by the keys emptied pstore, and `dfx` held only an older boot, so neither run left a log.
 `alarmd` is `/init` on `system` now.
+
+## 2026-11-13 — suspend, wake and power-on from the RTC, for issue 12
+
+Read under the debug `/init` (`64caf049…ddaa`), swapped in from TWRP in place of `alarmd`.
+Each suspend ran unattended from a script in `/mnt`, started from the shell, which waited
+for `/sys/class/power_supply/USB/online` to read 0 before suspending: the cable was out.
+Every step went to `/dev/kmsg` and to `/mnt/r.log`; `debugfs` mounted on `/mnt/dbg` gave
+`suspend_stats` and `wakeup_sources`.
+
+**The RTC wakes a suspended phone on time, with no Android userspace.** Armed with
+`echo +600 > /sys/class/rtc/rtc0/wakealarm`, then `echo mem > /sys/power/state`:
+
+```
+armed for 1794562576, 600 s
+before rtc=1794561976 up=220.44 rm=1436 v=4023746 usb=0 ok=0 fail=0
+after rc=0 rtc=1794562576 up=819.87 rm=1428 v=3946491 usb=0 ok=1 fail=0
+wake up irq num: 78, irq name: RTC0
+SR:AP WAKE IRQ(LPM3 NVIC): 10 (RTC0)
+```
+
+`rtc0` woke at the second it was armed for, and `suspend_stats` counted the success. The
+first run, with the cable in, suspended too: `charge_wakelock` does not stop a direct
+`echo mem`.
+
+**The SoC never reaches deep sleep.** After every suspend, the LPM3's report:
+
+```
+SR:wakelock status, ap:1, modem:1, hifi:0, iomcu:0, hisee:0, hotplug:0,0.
+SR:system sleeped 0 times.
+SR:sr times of sub system, ap:s-1, r-1, modem:s-0, r-0, hifi:s-0, r-0, iomcu:s-1, r-1.
+```
+
+The AP and the modem both hold a vote, and the modem never suspended. Which driver holds
+each vote was not found.
+
+**Suspended with the panel off, the phone draws about 53 mA.** The gauge, at suspend and
+resume of the 600 s run above:
+
+```
+[hisi_coul_core]SUSPEND! cc=843899, time=43330, wakeup_avg_current:60
+[hisi_coul_core]delta_time=615s, iavg_ua=53080
+[hisi_coul_core]FCC=2283000uAh, … CC=852706uAh
+```
+
+8807 µAh in 615 s. A full charge of 2283 mAh lasts about 43 hours suspended, and the band
+from 20 to 80 % about 26. Awake between suspends, with the panel off, the gauge's
+`wakeup_avg_current` read 60 to 93 mA; a night awake under the debug `/init` went from
+about 2180 to 1320 mAh in 11.3 hours, about 75 mA.
+
+**With the panel lit, about 336 mA suspended.** The bootloader leaves the panel lit under
+our `/init`. `: < /dev/fb0`, an open and close with no `mmap`, runs `lcdkit_off` and
+darkens it, on a fresh boot after the touch driver's firmware wait has ended (about 75 s).
+
+**Opening `/dev/fb0` after a suspend panicked the kernel**, an external abort in
+`set_reg` under `hisifb_ctrl_fastboot`; the phone rebooted into the debug `/init`.
+
+**The side button wakes a suspended phone**, as `GPIO23`, IRQ 139, the power key. So does
+**a plug-in**, as `GPIO29`, IRQ 195, LPM3 NVIC 227, with `usb_wake_lock` active after.
+With the panel lit, `GPIO28` (IRQ 194, a pl061 line of `gpiochip` at `e8a0e000`, with no
+handler) woke the phone early three times — once 548 s into a 900 s suspend. With the
+panel off it never did; no `gpio` property in `/sys/firmware/devicetree/base` names it.
+
+**`wakealarm` does not switch on a powered-off phone.** Armed, then
+`echo o > /proc/sysrq-trigger` — `toybox` has no `reboot`, and the ROM's needs Android's
+`init` — the phone stayed off until the side button. `drivers/rtc/rtc-hisi-pmic.c` in
+the kernel's source explains it: `hisi_rtc_shutdown` writes the PMU's alarm register only
+when `poweroff_rtc_alarm` is enabled, and clears it otherwise.
+
+**A `CLOCK_POWEROFF_ALARM` timer does.** `kernel/time/alarmtimer.c` arms the PMU through
+`set_power_on_alarm` when a `timerfd` of clock 12 is set with `TFD_TIMER_ABSTIME`, 60 s
+before the target, or 15 s after the call when the target is less than 60 s away; closing
+the descriptor leaves it armed. A probe of 1216 bytes, `timerfd_create(12, 0)` then
+`timerfd_settime` 90 s ahead, ran from `/mnt` 5 s after the cable came out, and SysRq `o`
+powered the phone off. The user saw it go off, then come back on by itself; the next
+boot's `/proc/cmdline` read:
+
+```
+normal_reset_type=BR_POWEROFF_ALARM
+reboot_reason=AP_S_COLDBOOT
+androidboot.mode=normal
+```
+
+A cold boot empties pstore, so the run's own log did not survive. The bootloader's stages
+on that boot, from the same line: `bl1_time=1642 bl2_time=9112 logo_time=2559` (ms), and
+the debug `/init` logged its start at 12.47 s on the kernel's clock. The draw while off,
+and how long a press of the side button must last to switch the phone on, were not
+measured.
+
+**The shell exited with status 0 twice and the phone rebooted into TWRP**: once after a
+replug, once 12 s after a boot by the side button. Each time its `/dev/ttyGS0` seemed to
+read an end of file. A third time it exited with status 1 as the port went away, and took
+a script exec'd from a child shell with it; a script exec'd by the top-level shell outlived
+the port.

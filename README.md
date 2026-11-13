@@ -30,7 +30,8 @@ documentation, starting from the vendor kernel rather than from nothing.
 | Debug shell over USB | **Decided.** A serial shell on a USB gadget, and the kernel log in pstore — [ADR 0009](docs/adr/0009-a-serial-shell-over-usb-and-logs-in-pstore.md), issue 15. Built in P2. |
 | Clock on screen | **Built and on the phone.** `alarmd` as `/init` draws the local time each minute, issue 10. |
 | Touch and the side keys | **Built and on the phone.** One daily alarm set by touch, ringing on the panel, snoozed by a volume key, dismissed by Power, issue 11. |
-| RTC wake, vibration | Planned — P5 and P6. |
+| RTC wake and power-off | **Decided.** Suspended for two minutes after a use, then off until the RTC switches it on for the alarm — [ADR 0010](docs/adr/0010-suspend-briefly-then-power-off-until-the-alarm.md), issue 12. |
+| Vibration | Planned — P6. |
 | Speaker | Parked. |
 
 ## How it works
@@ -103,8 +104,9 @@ set up, backed up, and how our `/init` goes onto `system`.
 - **Debugging blind.** There is no serial console; a boot that fails is a black screen. A
   debug image with a serial shell over USB, and the log in pstore, is built before anything
   else.
-- **Deep sleep and RTC wake.** The vendor kernel may expect Android userspace pieces before
-  it suspends properly, and the alarm depends on the RTC waking it. That is proven early.
+- **Deep sleep and RTC wake.** The RTC wakes a suspend and switches on a powered-off phone
+  without Android's userspace, but the SoC never reaches deep sleep, so a suspend draws
+  about 53 mA. → ADR 0010.
 
 The decisions behind the approach, and what was rejected, are in
 [ADR 0002](docs/adr/0002-vendor-kernel-and-own-userspace.md).
