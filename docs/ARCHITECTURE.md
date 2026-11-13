@@ -50,6 +50,7 @@ driver frees the buffer on the last close, and an `mmap` after that can panic th
 | `time` | `UnixSeconds`, `TimeOfDay`, `Weekday`, `UtcOffset` — civil time without a tz database |
 | `alarm` | `Alarm`, `Weekdays`, and when an alarm next fires after a given instant |
 | `hardware` | the traits `Clock`, `WakeAlarm`, `Suspend`, `Vibrator`, `Battery`, `Display`, `Input`, and `HardwareError` |
+| `window` | `Window`: two minutes suspended after the panel goes off, then *power off*, unless an alarm rings, is snoozed or is due within two minutes of the end; the RTC instant to suspend until — ADR 0010, D2 |
 | `input` | `InputEvent`: a touch at a panel pixel, or a press of `VolumeUp`, `VolumeDown` or `Power` |
 | `schedule` | `arm_next`: read the clock, pick the earliest alarm, arm or disarm the RTC |
 | `battery` | `ChargeLimit`, `BatteryReading`, `stop_at_limit` and the 20 % mark — ADR 0008, D3 |
