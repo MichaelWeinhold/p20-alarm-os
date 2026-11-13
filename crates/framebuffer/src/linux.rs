@@ -1,4 +1,4 @@
-use std::ffi::{c_int, c_void};
+use std::ffi::{c_int, c_ulong, c_void};
 use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::os::fd::AsRawFd;
@@ -8,11 +8,14 @@ use std::ptr;
 use alarm_core::face::{Frame, Size};
 use alarm_core::hardware::{Display, HardwareError};
 
-use crate::{BACKLIGHT, DEVICE, FIX_SIZE, Mode, VAR_SIZE};
+use crate::{BACKLIGHT, Change, DEVICE, FIX_SIZE, Mode, VAR_SIZE, changes};
 
 const FBIOGET_VSCREENINFO: c_int = 0x4600;
 const FBIOGET_FSCREENINFO: c_int = 0x4602;
 const FBIOPAN_DISPLAY: c_int = 0x4606;
+const FBIOBLANK: c_int = 0x4611;
+const FB_BLANK_UNBLANK: c_ulong = 0;
+const FB_BLANK_POWERDOWN: c_ulong = 4;
 const PROT_READ_WRITE: c_int = 0x3;
 const MAP_SHARED: c_int = 0x1;
 
@@ -48,6 +51,14 @@ fn control(file: &File, request: c_int, bytes: &mut [u8]) -> Result<(), Hardware
     Ok(())
 }
 
+fn blank(file: &File, level: c_ulong) -> Result<(), HardwareError> {
+    let result = unsafe { ioctl(file.as_raw_fd(), FBIOBLANK, level) };
+    if result < 0 {
+        return Err(failed("fb0", &io::Error::last_os_error()));
+    }
+    Ok(())
+}
+
 fn mapped(file: &File, length: usize) -> Result<*mut u8, HardwareError> {
     let address = unsafe {
         mmap(
@@ -73,7 +84,7 @@ pub struct Panel {
     memory: *mut u8,
     shown: usize,
     brightness: String,
-    lit: bool,
+    lit: Option<bool>,
 }
 
 impl Panel {
@@ -99,7 +110,7 @@ impl Panel {
             memory,
             shown: mode.shown,
             brightness: brightness.to_string(),
-            lit: false,
+            lit: None,
         })
     }
 
@@ -122,11 +133,19 @@ impl Display for Panel {
         mode.pan(&mut self.var, next)?;
         control(&self.file, FBIOPAN_DISPLAY, &mut self.var)?;
         self.shown = next;
-        if !self.lit {
-            fs::write(BACKLIGHT, &self.brightness)
-                .map_err(|error| failed("lcd_backlight0", &error))?;
-            self.lit = true;
+        Ok(())
+    }
+
+    fn light(&mut self, on: bool) -> Result<(), HardwareError> {
+        for change in changes(self.lit, on) {
+            match change {
+                Change::Unblank => blank(&self.file, FB_BLANK_UNBLANK)?,
+                Change::PowerDown => blank(&self.file, FB_BLANK_POWERDOWN)?,
+                Change::Backlight => fs::write(BACKLIGHT, &self.brightness)
+                    .map_err(|error| failed("lcd_backlight0", &error))?,
+            }
         }
+        self.lit = Some(on);
         Ok(())
     }
 }

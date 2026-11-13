@@ -51,6 +51,7 @@ pub trait Battery {
 pub trait Display {
     fn size(&self) -> Size;
     fn show(&mut self, frame: &Frame) -> Result<(), HardwareError>;
+    fn light(&mut self, on: bool) -> Result<(), HardwareError>;
 }
 
 pub trait Input {
