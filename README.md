@@ -31,6 +31,7 @@ documentation, starting from the vendor kernel rather than from nothing.
 | Clock on screen | **Built and on the phone.** `alarmd` as `/init` draws the local time each minute, issue 10. |
 | Touch and the side keys | **Built and on the phone.** One daily alarm set by touch, ringing on the panel, snoozed by a volume key, dismissed by Power, issue 11. |
 | RTC wake and power-off | **Decided.** Suspended for two minutes after a use, then off until the RTC switches it on for the alarm — [ADR 0010](docs/adr/0010-suspend-briefly-then-power-off-until-the-alarm.md), issue 12. |
+| Settings across a power-off | **Decided.** A raw record of two checksummed slots on `reserved4`, a partition the ROM never used — [ADR 0011](docs/adr/0011-keep-the-settings-in-a-raw-record-on-reserved4.md), issue 30. |
 | Vibration | Planned — P6. |
 | Speaker | Parked. |
 

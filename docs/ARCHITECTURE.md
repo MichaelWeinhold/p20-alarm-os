@@ -68,7 +68,7 @@ controller sleeps while the panel is off, so touch works only while `fb0` is hel
 
 ### The loop, as intended
 
-1. Read the clock; draw the time.
+1. Load the settings from `reserved4` (ADR 0011); read the clock; draw the time.
 2. Arm the RTC for the earliest alarm (`schedule::arm_next`).
 3. Turn the panel off and suspend; after two minutes without a press, arm the power-on
    alarm and power off (ADR 0010).

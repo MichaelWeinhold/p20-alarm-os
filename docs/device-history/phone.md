@@ -955,3 +955,106 @@ a script exec'd from a child shell with it; a script exec'd by the top-level she
 the port.
 
 The debug `/init` is `/init` on `system` now, with `init.rom` at `e8e2768e…78ef`.
+
+## 2026-11-13 — where the settings can live, for issue 30
+
+Read from TWRP over `adb`, with `/dev/block/platform/hi_mci.0/by-name` and
+`/sys/class/block/*/size`. Nothing was written but `reserved4`, and it was written back.
+
+**The partitions**, by name, device and size in bytes; the type is `blkid`'s, `-` where
+it names none:
+
+| Name | Device | Bytes | Type |
+|---|---|---|---|
+| `vrl` | `mmcblk0p1` | 262144 | - |
+| `vrl_backup` | `mmcblk0p2` | 262144 | - |
+| `fw_lpm3` | `mmcblk0p3` | 262144 | - |
+| `frp` | `mmcblk0p4` | 786432 | - |
+| `fastboot` | `mmcblk0p5` | 4194304 | - |
+| `modemnvm_factory` | `mmcblk0p6` | 4194304 | - |
+| `nvme` | `mmcblk0p7` | 6291456 | - |
+| `oeminfo` | `mmcblk0p8` | 67108864 | - |
+| `reserved3` | `mmcblk0p9` | 4194304 | - |
+| `modemnvm_backup` | `mmcblk0p10` | 4194304 | - |
+| `modemnvm_img` | `mmcblk0p11` | 8388608 | ext4 |
+| `modemnvm_system` | `mmcblk0p12` | 4194304 | - |
+| `secure_storage` | `mmcblk0p13` | 33554432 | ext4 |
+| `reserved4` | `mmcblk0p14` | 2097152 | - |
+| `reserved5` | `mmcblk0p15` | 2097152 | - |
+| `persist` | `mmcblk0p16` | 2097152 | - |
+| `modem_secure` | `mmcblk0p17` | 14680064 | ext4 |
+| `modem_om` | `mmcblk0p18` | 33554432 | ext4 |
+| `splash2` | `mmcblk0p19` | 67108864 | ext4 |
+| `misc` | `mmcblk0p20` | 2097152 | - |
+| `modemnvm_update` | `mmcblk0p21` | 25165824 | - |
+| `reserved2` | `mmcblk0p22` | 48234496 | - |
+| `preload` | `mmcblk0p23` | 8388608 | ext4 |
+| `teeos` | `mmcblk0p24` | 4194304 | - |
+| `trustfirmware` | `mmcblk0p25` | 2097152 | - |
+| `sensorhub` | `mmcblk0p26` | 16777216 | - |
+| `fw_hifi` | `mmcblk0p27` | 12582912 | - |
+| `erecovery_kernel` | `mmcblk0p28` | 25165824 | - |
+| `erecovery_ramdisk` | `mmcblk0p29` | 33554432 | - |
+| `erecovery_vendor` | `mmcblk0p30` | 16777216 | - |
+| `kernel` | `mmcblk0p31` | 25165824 | - |
+| `eng_system` | `mmcblk0p32` | 12582912 | - |
+| `recovery_ramdisk` | `mmcblk0p33` | 33554432 | - |
+| `recovery_vendor` | `mmcblk0p34` | 16777216 | - |
+| `dts` | `mmcblk0p35` | 29360128 | - |
+| `dto` | `mmcblk0p36` | 4194304 | - |
+| `modem_fw` | `mmcblk0p37` | 100663296 | ext4 |
+| `recovery_vbmeta` | `mmcblk0p38` | 1048576 | - |
+| `erecovery_vbmeta` | `mmcblk0p39` | 1048576 | - |
+| `eng_vendor` | `mmcblk0p40` | 12582912 | - |
+| `dfx` | `mmcblk0p41` | 16777216 | - |
+| `vbmeta` | `mmcblk0p42` | 4194304 | - |
+| `cache` | `mmcblk0p43` | 134217728 | ext4 |
+| `odm` | `mmcblk0p44` | 134217728 | ext4 |
+| `hisitest0` | `mmcblk0p45` | 2097152 | - |
+| `hisitest1` | `mmcblk0p46` | 2097152 | - |
+| `hisitest2` | `mmcblk0p47` | 4194304 | - |
+| `patch` | `mmcblk0p48` | 33554432 | ext4 |
+| `bootfail_info` | `mmcblk0p49` | 2097152 | - |
+| `rrecord` | `mmcblk0p50` | 16777216 | - |
+| `reserved9` | `mmcblk0p51` | 14680064 | - |
+| `system` | `mmcblk0p52` | 3909091328 | ext4 |
+| `preas` | `mmcblk0p53` | 1182793728 | ext4 |
+| `preavs` | `mmcblk0p54` | 33554432 | ext4 |
+| `cust` | `mmcblk0p55` | 201326592 | ext4 |
+| `version` | `mmcblk0p56` | 33554432 | ext4 |
+| `vendor` | `mmcblk0p57` | 822083584 | ext4 |
+| `product` | `mmcblk0p58` | 981467136 | ext4 |
+| `userdata` | `mmcblk0p59` | — | ext4 |
+
+TWRP's shell overflowed on the sizes of `system` and `userdata`; `system`'s is the one
+read for issue 17.
+
+**Eight partitions are zero end to end**, by `cmp <device> /dev/zero` reaching the
+device's end first: `reserved2`, `reserved3`, `reserved4`, `reserved5`, `reserved9`,
+`hisitest1`, `hisitest2` and `persist`. `hisitest0` starts
+`[8/18 17:58:40]Ddr screen version info:`. `rrecord` differs from zero at byte 1025,
+`bootfail_info` starts `XIFB`, and `dfx` holds the boot's log (issue 17).
+
+**`userdata` is ext4 and not encrypted.** TWRP's `recovery.fstab` names it `f2fs` with
+`encryptable=footer`, but `blkid` and `/proc/mounts` read ext4, mounted read-write on
+`/data` with no password asked, and `/data/data` lists package names in clear. There is
+no `/data/unencrypted`, and `ro.crypto.state` is empty.
+
+**`cache`** is ext4, 121299 KiB with 47 used, mounted read-write by TWRP. It holds
+`backup`, `backup_stage`, `lost+found` and `recovery`, whose `last_log.gz`, `log.gz`,
+`recovery.fstab` and `storage.fstab` carry the time of the current boot into TWRP.
+
+**A record on `reserved4` survives the bootloader.** `reserved4` and `reserved5` were
+streamed to `~/p20-backups/reserved4-mmcblk0p14-stock.img` and
+`reserved5-mmcblk0p15-stock.img`, 2097152 bytes each, both ends at `5647f05e…1eee`. A
+4096-byte record (`c23972d0…5b63`) was written at offset 0 with `dd`, which made the
+partition `a02c8e6d…bdde`. After `adb reboot recovery`, through the bootloader and back
+into TWRP, the first 4096 bytes still read `c23972d0…5b63`, the partition `a02c8e6d…bdde`,
+and `reserved5` `5647f05e…1eee`. The reboot left `boot-recovery` in `misc`; its command
+field was zeroed. The backup was written back to `reserved4`, which reads
+`5647f05e…1eee` again.
+
+TWRP's `dd` refuses `conv=`: `dd: conv option disabled`.
+
+**`reserved4`'s role**: unused by the ROM, the bootloader and TWRP; ours, for the
+settings record of ADR 0011.

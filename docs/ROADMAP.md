@@ -76,8 +76,9 @@ Ring the alarm through the vibrator.
 
 ## Research before P7
 
-- **Where settings persist across a reboot.** Issue 30. The initramfs lives in RAM, so an
-  alarm set on the phone needs a spare partition on the eMMC that the ROM can do without.
+- **Where settings persist across a reboot.** **Decided** — in ADR 0011: a raw record of
+  two checksummed slots on `reserved4`, a partition the ROM never used, with `system`
+  left read-only. The storage adapter is its follow-up, and unblocks ADR 0010's power-off.
 
 ## P7 — Settings and a timer
 
