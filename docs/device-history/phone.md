@@ -953,3 +953,5 @@ replug, once 12 s after a boot by the side button. Each time its `/dev/ttyGS0` s
 read an end of file. A third time it exited with status 1 as the port went away, and took
 a script exec'd from a child shell with it; a script exec'd by the top-level shell outlived
 the port.
+
+The debug `/init` is `/init` on `system` now, with `init.rom` at `e8e2768e…78ef`.

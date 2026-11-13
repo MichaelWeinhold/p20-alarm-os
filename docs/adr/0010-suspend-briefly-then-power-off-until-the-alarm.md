@@ -37,25 +37,26 @@ direct `echo mem`, so the cable needs no special case to suspend.
 
 ### D2. After a use, the phone suspends for two minutes, then powers off
 
-Supersedes ADR 0008, D1. When the panel goes off (ADR 0008, D2), the phone suspends, and
-a two-minute window starts. A press of the side button in the window lights the time at
-once and ends the window; the next one starts when the panel goes off again. The window
-does not run while the panel is lit. When it ends without a press, the phone powers off.
-The two minutes are a default, changed by a setting.
+Supersedes ADR 0008, D1. When the panel goes off — a press of the side button, or ADR
+0008, D2's 10 s — the phone suspends, and a two-minute window starts. A press in the
+window lights the time at once and ends the window; the next one starts when the panel
+goes off again. The window does not run while the panel is lit. When it ends without a
+press, the phone powers off. A press on a phone that is off boots it, and the time shows
+once `alarmd` draws it. The two minutes are a default, changed by a setting.
 
-The phone stays suspended instead of powering off:
-
-- **while the cable is in**, since ADR 0008, D3's charge stop needs `alarmd` running, and
-  what a phone powered off on the cable does is not read;
-- **while an alarm rings or is snoozed, or is due within the window.** The RTC wakes the
-  suspend for it, and the window starts again after it.
+The cable changes nothing: the phone powers off on the cable as off it. It stays
+suspended only **while an alarm rings or is snoozed, or is due within two minutes of the
+window's end**, since the phone would be switched on again at once (D3). The RTC wakes
+the suspend for it, and the window starts again after it.
 
 ### D3. A power-on alarm is armed before every power-off
 
-`alarmd` creates a `timerfd` of `CLOCK_POWEROFF_ALARM` (12), sets it to the next alarm in
-UTC with `TFD_TIMER_ABSTIME`, then powers off with `reboot(2)`, as PID 1. The kernel arms
-the PMU 60 s before the target, which covers the boot; for a target less than 60 s away
-it arms 15 s after the call. With no alarm armed, it powers off with none.
+The phone is switched on **two minutes before the alarm**, so it is booted and waiting
+when the alarm rings. `alarmd` creates a `timerfd` of `CLOCK_POWEROFF_ALARM` (12), sets
+it with `TFD_TIMER_ABSTIME` to 60 s before the next alarm in UTC, then powers off with
+`reboot(2)`, as PID 1. The kernel arms the PMU 60 s before that target, 120 s before the
+alarm; for a target less than 60 s away it arms 15 s after the call. With no alarm armed,
+it powers off with none.
 
 `wakealarm` is never what powers the phone on: `hisi_rtc_shutdown` clears the PMU's alarm
 unless the power-off alarm is enabled.
@@ -86,9 +87,9 @@ every glance into a cold boot: the debug `/init` started 12.47 s in on the kerne
 after bootloader stages the command line puts at 13.3 s, with the unlocked bootloader's
 warning on screen. *Reopens if* a boot to the time drawn takes under 3 s.
 
-**Powering off on the cable.** It would save nothing the cable does not supply, and leave
-the charge stop without `alarmd`. *Reopens if* a power-off on the cable is read to stay
-off without charging past the limit.
+**Staying suspended on the cable**, so that ADR 0008, D3's charge stop keeps running. The
+operator wants the cable to change nothing. *Reopens if* a power-off on the cable is read
+to charge past the limit, and the operator would rather keep the limit.
 
 **Arming `wakealarm` before a power-off.** Read not to switch the phone on, and the
 kernel's source says why. *Reopens if* the kernel changes.
@@ -100,6 +101,8 @@ follow-up finds deep sleep needs Android's userspace, and power-off has failed i
 
 - **ADR 0008, D1 is superseded**; its D2 and D3 stand. A phone off the cable charges far
   less often, with the off draw still to be read.
+- **ADR 0008, D3's charge stop acts only while the phone is on.** Whether a phone powered
+  off on the cable charges, to what level, or boots itself, is not read; a follow-up.
 - **Opening `/dev/fb0` after a suspend panicked the kernel**, so `alarmd` holds it across
   every suspend, as it already holds it for life (issue 10); whether a held `fb0` lights
   again after a resume is issue 37's to read.
