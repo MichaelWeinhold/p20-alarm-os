@@ -113,9 +113,9 @@ pub fn run() -> ! {
     let mut battery = SysfsBattery::open();
     let mut input = EvdevInput::open();
     let mut absent = Vec::new();
+    let mut was_lit = false;
     loop {
         let before = ringer;
-        let was_lit = light.lit();
         let turn = minute(
             &SystemClock,
             offset,
@@ -127,6 +127,7 @@ pub fn run() -> ! {
         if light.lit() != was_lit {
             let state = if light.lit() { "lit" } else { "off" };
             logged(&mut log, &kmsg::line(&format!("panel {state}")));
+            was_lit = light.lit();
         }
         for line in &turn.log {
             logged(&mut log, line);
