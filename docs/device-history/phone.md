@@ -1058,3 +1058,57 @@ TWRP's `dd` refuses `conv=`: `dd: conv option disabled`.
 
 **`reserved4`'s role**: unused by the ROM, the bootloader and TWRP; ours, for the
 settings record of ADR 0011.
+
+## 2026-11-15 — the panel off and on, for issue 37
+
+Read under the debug `/init` (`64caf049…ddaa`), with `alarmd` built from `07ec897`
+(`e3ade91c…190f`, 399016 bytes) on `system` and started from the shell 92 s into a
+boot, after the touch driver's firmware wait. Draws are `Battery/current_now`, negative
+for a discharge, with the cable in and
+`/sys/class/hw_power/charger/charge_data/enable_hiz` at 1, so the battery carries the
+whole phone; it went back to 0 after each reading.
+
+**`FBIOBLANK` on the held `fb0` turns the panel off and on, and never panicked.**
+`FB_BLANK_POWERDOWN` logs `hisi_fb_blank: fb0, blank_mode(4)`, runs `lcdkit_off`, sets
+the backlight to 0, suspends `ts_kit` and sends the sensor hub `ST_SCREENOFF`;
+`FB_BLANK_UNBLANK` logs `blank_mode(0)`, runs `lcdkit_on` and `mipi_init`, resumes
+`ts_kit`, and `alarmd` writes the backlight to 2000. The panel shows the last frame
+drawn. A press logs `[hisi_powerkey_handler] power key press interrupt!` and the unblank
+follows within 2 ms.
+
+**Awake with the panel off, the phone draws about 64 to 80 mA**, whatever the backlight
+node holds: 1000, 2000 and 3000 read the same. Lit, with taps on the panel:
+
+| Backlight | Draw, mean of 12 to 13 s |
+|---|---|
+| 1000 | 260 mA |
+| 2000 | 276 mA |
+| 3000 | 306 mA |
+| 4000, the bootloader's, before `alarmd` | about 362 mA |
+
+**Touch registers after a relight.** Taps kept the panel lit for 62 s in one run and
+73 s in another, against the 10 s a press alone gives.
+
+**A press after a suspend lights the held `fb0`, with no panic.** The cable out,
+`wakealarm` armed at `+60` and `echo mem > /sys/power/state` two seconds after the panel
+went off; the side button woke the phone before the RTC did:
+
+```
+[  242.431762] PM: suspend entry 2026-11-15 15:49:37.361302048 UTC
+[  242.757659] [hisi_coul_core]SUSPEND! cc=-647734, time=4076, wakeup_avg_current:80
+[  255.599731] wake up irq num: 139, irq name: GPIO23
+[  255.683441] PM: suspend exit 2026-11-15 15:49:50.083469791 UTC
+[  255.683685] [pid:505,cpu5,alarmd][hisifb I]:hisi_fb_blank: fb0, blank_mode(0) +!
+[  265.888610] [pid:505,cpu7,alarmd][hisifb I]:hisi_fb_blank: fb0, blank_mode(4) +!
+```
+
+The user saw the time, and touch worked. Two presses 4 minutes later, awake and off the
+cable, lit it again. A wake by the RTC with the panel then lit by a press was not read.
+
+A pulled or knocked cable ends the debug `/init`'s shell with status 129, `SIGHUP`, and
+the phone reboots into TWRP; `alarmd` started from that shell needs `trap "" HUP`.
+`alarmd` under the debug `/init` writes no kernel log: its `devtmpfs` mount on `/dev`
+fails with `EBUSY`.
+
+The debug `/init` is `/init` on `system` now, with `alarmd` at `/alarmd` and the suspend
+script at `/p20-run.sh` beside it.

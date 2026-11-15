@@ -1,5 +1,6 @@
 use alarm_core::battery::{ChargeLimit, ChargeStep, stop_at_limit, wants_mark};
 use alarm_core::hardware::{Battery, Clock, Display, HardwareError};
+use alarm_core::light::Light;
 use alarm_core::ringer::{Ringer, show};
 use alarm_core::time::{UtcOffset, seconds_to_next_minute};
 use pid1::kmsg;
@@ -24,6 +25,7 @@ pub fn minute(
     offset: UtcOffset,
     battery: &mut Result<impl Battery, HardwareError>,
     ringer: &mut Ringer,
+    light: &mut Light,
     display: &mut impl Display,
 ) -> Minute {
     let mut log = Vec::new();
@@ -37,8 +39,12 @@ pub fn minute(
         Err(error) => log.push(kmsg::failure("holding the charge limit", &error)),
     }
     let low = battery.as_ref().map_or(true, wants_mark);
-    let wait_seconds = match show(clock, offset, ringer, low, display) {
-        Ok(now) => seconds_to_next_minute(now),
+    let wait_seconds = match show(clock, offset, ringer, light, low, display) {
+        Ok(now) => light
+            .seconds_left(now)
+            .map_or(seconds_to_next_minute(now), |left| {
+                left.min(seconds_to_next_minute(now))
+            }),
         Err(error) => {
             log.push(kmsg::failure("showing the time", &error));
             RETRY_SECONDS
@@ -66,6 +72,7 @@ mod tests {
     use alarm_core::battery::{BatteryReading, ChargeStatus, Health, Percent};
     use alarm_core::face::{Face, Frame, RINGING, Size, WARNING, render};
     use alarm_core::input::InputEvent;
+    use alarm_core::light::LIT_SECONDS;
     use alarm_core::time::{TimeError, TimeOfDay, UnixSeconds};
 
     use super::*;
@@ -114,6 +121,7 @@ mod tests {
     #[derive(Default)]
     struct FakeDisplay {
         shown: Vec<Frame>,
+        lit: Vec<bool>,
     }
 
     impl Display for FakeDisplay {
@@ -123,6 +131,11 @@ mod tests {
 
         fn show(&mut self, frame: &Frame) -> Result<(), HardwareError> {
             self.shown.push(frame.clone());
+            Ok(())
+        }
+
+        fn light(&mut self, on: bool) -> Result<(), HardwareError> {
+            self.lit.push(on);
             Ok(())
         }
     }
@@ -137,6 +150,10 @@ mod tests {
             status,
             enabled: true,
         })
+    }
+
+    fn lit() -> Light {
+        Light::lit_at(UnixSeconds(0), i64::MAX / 2)
     }
 
     fn ringer() -> Result<Ringer, TimeError> {
@@ -170,6 +187,7 @@ mod tests {
             offset,
             &mut battery,
             &mut ringer()?,
+            &mut lit(),
             &mut display,
         );
         assert_eq!(
@@ -192,6 +210,7 @@ mod tests {
             UtcOffset::UTC,
             &mut battery,
             &mut ringer()?,
+            &mut lit(),
             &mut display,
         );
         assert_eq!(step.log, [kmsg::line("charge stopped at the limit")]);
@@ -208,6 +227,7 @@ mod tests {
             UtcOffset::UTC,
             &mut battery,
             &mut ringer()?,
+            &mut lit(),
             &mut display,
         );
         assert!(
@@ -230,6 +250,7 @@ mod tests {
             UtcOffset::UTC,
             &mut battery,
             &mut ringer()?,
+            &mut lit(),
             &mut display,
         );
         assert_eq!(
@@ -254,6 +275,7 @@ mod tests {
             UtcOffset::UTC,
             &mut battery,
             &mut ringer()?,
+            &mut lit(),
             &mut display,
         );
         assert_eq!(
@@ -288,6 +310,7 @@ mod tests {
             UtcOffset::UTC,
             &mut battery,
             &mut ringer,
+            &mut lit(),
             &mut display,
         );
         minute(
@@ -295,6 +318,7 @@ mod tests {
             UtcOffset::UTC,
             &mut battery,
             &mut ringer,
+            &mut lit(),
             &mut display,
         );
         let amber = |frame: &Frame| frame.row(0).contains(&RINGING);
@@ -320,6 +344,47 @@ mod tests {
             change(&before, &after),
             Some(kmsg::line("alarm 07:00 armed, Quiet"))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_lit_panel_wakes_the_loop_when_it_is_due_off() -> Result<(), Box<dyn std::error::Error>> {
+        let mut battery = battery(55, ChargeStatus::Discharging);
+        let mut display = FakeDisplay::default();
+        let clock = at(19, 37, 30);
+        let mut light = Light::lit_at(clock.now()?, LIT_SECONDS);
+        let step = minute(
+            &clock,
+            UtcOffset::UTC,
+            &mut battery,
+            &mut ringer()?,
+            &mut light,
+            &mut display,
+        );
+        assert_eq!(step.wait_seconds, 10);
+        assert_eq!(display.lit, [true]);
+        assert_eq!(display.shown.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn on_the_cable_the_panel_goes_off_all_the_same() -> Result<(), Box<dyn std::error::Error>> {
+        let mut battery = battery(55, ChargeStatus::Charging);
+        let mut display = FakeDisplay::default();
+        let mut light = Light::lit_at(at(19, 37, 30).now()?, LIT_SECONDS);
+        let mut ringer = ringer()?;
+        let step = minute(
+            &at(19, 37, 40),
+            UtcOffset::UTC,
+            &mut battery,
+            &mut ringer,
+            &mut light,
+            &mut display,
+        );
+        assert_eq!(step.wait_seconds, 20);
+        assert_eq!(display.lit, [false]);
+        assert_eq!(display.shown, Vec::<Frame>::new());
+        assert!(battery?.enabled);
         Ok(())
     }
 }
