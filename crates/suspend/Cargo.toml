@@ -1,0 +1,15 @@
+[package]
+name = "suspend"
+description = "The wake alarm and suspend adapters over the rtc0 wakealarm and power state sysfs nodes"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+alarm-core = { path = "../alarm-core" }
+
+[lints]
+workspace = true

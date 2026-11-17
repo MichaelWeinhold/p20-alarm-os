@@ -1112,3 +1112,65 @@ fails with `EBUSY`.
 
 The debug `/init` is `/init` on `system` now, with `alarmd` at `/alarmd` and the suspend
 script at `/p20-run.sh` beside it.
+
+## 2026-11-17 — suspended while the panel is off, woken by the RTC, for issue 50
+
+Read under the debug `/init` (`64caf049…ddaa`), with `alarmd` built from `ea96be2`
+(`6741d3d4…4256`, 404120 bytes) copied to `/mnt` over the serial shell and started from
+it behind `trap "" HUP`, in a fresh boot. The clock was set to 05:55:00 UTC first, so the
+07:00 alarm, at `+01:00`, was five minutes ahead; the user lit the panel and armed it.
+
+**`alarmd` suspends each time the panel goes off, and the RTC wakes it at the armed
+second.** Its own kernel log, read over serial after `kill -STOP` paused it during the
+ring:
+
+```
+[  153.036285] [pid:379,cpu5,alarmd]PM: suspend entry 2026-11-17 05:55:10.969645998 UTC
+[  234.666503] [pid:379,cpu0,alarmd]wake up irq num: 139, irq name: GPIO23
+[  235.222808] [pid:379,cpu5,alarmd]PM: suspend exit 2026-11-17 05:56:32.556003125 UTC
+[  235.223724] [pid:379,cpu5,alarmd][hisifb I]:hisi_fb_blank: fb0, blank_mode(0) +!
+[  246.708190] [pid:379,cpu5,alarmd][hisifb I]:hisi_fb_blank: fb0, blank_mode(4) +!
+[  247.000030] [pid:379,cpu5,alarmd]PM: suspend entry 2026-11-17 05:56:44.333005207 UTC
+[  366.507995] [pid:379,cpu0,alarmd]wake up irq num: 78, irq name: RTC0
+[  367.051177] [pid:379,cpu6,alarmd]PM: suspend exit 2026-11-17 05:58:44.542877604 UTC
+[  368.052490] [pid:379,cpu5,alarmd]PM: suspend entry 2026-11-17 05:58:45.544189062 UTC
+[  442.509155] [pid:379,cpu0,alarmd]wake up irq num: 78, irq name: RTC0
+[  443.057067] [pid:379,cpu4,alarmd]PM: suspend exit 2026-11-17 06:00:00.547598438 UTC
+[  444.058319] [pid:379,cpu5,alarmd][hisifb I]:hisi_fb_blank: fb0, blank_mode(0) +!
+```
+
+The press woke it from the first suspend; 10 s later the panel went off and the window
+began. The RTC woke it at the window's end, 120 s on, and a second later `alarmd`
+suspended again armed for 06:00:00, which it woke at; the panel lit for the ring a second
+after that. Ringing in this build is the panel lit amber, with no vibration or sound.
+
+**The cable was in for that run, and the phone suspended fully all the same** — user
+space frozen, the non-boot CPUs off, `charger type: CDP` read at each resume. An earlier
+run the same morning, with the cable out, woke and showed the alarm at 07:00 as the user
+watched; its log was lost when the phone was powered off through eRecovery.
+
+**`wakealarm` and `mem` from the shell behave as the adapters expect.** `echo 0`, then
+the epoch `+20`, read back `1794905711`; `echo mem > /sys/power/state` returned 0 at
+that second:
+
+```
+[  148.281280] PM: suspend entry 2026-11-17 08:54:51.296722896 UTC
+[  167.504913] wake up irq num: 78, irq name: RTC0
+[  168.084350] PM: suspend exit 2026-11-17 08:55:11.579127604 UTC
+```
+
+**The serial gadget comes back after a resume, but only while the phone stays awake.**
+`alarmd` suspends again one to eleven seconds after a wake, before the Mac can open the
+port, so a reading needs `alarmd` paused while it is awake — here, while it rang. After a
+resume the shell's tty takes no end-of-file until `stty sane`. Writing `""` and then
+`hisi-usb-otg` to `/config/usb_gadget/debug/UDC` after a resume left the gadget dead
+until a restart. Opening and closing the port on the Mac hangs up the debug `/init`'s
+shell, and the phone reboots into TWRP.
+
+**Starting `alarmd` in a boot that had already suspended restarted the phone at once.**
+That boot's log was overwritten before it was read. *Assumption:* the first open of `fb0`
+after a resume panics the kernel; `alarmd` as `/init` opens `fb0` before any suspend.
+
+Power and Volume Up with the cable in enter eRecovery; with it out, TWRP. Powering off
+clears pstore. The phone's clock was set back from the Mac's UTC afterwards, and
+`wakealarm` disarmed.
