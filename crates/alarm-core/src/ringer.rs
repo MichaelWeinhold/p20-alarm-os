@@ -49,6 +49,11 @@ impl Ringer {
     }
 
     #[must_use]
+    pub fn next(&self) -> Option<UnixSeconds> {
+        self.next
+    }
+
+    #[must_use]
     pub fn ring(&self) -> Ring {
         self.ring
     }
@@ -346,9 +351,12 @@ mod tests {
     fn the_alarm_rings_again_the_next_day() -> Result<(), Box<dyn std::error::Error>> {
         let clock = FakeClock::at(6, 59, 0);
         let mut ringer = ringer(7, 0)?;
+        assert_eq!(ringer.next(), None);
         drain(&mut FakeInput::with(&[ELSEWHERE]), &clock, &mut ringer)?;
+        assert_eq!(ringer.next(), Some(UnixSeconds(clock.now()?.0 + 60)));
         clock.pass(60);
         ringer.tick(clock.now()?, UtcOffset::UTC);
+        assert_eq!(ringer.next(), Some(UnixSeconds(clock.now()?.0 + 86_400)));
         drain(&mut FakeInput::with(&[DISMISS]), &clock, &mut ringer)?;
         clock.pass(86_400 - 60);
         ringer.tick(clock.now()?, UtcOffset::UTC);

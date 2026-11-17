@@ -32,8 +32,11 @@ crates/
                 the touch firmware the kernel asks for, answered from odm
   pid1/         what every /init takes from the kernel: mounts, the kernel log, a child
                 on a terminal, reaping, the reboot into recovery
+  suspend/      the adapters for the RTC's wake alarm and for suspending, over rtc0's
+                wakealarm and /sys/power/state
   alarmd/       the binary: opens the adapters, draws the time and the alarm, waits on input
-                until the next minute or until the panel is due off, is PID 1
+                until the next minute or until the panel is due off, suspends while it is
+                off, is PID 1
   init-probe/   a probe /init that runs the charge stop and logs the power nodes
   debug-init/   the debug /init: the ROM's shell on a USB serial gadget (ADR 0009)
 ```
@@ -56,11 +59,19 @@ It turns the panel off with `FBIOBLANK` on that descriptor, never by closing it.
 | `schedule` | `arm_next`: read the clock, pick the earliest alarm, arm or disarm the RTC |
 | `battery` | `ChargeLimit`, `BatteryReading`, `stop_at_limit` and the 20 % mark — ADR 0008, D3 |
 | `face` | `Frame`, `Face` and `render`: the time in seven-segment digits, the battery mark, the alarm below, amber while ringing; `target` maps a tap to the alarm digit it steps |
-| `ringer` | `Ringer`: one daily alarm, armed or not, quiet, ringing or snoozed for 9 minutes; `show` and `listen` drive it and the `Light` from the clock and `Input` |
+| `ringer` | `Ringer`: one daily alarm, armed or not, quiet, ringing or snoozed for 9 minutes, and the instant it next rings; `show` and `listen` drive it and the `Light` from the clock and `Input` |
 | `light` | `Light`: the panel lit for 10 s by a press, kept lit by a touch or a ringing alarm, off at a press or the timeout — ADR 0008, D2; the ringer hears input only while it is lit |
 
 The panel is the legacy framebuffer, `/dev/fb0` under our `devtmpfs`, with no DRM (ADR
 0004).
+
+`suspend` arms the RTC by writing `0`, then the epoch, to `wakealarm`, and reads it back:
+the kernel takes an epoch at or before its now as a disarm and reports no error, so only
+the read-back shows it. Writing `mem` to `/sys/power/state` returns after the wake, and
+fails when the kernel aborts the suspend. Each time the panel goes off, `alarmd` asks
+`Window` what to arm and suspends; on *power off*, until it exists, it arms the next alarm
+or disarms and suspends all the same. A press that wakes it arrives as the power key's
+input event, read within a second of the resume.
 
 `input` finds `hisi_gpio_key`, `hisi_on` and `huawei,ts_kit` by name in
 `/sys/class/input`, and opens each when it appears rather than once at start-up: the touch

@@ -7,14 +7,16 @@ use alarm_core::hardware::{Clock, Display};
 use alarm_core::light::{LIT_SECONDS, Light};
 use alarm_core::ringer::{Ringer, listen};
 use alarm_core::time::{TimeOfDay, UtcOffset};
+use alarm_core::window::{WINDOW_SECONDS, Window};
 use battery::SysfsBattery;
 use clock::SystemClock;
 use framebuffer::linux::Panel;
 use input::linux::{Answer, EvdevInput, FirmwareLoader};
 use pid1::kmsg;
 use pid1::linux::{into_recovery, mounted};
+use suspend::{SysfsSuspend, SysfsWakeAlarm};
 
-use crate::{ALARM_HOUR, ALARM_MINUTE, BRIGHTNESS, LOCAL_OFFSET_SECONDS, change, minute};
+use crate::{ALARM_HOUR, ALARM_MINUTE, BRIGHTNESS, LOCAL_OFFSET_SECONDS, change, minute, rest};
 
 const FIRMWARE_POLL: Duration = Duration::from_millis(250);
 const INPUT_RETRY: Duration = Duration::from_secs(1);
@@ -111,6 +113,9 @@ pub fn run() -> ! {
         }
     };
     let mut battery = SysfsBattery::open();
+    let mut wake = SysfsWakeAlarm::open();
+    let mut suspend = SysfsSuspend::open();
+    let mut window = Window::lit(WINDOW_SECONDS);
     let mut input = EvdevInput::open();
     let mut absent = Vec::new();
     let mut was_lit = false;
@@ -132,10 +137,22 @@ pub fn run() -> ! {
         for line in &turn.log {
             logged(&mut log, line);
         }
+        let rested = rest(
+            &SystemClock,
+            &ringer,
+            &light,
+            &mut window,
+            &mut wake,
+            &mut suspend,
+            turn.wait_seconds,
+        );
+        for line in &rested.log {
+            logged(&mut log, line);
+        }
         let size = panel.size();
         let heard = listen(
             &mut input,
-            turn.wait_seconds,
+            rested.wait_seconds,
             &SystemClock,
             offset,
             size,
