@@ -1174,3 +1174,22 @@ after a resume panics the kernel; `alarmd` as `/init` opens `fb0` before any sus
 Power and Volume Up with the cable in enter eRecovery; with it out, TWRP. Powering off
 clears pstore. The phone's clock was set back from the Mac's UTC afterwards, and
 `wakealarm` disarmed.
+
+## 2026-11-18 — the serial shell from a host script, for issue 42
+
+Read under the debug `/init` (`/init` hashing to `64caf049…ddaa`), 547 s into a boot, with
+`scripts/serial_shell.py` from `feat/serial-shell` and one run per command:
+
+```
+uv run python scripts/serial_shell.py 'uname -r'    4.9.319-Abdelhay-KSU-, exit 0
+uv run python scripts/serial_shell.py 'uname -r'    4.9.319-Abdelhay-KSU-, exit 0
+uv run python scripts/serial_shell.py false         exit 1
+```
+
+**Each run opens and closes the port, and the shell outlives it.** `/proc/uptime` read
+546.96 s before the runs and 566.08 s after them, with no reboot into TWRP between.
+
+**A pushed file arrives whole.** `alarmd` built from `2c38b04`, 404320 bytes, sha256
+`3acce6d3ac5d9b11276e9a59fe8ff9e1391cda887d74a629b130ca56ab6e6e2d`, went to `/mnt/alarmd`
+in 7.9 s, and `sha256sum` on the phone matched the Mac's. A 404120-byte random file took
+7.5 s. `base64` and `sha256sum` are the ROM's, in `/system/bin`. The copy was removed.
