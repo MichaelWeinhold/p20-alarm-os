@@ -1,6 +1,6 @@
 [package]
 name = "alarmd"
-description = "The alarm clock as /init: the time and one alarm on the panel, set by touch, snoozed and dismissed by the side keys, the charge held at its limit, suspended while the panel is off"
+description = "The alarm clock as /init: the time and one alarm on the panel, set by touch, snoozed and dismissed by the side keys, the charge held at its limit, suspended while the panel is off, powered off until the alarm off the cable"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,6 +15,7 @@ clock = { path = "../clock" }
 framebuffer = { path = "../framebuffer" }
 input = { path = "../input" }
 pid1 = { path = "../pid1" }
+power = { path = "../power" }
 storage = { path = "../storage" }
 suspend = { path = "../suspend" }
 

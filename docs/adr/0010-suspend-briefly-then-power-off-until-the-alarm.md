@@ -1,6 +1,6 @@
 # 10. Suspend for two minutes after a use, then power off until the alarm
 
-- **Status:** Accepted
+- **Status:** Accepted; D2 amended for the cable by issue 52
 - **Date:** 2026-11-13
 - **Issue:** #12
 - **Supersedes:** ADR 0008, D1
@@ -44,10 +44,15 @@ goes off again. The window does not run while the panel is lit. When it ends wit
 press, the phone powers off. A press on a phone that is off boots it, and the time shows
 once `alarmd` draws it. The two minutes are a default, changed by a setting.
 
-The cable changes nothing: the phone powers off on the cable as off it. It stays
-suspended only **while an alarm rings or is snoozed, or is due within two minutes of the
-window's end**, since the phone would be switched on again at once (D3). The RTC wakes
-the suspend for it, and the window starts again after it.
+Off the cable, it stays suspended only **while an alarm rings or is snoozed, or is due
+within two minutes of the window's end**, since the phone would be switched on again at
+once (D3). The RTC wakes the suspend for it, and the window starts again after it.
+
+**On the cable, the phone stays suspended** when the window ends, with the RTC armed for
+the next alarm, and ADR 0008, D3's charge stop keeps running. A power-off on the cable
+boots our `/init` again within about 75 s, as `BR_POWEROFF_CHARGE` (issue 53), so it
+would boot again after every window. `alarmd` reads the cable from the battery's
+`status`, and stays suspended when it cannot read it.
 
 ### D3. A power-on alarm is armed before every power-off
 
@@ -65,9 +70,8 @@ unless the power-off alarm is enabled.
 
 `/proc/cmdline` carries `normal_reset_type=BR_POWEROFF_ALARM` on a boot by the alarm. Then
 `alarmd` waits for the alarm's minute and rings. On any other boot it shows the time, as
-for a press. Either way it needs the alarms from before the power-off, so D2's power-off
-comes only once the settings persist across a reboot (issue 30). Until then the phone
-stays suspended, as ADR 0008, D1 had it.
+for a press; a plug-in to a phone that is off boots it as `BR_POWEROFF_CHARGE`. Either way
+it needs the alarms from before the power-off, which `reserved4` keeps (ADR 0011).
 
 ### D5. Deep sleep is not needed, and ADR 0002's kiosk stays rejected
 
@@ -87,9 +91,10 @@ every glance into a cold boot: the debug `/init` started 12.47 s in on the kerne
 after bootloader stages the command line puts at 13.3 s, with the unlocked bootloader's
 warning on screen. *Reopens if* a boot to the time drawn takes under 3 s.
 
-**Staying suspended on the cable**, so that ADR 0008, D3's charge stop keeps running. The
-operator wants the cable to change nothing. *Reopens if* a power-off on the cable is read
-to charge past the limit, and the operator would rather keep the limit.
+**Powering off on the cable as off it**, so that the cable changes nothing. A power-off on
+the cable boots our `/init` again within about 75 s, so the phone would boot after every
+window, each time behind the unlocked bootloader's warning. *Reopens if* a power-off on
+the cable is read to leave the phone off until a press or the alarm.
 
 **Arming `wakealarm` before a power-off.** Read not to switch the phone on, and the
 kernel's source says why. *Reopens if* the kernel changes.
@@ -101,8 +106,8 @@ follow-up finds deep sleep needs Android's userspace, and power-off has failed i
 
 - **ADR 0008, D1 is superseded**; its D2 and D3 stand. A phone off the cable charges far
   less often, with the off draw still to be read.
-- **ADR 0008, D3's charge stop acts only while the phone is on.** Whether a phone powered
-  off on the cable charges, to what level, or boots itself, is not read; a follow-up.
+- **ADR 0008, D3's charge stop keeps running on the cable**, since the phone stays
+  suspended there (D2).
 - **Opening `/dev/fb0` after a suspend panicked the kernel**, so `alarmd` holds it across
   every suspend, as it already holds it for life (issue 10); whether a held `fb0` lights
   again after a resume is issue 37's to read.

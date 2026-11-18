@@ -1,6 +1,7 @@
 use std::fmt;
 
 use crate::battery::BatteryReading;
+use crate::boot::Boot;
 use crate::face::{Frame, Size};
 use crate::input::InputEvent;
 use crate::settings::{RECORD_BYTES, SLOT_BYTES, Slot};
@@ -37,6 +38,14 @@ pub trait WakeAlarm {
 
 pub trait Suspend {
     fn suspend(&mut self) -> Result<(), HardwareError>;
+}
+
+pub trait PowerOff {
+    fn power_off(&mut self, on_at: Option<UnixSeconds>) -> Result<(), HardwareError>;
+}
+
+pub trait BootReason {
+    fn read(&self) -> Result<Boot, HardwareError>;
 }
 
 pub trait Vibrator {

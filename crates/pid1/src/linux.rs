@@ -14,6 +14,7 @@ const SYS_REBOOT: c_long = 142;
 const REBOOT_MAGIC1: c_long = 0xfee1_dead;
 const REBOOT_MAGIC2: c_long = 0x2812_1969;
 const REBOOT_RESTART2: c_long = 0xa1b2_c3d4;
+const REBOOT_POWER_OFF: c_long = 0x4321_fedc;
 const O_NOCTTY: c_int = 0o400;
 const TIOCSCTTY: c_int = 0x540e;
 
@@ -26,6 +27,7 @@ unsafe extern "C" {
         data: *const c_void,
     ) -> c_int;
     fn syscall(number: c_long, ...) -> c_long;
+    fn sync();
     fn setsid() -> c_int;
     fn ioctl(descriptor: c_int, request: c_int, ...) -> c_int;
     fn waitpid(pid: c_int, status: *mut c_int, options: c_int) -> c_int;
@@ -60,6 +62,21 @@ fn reboot_into(target: &CStr) -> io::Error {
             REBOOT_MAGIC2,
             REBOOT_RESTART2,
             target.as_ptr(),
+        );
+    }
+    io::Error::last_os_error()
+}
+
+#[must_use]
+pub fn powered_off() -> io::Error {
+    unsafe {
+        sync();
+        syscall(
+            SYS_REBOOT,
+            REBOOT_MAGIC1,
+            REBOOT_MAGIC2,
+            REBOOT_POWER_OFF,
+            0,
         );
     }
     io::Error::last_os_error()

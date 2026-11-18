@@ -67,8 +67,9 @@ while suspended is read with USB input cut, and both readings are in
 `docs/device-history/`. → ADR 0010, which supersedes ADR 0008, D1.
 
 **Proven** — issue 12. The RTC woke a suspend to the second, a suspend draws about 53 mA,
-and a power-on alarm switched a powered-off phone on. The adapters, the two-minute window
-and the power-off are issue 12's follow-ups.
+and a power-on alarm switched a powered-off phone on. The adapters and the two-minute
+window are built; the power-off with its power-on alarm, off the cable only, is issue
+52.
 
 ## P6 — Vibrate
 

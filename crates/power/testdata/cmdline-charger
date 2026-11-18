@@ -1,0 +1,1 @@
+loglevel=4 androidboot.mode=charger normal_reset_type=BR_POWEROFF_CHARGE reboot_reason=AP_S_COLDBOOT bl1_time=1663 bl2_time=9777 logo_time=3068 skip_initramfs root=PARTUUID=<system> init=/init

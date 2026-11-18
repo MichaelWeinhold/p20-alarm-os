@@ -1,0 +1,1 @@
+loglevel=4 androidboot.mode=normal normal_reset_type=BR_POWEROFF_ALARM reboot_reason=AP_S_COLDBOOT bl1_time=1642 bl2_time=9112 logo_time=2559 skip_initramfs root=PARTUUID=<system> init=/init

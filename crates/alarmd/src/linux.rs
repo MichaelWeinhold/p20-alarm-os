@@ -3,8 +3,8 @@ use std::io::{self, Write};
 use std::thread;
 use std::time::Duration;
 
-use alarm_core::hardware::{Clock, Display, HardwareError};
-use alarm_core::light::{LIT_SECONDS, Light};
+use alarm_core::hardware::{Display, HardwareError};
+use alarm_core::light::Light;
 use alarm_core::ringer::listen;
 use alarm_core::time::{TimeOfDay, UtcOffset};
 use alarm_core::window::Window;
@@ -14,12 +14,14 @@ use framebuffer::linux::Panel;
 use input::linux::{Answer, EvdevInput, FirmwareLoader};
 use pid1::kmsg;
 use pid1::linux::{into_recovery, mounted};
+use power::Cmdline;
+use power::linux::PoweroffAlarm;
 use storage::Partition;
 use suspend::{SysfsSuspend, SysfsWakeAlarm};
 
 use crate::{
-    ALARM_HOUR, ALARM_MINUTE, BRIGHTNESS, LOCAL_OFFSET_SECONDS, Restored, change, choices, minute,
-    persisted, rest, restored,
+    ALARM_HOUR, ALARM_MINUTE, BRIGHTNESS, Booted, LOCAL_OFFSET_SECONDS, Restored, Sleep, booted,
+    cable_in, change, choices, minute, persisted, rest, restored,
 };
 
 const FIRMWARE_POLL: Duration = Duration::from_millis(250);
@@ -100,6 +102,14 @@ fn restoring(log: &mut Option<File>) -> (Result<Partition, HardwareError>, Resto
     (settings, restored)
 }
 
+fn booting(log: &mut Option<File>) -> Light {
+    let Booted { light, log: lines } = booted(&Cmdline::open(), &SystemClock);
+    for line in &lines {
+        logged(log, line);
+    }
+    light
+}
+
 pub fn run() -> ! {
     let mut log = started().ok();
     let (
@@ -127,17 +137,14 @@ pub fn run() -> ! {
             &kmsg::failure("starting the firmware answers", &error),
         );
     }
-    let mut light = match SystemClock.now() {
-        Ok(now) => Light::lit_at(now, LIT_SECONDS),
-        Err(error) => {
-            logged(&mut log, &kmsg::failure("reading the clock", &error));
-            Light::dark(LIT_SECONDS)
-        }
-    };
+    let mut light = booting(&mut log);
     let mut battery = SysfsBattery::open();
-    let mut wake = SysfsWakeAlarm::open();
-    let mut suspend = SysfsSuspend::open();
-    let mut window = Window::lit(saved.window_seconds);
+    let mut sleep = Sleep {
+        window: Window::lit(saved.window_seconds),
+        wake: SysfsWakeAlarm::open(),
+        suspend: SysfsSuspend::open(),
+        power: PoweroffAlarm::open(),
+    };
     let mut input = EvdevInput::open();
     let mut absent = Vec::new();
     let mut was_lit = false;
@@ -167,9 +174,8 @@ pub fn run() -> ! {
             &SystemClock,
             &ringer,
             &light,
-            &mut window,
-            &mut wake,
-            &mut suspend,
+            cable_in(&battery),
+            &mut sleep,
             turn.wait_seconds,
         );
         for line in &rested.log {
