@@ -27,7 +27,7 @@ documentation, starting from the vendor kernel rather than from nothing.
 | Boot image round trip | **Built, host-tested.** `scripts/boot_image.py` repacks the stock image byte for byte. |
 | Where `/init` lives | **Decided and proven.** On `system`, since the bootloader loads no ramdisk from `kernel` — [ADR 0006](docs/adr/0006-put-our-init-on-system.md); a probe of ours ran there as PID 1, issue 17. |
 | Battery and charging | **Decided.** The kernel charges under our `/init`; the phone sleeps between uses, lights the panel only when used, and stops a charge at 80 % — [ADR 0007](docs/adr/0007-hold-the-charge-and-leave-charging-to-the-kernel.md) and [ADR 0008](docs/adr/0008-sleep-between-uses-and-charge-to-eighty.md), issues 27 and 39. |
-| Debug shell over USB | **Decided.** A serial shell on a USB gadget, and the kernel log in pstore — [ADR 0009](docs/adr/0009-a-serial-shell-over-usb-and-logs-in-pstore.md), issue 15. Built in P2. |
+| Debug shell over USB | **Decided.** A serial shell on a USB gadget, and the kernel log in pstore — [ADR 0009](docs/adr/0009-a-serial-shell-over-usb-and-logs-in-pstore.md), issue 15. Built in P2; `scripts/serial_shell.py` runs a command on it, issue 42. |
 | Clock on screen | **Built and on the phone.** `alarmd` as `/init` draws the local time each minute, issue 10. |
 | Touch and the side keys | **Built and on the phone.** One daily alarm set by touch, ringing on the panel, snoozed by a volume key, dismissed by Power, issue 11. |
 | RTC wake and power-off | **Decided.** Suspended for two minutes after a use, then off until the RTC switches it on for the alarm — [ADR 0010](docs/adr/0010-suspend-briefly-then-power-off-until-the-alarm.md), issue 12. |

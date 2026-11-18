@@ -92,7 +92,7 @@ controller sleeps while the panel is off, so touch works only while `fb0` is hel
 ## Host tooling
 
 ```
-scripts/        the repository's guards and the boot image round trip
+scripts/        the repository's guards, the boot image round trip and the serial shell
 tests/          their tests
 ```
 
@@ -104,6 +104,7 @@ stock image in `kernel`.
 
 There is no serial port. The first image built is a debug `/init` that serves the ROM's
 `mksh` on a CDC-ACM USB gadget, `/dev/ttyGS0` on the phone and `/dev/cu.usbmodem*` on the
-Mac, and reboots into TWRP when the shell exits. Every `/init` logs to `/dev/kmsg`, which
+Mac, and reboots into TWRP when the shell exits; `scripts/serial_shell.py` runs one command
+on it and pushes a file to `/mnt`. Every `/init` logs to `/dev/kmsg`, which
 pstore keeps across a reboot; `dfx` keeps a panic in `/init`. → ADR 0009; `docs/ROADMAP.md`,
 P2.

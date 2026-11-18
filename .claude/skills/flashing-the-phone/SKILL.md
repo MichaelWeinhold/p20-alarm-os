@@ -19,7 +19,8 @@ them from there, by the paragraph each step names. → ADR 0005.
 4. **Flash with *Flash*'s command, as the very next `fastboot` invocation.** Anything sent
    in between means step 3 again.
 5. **Read what came up.** The ROM: *Roll back*'s last three lines. An image of ours: the
-   screen, which the operator reports, and issue 15's debug lifeline once it exists.
+   screen, which the operator reports, and under the debug `/init`,
+   `scripts/serial_shell.py` in *The debug `/init`*.
 6. **Leave an image of ours up ten minutes** unless it has visibly failed, so the
    boot-fail monitor counts it as booted. → ADR 0005, D5.
 7. **Roll back with *Roll back*** when the try is over or the image never came up: steps 2
