@@ -1211,3 +1211,50 @@ status   Charging
 symbol in red with one bar, `12%` beside it in the top-right corner, and the time and
 the alarm where they were. The capacity was not read again while `alarmd` ran, since no
 `adb` reaches the phone then.
+
+## 2026-11-18 — the off draw, a power-off on the cable, and the side button, for issue 53
+
+Read under the debug `/init` built from `3c6e776` (`86080445…0bc7`, 383656 bytes), copied
+over `alarmd` (`2248d64e…5f67c9`) from TWRP, with `init.rom` left at `e8e2768e…78ef`.
+Every reading went through `scripts/serial_shell.py`; the phone's clock matched the Mac's
+to the second. The phone powered off with `echo o > /proc/sysrq-trigger`.
+
+**A power-off on the cable boots our `/init` again, in a charge mode.** Powered off at
+11:57:11 UTC with the cable in, at 24 % and charging; the serial port came back at
+11:58:26, and that boot's `/proc/cmdline` read:
+
+```
+androidboot.mode=charger
+normal_reset_type=BR_POWEROFF_CHARGE
+reboot_reason=AP_S_COLDBOOT
+bl1_time=1663 bl2_time=9777 logo_time=3068
+```
+
+The debug `/init` started at 13.64 s on the kernel's clock and the battery kept charging
+at about 616 mA, since nothing under it stops a charge. A plug-in to a phone that was off
+booted it the same way at 20:08:50, with the same `androidboot.mode` and reset type. What
+the panel showed between the power-off and the boot was not watched.
+
+**The gauge restarts from a fresh open-circuit voltage only after a long rest.** After 8
+hours off, the plug-in boot logged `using pmu ocv from fastboot`, `initial OCV = 3766759`
+and `CC=1uAh`; a boot 3 minutes after the next power-off logged `using save ocv` with the
+same voltage and `cc_adjust=-3260 uah`, the coulomb counter carried across the power-off.
+`capacity` read 24 on every boot while `SOC real` read 27.5 %: `last_soc_enable` carries
+the last value shown.
+
+**The draw while off is far below a suspend's 53 mA, and was not measured.** The cable
+came out at 12:08:42 and the phone powered off 5 s later, at 24 %, `capacity_rm` 589 and
+`voltage_now` 3831971 after 66 s at rest with `enable_charger` 0. Eight hours later the
+fresh voltage above gave `RC=627275uAh`, about 27.5 %. At 53 mA the phone would have lost
+about 424 mAh, 19 %. The starting charge, estimated from a voltage read soon after a
+charge, carries an error larger than what the 8 hours used.
+
+**A hold of about 3 s on the side button switched the phone on**, as the operator timed
+it; whether shorter holds were tried was not recorded. The boot read
+`normal_reset_type=BR_PRESS_1S`, `androidboot.mode=normal`, `bl1_time=1654 bl2_time=9192
+logo_time=2644`, the debug `/init` starting at 12.68 s on the kernel's clock, and
+`hisi_powerkey` logging `long_presspowerkey_happen` at 11.76 s. The press itself was not
+timed against the port.
+
+`alarmd` (`2248d64e…5f67c9`) went back over `/init` from TWRP afterwards, at 26 % and
+charging.
