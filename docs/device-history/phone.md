@@ -1258,3 +1258,29 @@ timed against the port.
 
 `alarmd` (`2248d64e…5f67c9`) went back over `/init` from TWRP afterwards, at 26 % and
 charging.
+
+## 2026-11-18 — the alarm kept on `reserved4`, for issue 58
+
+`alarmd` built from `63cdb5e`, 417048 bytes, sha256
+`cdaa1d64587006bb43f87b3671eee16d3f0c20559702d765b10afea12edbb3ef`, was copied over
+`/init` on `system` from TWRP. It replaced `2248d64e…5f67c9` and left `init.rom` at
+`e8e2768e…78ef`. Before the boot, `reserved4` (`mmcblk0p14`, `PARTNAME=reserved4`,
+2097152 bytes) hashed to its backup, `5647f05e…1eee`, all zeros, and `misc`'s command
+field was clear.
+
+The operator set the alarm by touch, let the panel go off, and reached TWRP with the keys.
+`reserved4`'s first 8192 bytes, read there and checked on the host with `zlib.crc32`:
+
+```
+slot 0: v1 len 13 seq 0 crc 0xa1018a09 ok  offset 3600 window 120  21:51 days 0x7f armed 1
+slot 1: v1 len 13 seq 1 crc 0x3a567525 ok  offset 3600 window 120  21:53 days 0x7f armed 1
+```
+
+**Two saves landed in the two slots, the second with the next sequence**, and every byte
+from 8192 to the end of the partition was still zero. The newest slot holds 21:53, armed,
+every day; the operator recalled setting 21:52. The key reset emptied pstore, so that
+boot's `settings saved` lines were not read.
+
+**The saved alarm came back armed and rang.** After `adb reboot` from TWRP into `alarmd`,
+with nothing touched, the alarm rang at the time set, as the operator heard it. The minute
+it rang was not read against a clock.
