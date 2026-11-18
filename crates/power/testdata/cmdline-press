@@ -1,0 +1,1 @@
+loglevel=4 androidboot.mode=normal normal_reset_type=BR_PRESS_1S bl1_time=1654 bl2_time=9192 logo_time=2644 skip_initramfs root=PARTUUID=<system> init=/init

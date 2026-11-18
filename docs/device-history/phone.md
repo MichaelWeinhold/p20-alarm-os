@@ -1284,3 +1284,25 @@ boot's `settings saved` lines were not read.
 **The saved alarm came back armed and rang.** After `adb reboot` from TWRP into `alarmd`,
 with nothing touched, the alarm rang at the time set, as the operator heard it. The minute
 it rang was not read against a clock.
+
+## 2026-11-18 — powered off until the alarm, for issue 52
+
+`alarmd` built from `46886b0`, 422768 bytes, sha256
+`3d555c020d77fc5113f3ff911978273d55a79243c34d994fc29f01e16c97e94f`, was copied over
+`/init` on `system` from TWRP. It replaced `cdaa1d64…b3ef` and left `init.rom` at
+`e8e2768e…78ef`; `misc`'s command field was zeroed before `adb reboot` at 21:21:41 UTC,
+with the battery at 68 % and charging. The window was the saved 120 s; times below are
+local, UTC+1, as the operator read them off the panel.
+
+**On the cable, the window's end left the phone suspended, and the alarm rang.** The
+operator set the alarm to 22:31 by touch and let the panel go off; it rang at 22:31. The
+moment the panel went off was not read.
+
+**Off the cable, the phone powered off and the power-on alarm switched it on two minutes
+early.** The operator set the alarm to 22:39, pulled the cable and let the panel go off.
+The phone booted at 22:37, which only a power-on from off does, and rang at 22:39. When it
+powered off was not seen, since the panel was already dark, and whether the panel stayed
+dark on that boot until the alarm was not reported.
+
+The keys that reached TWRP afterwards emptied pstore, so neither boot's `booted by` line
+nor the `powered off, on again at` line was read.

@@ -1,6 +1,6 @@
 [package]
 name = "pid1"
-description = "What every /init takes from the kernel: mounts, the kernel log, a child on a terminal, reaping and the reboot into recovery"
+description = "What every /init takes from the kernel: mounts, the kernel log, a child on a terminal, reaping, the reboot into recovery and the power-off"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

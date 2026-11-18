@@ -1,11 +1,13 @@
 use alarm_core::alarm::{Alarm, Weekdays};
 use alarm_core::battery::{ChargeLimit, ChargeStep, Gauge, stop_at_limit};
-use alarm_core::hardware::{Battery, Clock, Display, HardwareError, Settings, Suspend, WakeAlarm};
-use alarm_core::light::Light;
+use alarm_core::hardware::{
+    Battery, BootReason, Clock, Display, HardwareError, PowerOff, Settings, Suspend, WakeAlarm,
+};
+use alarm_core::light::{LIT_SECONDS, Light};
 use alarm_core::ringer::{Ringer, show};
 use alarm_core::settings::{self, Choices, SetAlarm};
 use alarm_core::time::{TimeOfDay, UnixSeconds, UtcOffset, seconds_to_next_minute};
-use alarm_core::window::{Answer, WINDOW_SECONDS, Window};
+use alarm_core::window::{Answer, WINDOW_SECONDS, Window, power_on_at};
 use pid1::kmsg;
 
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
@@ -59,28 +61,66 @@ pub fn minute(
     Minute { log, wait_seconds }
 }
 
+#[derive(Debug)]
+pub struct Sleep<W, S, P> {
+    pub window: Window,
+    pub wake: Result<W, HardwareError>,
+    pub suspend: Result<S, HardwareError>,
+    pub power: Result<P, HardwareError>,
+}
+
 enum Rest {
     Awake,
     Armed(UnixSeconds),
     Disarmed,
+    PoweredOff(Option<UnixSeconds>),
+}
+
+pub fn cable_in(battery: &Result<impl Battery, HardwareError>) -> Result<bool, HardwareError> {
+    let battery = battery.as_ref().map_err(Clone::clone)?;
+    Ok(battery.read()?.status.cable_in())
+}
+
+fn powered_off(
+    on_at: Option<UnixSeconds>,
+    cable_in: Result<bool, HardwareError>,
+    power: &mut Result<impl PowerOff, HardwareError>,
+    log: &mut Vec<String>,
+) -> bool {
+    let outcome = match cable_in {
+        Ok(true) => return false,
+        Ok(false) => power
+            .as_mut()
+            .map_err(|error| error.clone())
+            .and_then(|power| power.power_off(on_at))
+            .map_err(|error| kmsg::failure("powering off", &error)),
+        Err(error) => Err(kmsg::failure("reading the cable", &error)),
+    };
+    outcome.map_err(|line| log.push(line)).is_ok()
 }
 
 fn suspended(
     clock: &impl Clock,
     ringer: &Ringer,
-    window: &mut Window,
-    wake: &mut Result<impl WakeAlarm, HardwareError>,
-    suspend: &mut Result<impl Suspend, HardwareError>,
+    cable_in: Result<bool, HardwareError>,
+    sleep: &mut Sleep<impl WakeAlarm, impl Suspend, impl PowerOff>,
+    log: &mut Vec<String>,
 ) -> Result<Rest, HardwareError> {
     let now = clock.now()?;
-    window.dark(now);
-    let until = match window.answer(now, ringer.ring(), ringer.next()) {
+    sleep.window.dark(now);
+    let until = match sleep.window.answer(now, ringer.ring(), ringer.next()) {
         Answer::Suspend(at) if at > now => Some(at),
-        Answer::PowerOff => ringer.next(),
+        Answer::PowerOff => {
+            let on_at = ringer.next().map(power_on_at);
+            if powered_off(on_at, cable_in, &mut sleep.power, log) {
+                return Ok(Rest::PoweredOff(on_at));
+            }
+            ringer.next()
+        }
         Answer::Lit | Answer::Suspend(_) => return Ok(Rest::Awake),
     };
-    let wake = wake.as_mut().map_err(|error| error.clone())?;
-    let suspend = suspend.as_mut().map_err(|error| error.clone())?;
+    let wake = sleep.wake.as_mut().map_err(|error| error.clone())?;
+    let suspend = sleep.suspend.as_mut().map_err(|error| error.clone())?;
     let rest = match until {
         Some(at) => wake.arm(at).map(|()| Rest::Armed(at))?,
         None => wake.disarm().map(|()| Rest::Disarmed)?,
@@ -93,34 +133,78 @@ pub fn rest(
     clock: &impl Clock,
     ringer: &Ringer,
     light: &Light,
-    window: &mut Window,
-    wake: &mut Result<impl WakeAlarm, HardwareError>,
-    suspend: &mut Result<impl Suspend, HardwareError>,
+    cable_in: Result<bool, HardwareError>,
+    sleep: &mut Sleep<impl WakeAlarm, impl Suspend, impl PowerOff>,
     wait_seconds: u64,
 ) -> Minute {
     if light.lit() {
-        window.light();
+        sleep.window.light();
         return Minute {
             log: Vec::new(),
             wait_seconds,
         };
     }
-    let resumed = |text: &str| Minute {
-        log: vec![kmsg::line(text)],
-        wait_seconds: WOKEN_SECONDS,
+    let mut log = Vec::new();
+    let (line, wait_seconds) = match suspended(clock, ringer, cable_in, sleep, &mut log) {
+        Ok(Rest::Awake) => (None, wait_seconds),
+        Ok(Rest::Armed(at)) => (
+            Some(kmsg::line(&format!(
+                "resumed from a suspend armed for {}",
+                at.0
+            ))),
+            WOKEN_SECONDS,
+        ),
+        Ok(Rest::Disarmed) => (
+            Some(kmsg::line("resumed from a suspend with the RTC disarmed")),
+            WOKEN_SECONDS,
+        ),
+        Ok(Rest::PoweredOff(on_at)) => (
+            Some(kmsg::line(&format!(
+                "powered off, on again at {:?}",
+                on_at.map(|at| at.0)
+            ))),
+            WOKEN_SECONDS,
+        ),
+        Err(error) => (
+            Some(kmsg::failure("suspending", &error)),
+            wait_seconds.min(RETRY_SECONDS),
+        ),
     };
-    match suspended(clock, ringer, window, wake, suspend) {
-        Ok(Rest::Awake) => Minute {
-            log: Vec::new(),
-            wait_seconds,
-        },
-        Ok(Rest::Armed(at)) => resumed(&format!("resumed from a suspend armed for {}", at.0)),
-        Ok(Rest::Disarmed) => resumed("resumed from a suspend with the RTC disarmed"),
-        Err(error) => Minute {
-            log: vec![kmsg::failure("suspending", &error)],
-            wait_seconds: wait_seconds.min(RETRY_SECONDS),
-        },
-    }
+    log.extend(line);
+    Minute { log, wait_seconds }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Booted {
+    pub light: Light,
+    pub log: Vec<String>,
+}
+
+pub fn booted(boot: &Result<impl BootReason, HardwareError>, clock: &impl Clock) -> Booted {
+    let mut log = Vec::new();
+    let lit = match boot
+        .as_ref()
+        .map_err(Clone::clone)
+        .and_then(BootReason::read)
+    {
+        Ok(boot) => {
+            log.push(kmsg::line(&format!("booted by {boot:?}")));
+            boot.lit()
+        }
+        Err(error) => {
+            log.push(kmsg::failure("reading the boot reason", &error));
+            true
+        }
+    };
+    let light = match clock.now() {
+        Ok(now) if lit => Light::lit_at(now, LIT_SECONDS),
+        Ok(_) => Light::dark(LIT_SECONDS),
+        Err(error) => {
+            log.push(kmsg::failure("reading the clock", &error));
+            Light::dark(LIT_SECONDS)
+        }
+    };
+    Booted { light, log }
 }
 
 #[must_use]
@@ -228,9 +312,9 @@ pub fn change(before: &Ringer, after: &Ringer) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use alarm_core::battery::{BatteryReading, ChargeStatus, Health, Percent};
+    use alarm_core::boot::Boot;
     use alarm_core::face::{Face, Frame, RINGING, Size, WARNING, render};
     use alarm_core::input::InputEvent;
-    use alarm_core::light::LIT_SECONDS;
     use alarm_core::settings::{RECORD_BYTES, SLOT_BYTES, Slot};
     use alarm_core::time::TimeError;
 
@@ -346,18 +430,52 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Default)]
+    struct FakePower {
+        offs: Vec<Option<UnixSeconds>>,
+        failing: bool,
+    }
+
+    impl PowerOff for FakePower {
+        fn power_off(&mut self, on_at: Option<UnixSeconds>) -> Result<(), HardwareError> {
+            if self.failing {
+                return Err(refused("reboot"));
+            }
+            self.offs.push(on_at);
+            Ok(())
+        }
+    }
+
+    struct FakeBoot(Result<Boot, HardwareError>);
+
+    impl BootReason for FakeBoot {
+        fn read(&self) -> Result<Boot, HardwareError> {
+            self.0.clone()
+        }
+    }
+
     struct Resting {
-        window: Window,
-        wake: Result<FakeRtc, HardwareError>,
-        suspend: Result<FakeSuspend, HardwareError>,
+        sleep: Sleep<FakeRtc, FakeSuspend, FakePower>,
+        cable_in: Result<bool, HardwareError>,
     }
 
     impl Resting {
         fn new() -> Self {
             Self {
-                window: Window::lit(WINDOW_SECONDS),
-                wake: Ok(FakeRtc::default()),
-                suspend: Ok(FakeSuspend::default()),
+                sleep: Sleep {
+                    window: Window::lit(WINDOW_SECONDS),
+                    wake: Ok(FakeRtc::default()),
+                    suspend: Ok(FakeSuspend::default()),
+                    power: Ok(FakePower::default()),
+                },
+                cable_in: Ok(true),
+            }
+        }
+
+        fn unplugged() -> Self {
+            Self {
+                cable_in: Ok(false),
+                ..Self::new()
             }
         }
 
@@ -366,19 +484,34 @@ mod tests {
                 clock,
                 ringer,
                 light,
-                &mut self.window,
-                &mut self.wake,
-                &mut self.suspend,
+                self.cable_in.clone(),
+                &mut self.sleep,
                 30,
             )
         }
 
         fn armed(&self) -> Option<&[Option<UnixSeconds>]> {
-            self.wake.as_ref().ok().map(|rtc| rtc.armed.as_slice())
+            self.sleep
+                .wake
+                .as_ref()
+                .ok()
+                .map(|rtc| rtc.armed.as_slice())
         }
 
         fn suspends(&self) -> Option<u32> {
-            self.suspend.as_ref().ok().map(|suspend| suspend.suspends)
+            self.sleep
+                .suspend
+                .as_ref()
+                .ok()
+                .map(|suspend| suspend.suspends)
+        }
+
+        fn offs(&self) -> Option<&[Option<UnixSeconds>]> {
+            self.sleep
+                .power
+                .as_ref()
+                .ok()
+                .map(|power| power.offs.as_slice())
         }
     }
 
@@ -681,7 +814,7 @@ mod tests {
     fn a_lit_panel_stays_awake_and_ends_the_window() -> Result<(), Box<dyn std::error::Error>> {
         let clock = at(19, 37, 30);
         let mut resting = Resting::new();
-        resting.window.dark(clock.now()?);
+        resting.sleep.window.dark(clock.now()?);
         let step = resting.rest(&clock, &ringer()?, &lit());
         assert_eq!(
             step,
@@ -690,7 +823,7 @@ mod tests {
                 wait_seconds: 30,
             }
         );
-        assert!(!resting.window.running());
+        assert!(!resting.sleep.window.running());
         assert_eq!(resting.armed(), Some([].as_slice()));
         assert_eq!(resting.suspends(), Some(0));
         Ok(())
@@ -707,12 +840,12 @@ mod tests {
     }
 
     #[test]
-    fn after_the_window_the_rtc_is_armed_for_the_next_alarm()
+    fn on_the_cable_after_the_window_the_rtc_is_armed_for_the_next_alarm()
     -> Result<(), Box<dyn std::error::Error>> {
         let clock = at(19, 37, 30);
         let ringer = armed_at(&clock)?;
         let mut resting = Resting::new();
-        resting.window.dark(at(19, 35, 0).now()?);
+        resting.sleep.window.dark(at(19, 35, 0).now()?);
         resting.rest(&clock, &ringer, &dark());
         assert_eq!(ringer.next(), Some(at(31, 0, 0).now()?));
         assert_eq!(resting.armed(), Some([ringer.next()].as_slice()));
@@ -721,11 +854,11 @@ mod tests {
     }
 
     #[test]
-    fn after_the_window_with_no_alarm_the_rtc_is_disarmed() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn on_the_cable_after_the_window_with_no_alarm_the_rtc_is_disarmed()
+    -> Result<(), Box<dyn std::error::Error>> {
         let clock = at(19, 37, 30);
         let mut resting = Resting::new();
-        resting.window.dark(at(19, 35, 0).now()?);
+        resting.sleep.window.dark(at(19, 35, 0).now()?);
         let step = resting.rest(&clock, &ringer()?, &dark());
         assert_eq!(
             step.log,
@@ -755,7 +888,7 @@ mod tests {
     #[test]
     fn a_failed_arm_does_not_suspend_and_retries_soon() -> Result<(), Box<dyn std::error::Error>> {
         let mut resting = Resting::new();
-        resting.wake = Ok(FakeRtc {
+        resting.sleep.wake = Ok(FakeRtc {
             armed: Vec::new(),
             failing: true,
         });
@@ -775,7 +908,7 @@ mod tests {
     fn a_suspend_the_kernel_aborts_is_logged_and_retried() -> Result<(), Box<dyn std::error::Error>>
     {
         let mut resting = Resting::new();
-        resting.suspend = Ok(FakeSuspend {
+        resting.sleep.suspend = Ok(FakeSuspend {
             suspends: 0,
             failing: true,
         });
@@ -794,7 +927,7 @@ mod tests {
     #[test]
     fn an_absent_rtc_never_suspends() -> Result<(), Box<dyn std::error::Error>> {
         let mut resting = Resting::new();
-        resting.wake = Err(HardwareError::Absent("rtc0/wakealarm"));
+        resting.sleep.wake = Err(HardwareError::Absent("rtc0/wakealarm"));
         let step = resting.rest(&at(19, 37, 30), &ringer()?, &dark());
         assert_eq!(
             step.log,
@@ -813,9 +946,163 @@ mod tests {
         let clock = FixedClock(Err(HardwareError::Absent("realtime clock")));
         let step = resting.rest(&clock, &ringer()?, &dark());
         assert_eq!(step.wait_seconds, RETRY_SECONDS);
-        assert!(!resting.window.running());
+        assert!(!resting.sleep.window.running());
         assert_eq!(resting.suspends(), Some(0));
         Ok(())
+    }
+
+    #[test]
+    fn off_the_cable_the_window_end_powers_off_two_minutes_before_the_alarm()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(19, 37, 30);
+        let ringer = armed_at(&clock)?;
+        let mut resting = Resting::unplugged();
+        resting.sleep.window.dark(at(19, 35, 0).now()?);
+        let step = resting.rest(&clock, &ringer, &dark());
+        let on_at = at(30, 58, 0).now()?;
+        assert_eq!(
+            step.log,
+            [kmsg::line(&format!(
+                "powered off, on again at Some({})",
+                on_at.0
+            ))]
+        );
+        assert_eq!(resting.offs(), Some([Some(on_at)].as_slice()));
+        assert_eq!(resting.armed(), Some([].as_slice()));
+        assert_eq!(resting.suspends(), Some(0));
+        Ok(())
+    }
+
+    #[test]
+    fn off_the_cable_with_no_alarm_it_powers_off_with_none()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut resting = Resting::unplugged();
+        resting.sleep.window.dark(at(19, 35, 0).now()?);
+        resting.rest(&at(19, 37, 30), &ringer()?, &dark());
+        assert_eq!(resting.offs(), Some([None].as_slice()));
+        assert_eq!(resting.suspends(), Some(0));
+        Ok(())
+    }
+
+    #[test]
+    fn off_the_cable_the_window_itself_still_suspends() -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(19, 37, 30);
+        let mut resting = Resting::unplugged();
+        resting.rest(&clock, &armed_at(&clock)?, &dark());
+        assert_eq!(resting.offs(), Some([].as_slice()));
+        assert_eq!(
+            resting.armed(),
+            Some([Some(after(&clock, WINDOW_SECONDS)?)].as_slice())
+        );
+        assert_eq!(resting.suspends(), Some(1));
+        Ok(())
+    }
+
+    #[test]
+    fn a_failed_power_off_is_logged_and_suspends_until_the_alarm()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(19, 37, 30);
+        let ringer = armed_at(&clock)?;
+        let mut resting = Resting::unplugged();
+        resting.sleep.power = Ok(FakePower {
+            offs: Vec::new(),
+            failing: true,
+        });
+        resting.sleep.window.dark(at(19, 35, 0).now()?);
+        let step = resting.rest(&clock, &ringer, &dark());
+        assert_eq!(
+            step.log[0],
+            kmsg::failure("powering off", &refused("reboot"))
+        );
+        assert_eq!(resting.armed(), Some([ringer.next()].as_slice()));
+        assert_eq!(resting.suspends(), Some(1));
+        Ok(())
+    }
+
+    #[test]
+    fn an_absent_power_off_suspends_all_the_same() -> Result<(), Box<dyn std::error::Error>> {
+        let mut resting = Resting::unplugged();
+        resting.sleep.power = Err(HardwareError::Absent("poweroff alarm"));
+        resting.sleep.window.dark(at(19, 35, 0).now()?);
+        let step = resting.rest(&at(19, 37, 30), &ringer()?, &dark());
+        assert_eq!(
+            step.log[0],
+            kmsg::failure("powering off", &HardwareError::Absent("poweroff alarm"))
+        );
+        assert_eq!(resting.armed(), Some([None].as_slice()));
+        assert_eq!(resting.suspends(), Some(1));
+        Ok(())
+    }
+
+    #[test]
+    fn an_unread_cable_stays_suspended_rather_than_powering_off()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(19, 37, 30);
+        let ringer = armed_at(&clock)?;
+        let mut resting = Resting::new();
+        resting.cable_in = Err(HardwareError::Absent("Battery"));
+        resting.sleep.window.dark(at(19, 35, 0).now()?);
+        let step = resting.rest(&clock, &ringer, &dark());
+        assert_eq!(
+            step.log[0],
+            kmsg::failure("reading the cable", &HardwareError::Absent("Battery"))
+        );
+        assert_eq!(resting.offs(), Some([].as_slice()));
+        assert_eq!(resting.armed(), Some([ringer.next()].as_slice()));
+        Ok(())
+    }
+
+    #[test]
+    fn the_cable_is_read_from_the_charge_status() {
+        assert_eq!(cable_in(&battery(55, ChargeStatus::Discharging)), Ok(false));
+        assert_eq!(cable_in(&battery(55, ChargeStatus::Charging)), Ok(true));
+        assert_eq!(cable_in(&battery(80, ChargeStatus::NotCharging)), Ok(true));
+        let absent: Result<FakeBattery, HardwareError> = Err(HardwareError::Absent("Battery"));
+        assert_eq!(cable_in(&absent), Err(HardwareError::Absent("Battery")));
+    }
+
+    #[test]
+    fn a_boot_by_the_alarm_starts_dark() {
+        let booted = booted(&Ok(FakeBoot(Ok(Boot::Alarm))), &at(6, 58, 13));
+        assert_eq!(booted.light, Light::dark(LIT_SECONDS));
+        assert_eq!(booted.log, [kmsg::line("booted by Alarm")]);
+    }
+
+    #[test]
+    fn any_other_boot_shows_the_time() -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(19, 37, 30);
+        for boot in [Boot::Press, Boot::Charger, Boot::Other] {
+            let booted = booted(&Ok(FakeBoot(Ok(boot))), &clock);
+            assert_eq!(booted.light, Light::lit_at(clock.now()?, LIT_SECONDS));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_unread_boot_reason_shows_the_time_and_says_so() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let clock = at(19, 37, 30);
+        let error = HardwareError::Absent("proc/cmdline");
+        let from_adapter = booted(&Ok(FakeBoot(Err(error.clone()))), &clock);
+        let unopened = booted(&Err::<FakeBoot, _>(error.clone()), &clock);
+        for booted in [from_adapter, unopened] {
+            assert_eq!(booted.light, Light::lit_at(clock.now()?, LIT_SECONDS));
+            assert_eq!(
+                booted.log,
+                [kmsg::failure("reading the boot reason", &error)]
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_failing_clock_at_boot_starts_dark() {
+        let booted = booted(
+            &Ok(FakeBoot(Ok(Boot::Press))),
+            &FixedClock(Err(HardwareError::Absent("realtime clock"))),
+        );
+        assert_eq!(booted.light, Light::dark(LIT_SECONDS));
+        assert_eq!(booted.log.len(), 2);
     }
 
     struct FakeSettings {

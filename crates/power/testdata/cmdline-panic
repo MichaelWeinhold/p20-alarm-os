@@ -1,0 +1,1 @@
+loglevel=4 reboot_reason=AP_S_PANIC normal_reset_type=AP_S_PANIC enter_recovery=0 skip_initramfs root=PARTUUID=<system> init=/init

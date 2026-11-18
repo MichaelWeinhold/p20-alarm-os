@@ -56,12 +56,17 @@ impl Window {
         }
         match due {
             Some(due) if ring != Ring::Quiet => Answer::Suspend(due),
-            Some(due) if due.0 <= ends.0.saturating_add(POWER_ON_LEAD_SECONDS) => {
+            Some(due) if due.0 <= now.0.saturating_add(POWER_ON_LEAD_SECONDS) => {
                 Answer::Suspend(due)
             }
             _ => Answer::PowerOff,
         }
     }
+}
+
+#[must_use]
+pub fn power_on_at(alarm: UnixSeconds) -> UnixSeconds {
+    UnixSeconds(alarm.0.saturating_sub(POWER_ON_LEAD_SECONDS))
 }
 
 #[cfg(test)]
@@ -169,6 +174,24 @@ mod tests {
             window.answer(at(120), Ring::Quiet, Some(at(241))),
             Answer::PowerOff
         );
+    }
+
+    #[test]
+    fn a_late_answer_keeps_it_suspended_for_an_alarm_due_within_two_minutes_of_now() {
+        let window = dark_at(0);
+        assert_eq!(
+            window.answer(at(150), Ring::Quiet, Some(at(260))),
+            Answer::Suspend(at(260))
+        );
+        assert_eq!(
+            window.answer(at(150), Ring::Quiet, Some(at(271))),
+            Answer::PowerOff
+        );
+    }
+
+    #[test]
+    fn the_phone_is_switched_on_two_minutes_before_the_alarm() {
+        assert_eq!(power_on_at(at(600)), at(480));
     }
 
     #[test]

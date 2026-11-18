@@ -1,5 +1,6 @@
 pub mod alarm;
 pub mod battery;
+pub mod boot;
 pub mod face;
 pub mod hardware;
 pub mod input;
