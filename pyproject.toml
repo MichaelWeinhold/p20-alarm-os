@@ -39,6 +39,7 @@ select = ["ANN", "B", "E", "F", "I", "N", "RUF", "S", "SIM", "UP", "W"]
 ".claude/hooks/*.py" = ["S603", "S607"]
 "tests/test_git_commit_guard.py" = ["S603", "S607"]
 "tests/test_next_issue.py" = ["S603", "S607"]
+"tests/test_serial_shell.py" = ["S603", "S607"]
 
 [tool.mypy]
 python_version = "3.12"
