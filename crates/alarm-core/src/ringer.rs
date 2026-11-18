@@ -1,4 +1,5 @@
 use crate::alarm::{Alarm, Weekdays};
+use crate::battery::Gauge;
 use crate::face::{Face, Size, Step, Target, render, target};
 use crate::hardware::{Clock, Display, HardwareError, Input};
 use crate::input::{InputEvent, Key};
@@ -112,13 +113,13 @@ impl Ringer {
     }
 
     #[must_use]
-    pub fn face(&self, now: UnixSeconds, offset: UtcOffset, low_battery: bool) -> Face {
+    pub fn face(&self, now: UnixSeconds, offset: UtcOffset, battery: Gauge) -> Face {
         Face {
             time: TimeOfDay::at(now, offset),
             alarm: self.alarm,
             armed: self.armed(),
             ringing: self.ring == Ring::Ringing,
-            low_battery,
+            battery,
         }
     }
 }
@@ -128,7 +129,7 @@ pub fn show(
     offset: UtcOffset,
     ringer: &mut Ringer,
     light: &mut Light,
-    low_battery: bool,
+    battery: Gauge,
     display: &mut impl Display,
 ) -> Result<UnixSeconds, HardwareError> {
     let now = clock.now()?;
@@ -136,7 +137,7 @@ pub fn show(
     light.tick(now, ringer.ring());
     display.light(light.lit())?;
     if light.lit() {
-        let frame = render(display.size(), &ringer.face(now, offset, low_battery));
+        let frame = render(display.size(), &ringer.face(now, offset, battery));
         display.show(&frame)?;
     }
     Ok(now)
@@ -289,7 +290,7 @@ mod tests {
             UtcOffset::UTC,
             &mut ringer,
             &mut always(),
-            false,
+            Gauge::UNREAD,
             &mut display,
         )?;
         assert_eq!(ringer.ring(), Ring::Quiet);
@@ -299,11 +300,15 @@ mod tests {
             UtcOffset::UTC,
             &mut ringer,
             &mut always(),
-            false,
+            Gauge::UNREAD,
             &mut display,
         )?;
         assert_eq!(ringer.ring(), Ring::Ringing);
-        assert!(ringer.face(clock.now()?, UtcOffset::UTC, false).ringing);
+        assert!(
+            ringer
+                .face(clock.now()?, UtcOffset::UTC, Gauge::UNREAD)
+                .ringing
+        );
 
         clock.pass(15);
         drain(&mut FakeInput::with(&[SNOOZE]), &clock, &mut ringer)?;
@@ -315,7 +320,7 @@ mod tests {
             UtcOffset::UTC,
             &mut ringer,
             &mut always(),
-            false,
+            Gauge::UNREAD,
             &mut display,
         )?;
         assert_eq!(ringer.ring(), Ring::Snoozed(snoozed_until));
@@ -325,7 +330,7 @@ mod tests {
             UtcOffset::UTC,
             &mut ringer,
             &mut always(),
-            false,
+            Gauge::UNREAD,
             &mut display,
         )?;
         assert_eq!(ringer.ring(), Ring::Ringing);
@@ -339,7 +344,7 @@ mod tests {
             UtcOffset::UTC,
             &mut ringer,
             &mut always(),
-            false,
+            Gauge::UNREAD,
             &mut display,
         )?;
         assert_eq!(ringer.ring(), Ring::Quiet);
@@ -480,7 +485,7 @@ mod tests {
             UtcOffset::UTC,
             &mut ringer,
             &mut light,
-            false,
+            Gauge::UNREAD,
             &mut display,
         )?;
         assert_eq!(display.lit, [false]);
@@ -491,12 +496,16 @@ mod tests {
             UtcOffset::UTC,
             &mut ringer,
             &mut light,
-            false,
+            Gauge::UNREAD,
             &mut display,
         )?;
         assert_eq!(display.lit, [false, true]);
         assert_eq!(display.shown.len(), 1);
-        assert!(ringer.face(clock.now()?, UtcOffset::UTC, false).ringing);
+        assert!(
+            ringer
+                .face(clock.now()?, UtcOffset::UTC, Gauge::UNREAD)
+                .ringing
+        );
         Ok(())
     }
 
@@ -529,7 +538,7 @@ mod tests {
             UtcOffset::UTC,
             &mut ringer,
             &mut light,
-            false,
+            Gauge::UNREAD,
             &mut display,
         )?;
         assert_eq!(display.lit, [true]);
@@ -580,7 +589,7 @@ mod tests {
             UtcOffset::UTC,
             &mut ringer,
             &mut light,
-            false,
+            Gauge::UNREAD,
             &mut display,
         )?;
         assert_eq!(display.lit, [false]);

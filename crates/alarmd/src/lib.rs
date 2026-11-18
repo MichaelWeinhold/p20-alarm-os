@@ -1,4 +1,4 @@
-use alarm_core::battery::{ChargeLimit, ChargeStep, stop_at_limit, wants_mark};
+use alarm_core::battery::{ChargeLimit, ChargeStep, Gauge, stop_at_limit};
 use alarm_core::hardware::{Battery, Clock, Display, HardwareError, Suspend, WakeAlarm};
 use alarm_core::light::Light;
 use alarm_core::ringer::{Ringer, show};
@@ -40,8 +40,10 @@ pub fn minute(
         Ok(ChargeStep::Left) => {}
         Err(error) => log.push(kmsg::failure("holding the charge limit", &error)),
     }
-    let low = battery.as_ref().map_or(true, wants_mark);
-    let wait_seconds = match show(clock, offset, ringer, light, low, display) {
+    let gauge = battery.as_ref().map_or(Gauge::UNREAD, |battery| {
+        Gauge::read(battery, ChargeLimit::DEFAULT)
+    });
+    let wait_seconds = match show(clock, offset, ringer, light, gauge, display) {
         Ok(now) => light
             .seconds_left(now)
             .map_or(seconds_to_next_minute(now), |left| {
@@ -329,13 +331,13 @@ mod tests {
         Ok(UnixSeconds(clock.now()?.0 + seconds))
     }
 
-    fn face(hour: u8, minute: u8, low_battery: bool) -> Result<Face, TimeError> {
+    fn face(hour: u8, minute: u8, battery: Gauge) -> Result<Face, TimeError> {
         Ok(Face {
             time: TimeOfDay::new(hour, minute)?,
             alarm: TimeOfDay::new(ALARM_HOUR, ALARM_MINUTE)?,
             armed: false,
             ringing: false,
-            low_battery,
+            battery,
         })
     }
 
@@ -366,7 +368,13 @@ mod tests {
                 wait_seconds: 2,
             }
         );
-        assert_eq!(display.shown, [render(SIZE, &face(20, 37, false)?)]);
+        assert_eq!(
+            display.shown,
+            [render(
+                SIZE,
+                &face(20, 37, Gauge::of(Percent::new(55)?, ChargeLimit::DEFAULT))?
+            )]
+        );
         Ok(())
     }
 
@@ -388,7 +396,7 @@ mod tests {
     }
 
     #[test]
-    fn a_low_battery_puts_the_mark_on_the_face() -> Result<(), TimeError> {
+    fn a_low_battery_draws_the_symbol_as_a_warning() -> Result<(), TimeError> {
         let mut battery = battery(20, ChargeStatus::Discharging);
         let mut display = FakeDisplay::default();
         minute(
@@ -410,7 +418,7 @@ mod tests {
     }
 
     #[test]
-    fn an_absent_battery_still_shows_the_time_with_the_mark() -> Result<(), TimeError> {
+    fn an_absent_battery_still_shows_the_time_with_the_low_symbol() -> Result<(), TimeError> {
         let mut battery: Result<FakeBattery, HardwareError> =
             Err(HardwareError::Absent("Battery/capacity"));
         let mut display = FakeDisplay::default();
@@ -430,7 +438,7 @@ mod tests {
             )]
         );
         assert_eq!(step.wait_seconds, 30);
-        assert_eq!(display.shown, [render(SIZE, &face(6, 0, true)?)]);
+        assert_eq!(display.shown, [render(SIZE, &face(6, 0, Gauge::UNREAD)?)]);
         Ok(())
     }
 

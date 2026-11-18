@@ -1,3 +1,4 @@
+use crate::battery::{Gauge, Level};
 use crate::time::TimeOfDay;
 
 pub const BACKGROUND: Colour = Colour(0x00_0000);
@@ -11,6 +12,10 @@ const DIGIT_UNITS: usize = 4;
 const DIGIT_HEIGHT_UNITS: usize = 7;
 const MARK_GAP_UNITS: usize = 2;
 const MARK_HEIGHT_UNITS: usize = 2;
+const SYMBOL_UNITS: usize = 13;
+const SYMBOL_GAP_UNITS: usize = 2;
+const PERCENT_UNITS: usize = 4;
+const FIGURES: usize = 3;
 
 const SEGMENTS: [u8; 10] = [
     0b011_1111, 0b000_0110, 0b101_1011, 0b100_1111, 0b110_0110, 0b110_1101, 0b111_1101, 0b000_0111,
@@ -32,7 +37,7 @@ pub struct Face {
     pub alarm: TimeOfDay,
     pub armed: bool,
     pub ringing: bool,
-    pub low_battery: bool,
+    pub battery: Gauge,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -89,7 +94,8 @@ impl Frame {
 struct Layout {
     unit: usize,
     clock: (usize, usize),
-    mark: (usize, usize),
+    status_unit: usize,
+    symbol: (usize, usize),
     alarm_unit: usize,
     alarm: (usize, usize),
 }
@@ -97,6 +103,11 @@ struct Layout {
 fn layout(size: Size) -> Option<Layout> {
     let unit = size.width * 9 / 10 / UNITS_ACROSS;
     let alarm_unit = unit / 2;
+    let status_unit = (unit / 4).max(1);
+    let status_width =
+        (FIGURES * (DIGIT_UNITS + 1) + PERCENT_UNITS + SYMBOL_GAP_UNITS + SYMBOL_UNITS)
+            * status_unit
+            + unit;
     let height = DIGIT_HEIGHT_UNITS * unit;
     if alarm_unit == 0 || height > size.height {
         return None;
@@ -104,13 +115,17 @@ fn layout(size: Size) -> Option<Layout> {
     let top = (size.height - height) / 2;
     let mark_top = top + height + MARK_GAP_UNITS * unit;
     let alarm_top = mark_top + (MARK_HEIGHT_UNITS + MARK_GAP_UNITS) * unit;
-    if alarm_top + DIGIT_HEIGHT_UNITS * alarm_unit > size.height {
+    if alarm_top + DIGIT_HEIGHT_UNITS * alarm_unit > size.height
+        || status_width > size.width
+        || unit + DIGIT_HEIGHT_UNITS * status_unit > top
+    {
         return None;
     }
     Some(Layout {
         unit,
         clock: ((size.width - UNITS_ACROSS * unit) / 2, top),
-        mark: ((size.width - DIGIT_UNITS * unit) / 2, mark_top),
+        status_unit,
+        symbol: (size.width - unit - SYMBOL_UNITS * status_unit, unit),
         alarm_unit,
         alarm: ((size.width - UNITS_ACROSS * alarm_unit) / 2, alarm_top),
     })
@@ -158,22 +173,60 @@ fn time(
     }
 }
 
-fn battery_mark(frame: &mut Frame, (x, y): (usize, usize), unit: usize) {
-    let line = (unit / 4).max(1);
-    let width = DIGIT_UNITS * unit;
-    let height = MARK_HEIGHT_UNITS * unit;
-    frame.fill(x, y, width, line, WARNING);
-    frame.fill(x, y + height - line, width, line, WARNING);
-    frame.fill(x, y, line, height, WARNING);
-    frame.fill(x + width - line, y, line, height, WARNING);
-    frame.fill(x + width, y + unit / 2, unit / 2, unit, WARNING);
-    frame.fill(
-        x + 2 * line,
-        y + 2 * line,
-        width / 5,
-        height - 4 * line,
-        WARNING,
-    );
+fn percent_sign(frame: &mut Frame, x: usize, y: usize, unit: usize, colour: Colour) {
+    frame.fill(x, y, unit, unit, colour);
+    frame.fill(x + 3 * unit, y + 6 * unit, unit, unit, colour);
+    for row in 0..DIGIT_HEIGHT_UNITS {
+        let column = (DIGIT_HEIGHT_UNITS - 1 - row) * 3 / (DIGIT_HEIGHT_UNITS - 1);
+        frame.fill(x + column * unit, y + row * unit, unit, unit, colour);
+    }
+}
+
+fn battery_symbol(
+    frame: &mut Frame,
+    (x, y): (usize, usize),
+    unit: usize,
+    gauge: Gauge,
+    colour: Colour,
+) {
+    let width = (SYMBOL_UNITS - 1) * unit;
+    let height = DIGIT_HEIGHT_UNITS * unit;
+    frame.fill(x, y, width, unit, colour);
+    frame.fill(x, y + height - unit, width, unit, colour);
+    frame.fill(x, y, unit, height, colour);
+    frame.fill(x + width - unit, y, unit, height, colour);
+    frame.fill(x + width, y + 2 * unit, unit, 3 * unit, colour);
+    let bars = match gauge.level {
+        Level::Low => 1,
+        Level::Middle => 2,
+        Level::Full => 3,
+    };
+    for bar in 0..bars {
+        frame.fill(
+            x + (2 + 3 * bar) * unit,
+            y + 2 * unit,
+            2 * unit,
+            3 * unit,
+            colour,
+        );
+    }
+    let Some(capacity) = gauge.capacity else {
+        return;
+    };
+    let sign = x - (SYMBOL_GAP_UNITS + PERCENT_UNITS) * unit;
+    percent_sign(frame, sign, y, unit, colour);
+    let figures: Vec<u8> = capacity
+        .value()
+        .to_string()
+        .bytes()
+        .map(|byte| byte - b'0')
+        .collect();
+    let advance = (DIGIT_UNITS + 1) * unit;
+    let mut left = sign - figures.len() * advance;
+    for figure in figures {
+        digit(frame, left, y, unit, figure, colour);
+        left += advance;
+    }
 }
 
 #[must_use]
@@ -185,9 +238,18 @@ pub fn render(size: Size, face: &Face) -> Frame {
     };
     let digits = if face.ringing { BACKGROUND } else { FOREGROUND };
     time(&mut frame, layout.clock, layout.unit, face.time, digits);
-    if face.low_battery {
-        battery_mark(&mut frame, layout.mark, layout.unit);
-    }
+    let status = if face.battery.level == Level::Low {
+        WARNING
+    } else {
+        digits
+    };
+    battery_symbol(
+        &mut frame,
+        layout.symbol,
+        layout.status_unit,
+        face.battery,
+        status,
+    );
     let alarm = if face.armed { digits } else { DIM };
     time(
         &mut frame,
@@ -224,7 +286,9 @@ pub fn target(size: Size, x: usize, y: usize) -> Target {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::time::TimeError;
+    use crate::battery::{ChargeLimit, Percent};
+
+    type Outcome = Result<(), Box<dyn std::error::Error>>;
 
     const SMALL: Size = Size {
         width: 100,
@@ -254,26 +318,34 @@ mod tests {
             .collect()
     }
 
-    fn face(armed: bool, ringing: bool, low_battery: bool) -> Result<Face, TimeError> {
+    fn charged(value: u8) -> Result<Gauge, Box<dyn std::error::Error>> {
+        Ok(Gauge::of(Percent::new(value)?, ChargeLimit::DEFAULT))
+    }
+
+    fn face(
+        armed: bool,
+        ringing: bool,
+        battery: Gauge,
+    ) -> Result<Face, Box<dyn std::error::Error>> {
         Ok(Face {
             time: TimeOfDay::new(19, 37)?,
             alarm: TimeOfDay::new(6, 45)?,
             armed,
             ringing,
-            low_battery,
+            battery,
         })
     }
 
     #[test]
-    fn the_time_and_the_armed_alarm_are_drawn_as_recorded() -> Result<(), TimeError> {
-        let frame = render(SMALL, &face(true, false, false)?);
+    fn the_time_the_armed_alarm_and_a_full_battery_are_drawn_as_recorded() -> Outcome {
+        let frame = render(SMALL, &face(true, false, charged(80)?)?);
         assert_eq!(picture(&frame), include_str!("../testdata/face-1937.txt"));
         Ok(())
     }
 
     #[test]
-    fn a_low_battery_adds_the_mark_and_a_disarmed_alarm_is_dim() -> Result<(), TimeError> {
-        let frame = render(SMALL, &face(false, false, true)?);
+    fn a_low_battery_is_a_warning_and_a_disarmed_alarm_is_dim() -> Outcome {
+        let frame = render(SMALL, &face(false, false, charged(7)?)?);
         assert_eq!(
             picture(&frame),
             include_str!("../testdata/face-1937-low.txt")
@@ -282,8 +354,8 @@ mod tests {
     }
 
     #[test]
-    fn a_ringing_alarm_turns_the_face_amber() -> Result<(), TimeError> {
-        let frame = render(SMALL, &face(true, true, false)?);
+    fn a_ringing_alarm_turns_the_face_amber() -> Outcome {
+        let frame = render(SMALL, &face(true, true, charged(64)?)?);
         assert_eq!(
             picture(&frame),
             include_str!("../testdata/face-1937-ringing.txt")
@@ -292,12 +364,22 @@ mod tests {
     }
 
     #[test]
-    fn every_digit_has_its_own_shape() -> Result<(), TimeError> {
+    fn an_unread_battery_draws_the_low_symbol_and_no_figures() -> Outcome {
+        let frame = render(SMALL, &face(true, false, Gauge::UNREAD)?);
+        assert_eq!(
+            picture(&frame),
+            include_str!("../testdata/face-1937-unread.txt")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn every_digit_has_its_own_shape() -> Outcome {
         let mut seen = Vec::new();
         for value in 0..10 {
             let face = Face {
                 time: TimeOfDay::new(0, value)?,
-                ..face(true, false, false)?
+                ..face(true, false, charged(50)?)?
             };
             let shape = picture(&render(SMALL, &face));
             assert!(!seen.contains(&shape));
@@ -307,27 +389,70 @@ mod tests {
     }
 
     #[test]
-    fn the_face_fits_the_panel_with_room_around_it() -> Result<(), TimeError> {
-        let frame = render(PANEL, &face(true, false, true)?);
-        assert_eq!(frame.size(), PANEL);
-        let lit: Vec<usize> = (0..PANEL.height)
-            .filter(|&y| frame.row(y).iter().any(|&colour| colour != BACKGROUND))
-            .collect();
-        assert!(lit.first().is_some_and(|&y| y > PANEL.height / 3));
-        assert!(lit.last().is_some_and(|&y| y < PANEL.height * 4 / 5));
-        assert!(frame.row(PANEL.height / 2).contains(&FOREGROUND));
-        assert!(lit.iter().any(|&y| frame.row(y).contains(&WARNING)));
-        assert!((0..PANEL.height).all(|y| frame.row(y).len() == PANEL.width));
+    fn every_level_and_capacity_has_its_own_symbol() -> Outcome {
+        let mut seen = Vec::new();
+        for value in [0, 9, 20, 21, 55, 79, 80, 100] {
+            let shape = picture(&render(SMALL, &face(true, false, charged(value)?)?));
+            assert!(!seen.contains(&shape));
+            seen.push(shape);
+        }
+        Ok(())
+    }
+
+    fn lit(frame: &Frame) -> Vec<(usize, usize, Colour)> {
+        let size = frame.size();
+        (0..size.height)
+            .flat_map(|y| {
+                frame
+                    .row(y)
+                    .iter()
+                    .enumerate()
+                    .filter(|&(_, &colour)| colour != BACKGROUND)
+                    .map(move |(x, &colour)| (x, y, colour))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_face_fits_the_panel_with_the_battery_in_the_top_right_corner() -> Outcome {
+        for (value, colour) in [(7, WARNING), (100, FOREGROUND)] {
+            let frame = render(PANEL, &face(true, false, charged(value)?)?);
+            assert_eq!(frame.size(), PANEL);
+            assert!((0..PANEL.height).all(|y| frame.row(y).len() == PANEL.width));
+            let corner = |x: usize, y: usize| x > PANEL.width / 2 && y < PANEL.height / 10;
+            let (status, rest): (Vec<_>, Vec<_>) =
+                lit(&frame).into_iter().partition(|&(x, y, _)| corner(x, y));
+            assert_ne!(status, []);
+            assert!(status.iter().all(|&(_, _, lit)| lit == colour));
+            assert!(
+                status
+                    .iter()
+                    .all(|&(x, y, _)| x < PANEL.width - 40 && y > 40)
+            );
+            assert!(rest.iter().all(|&(_, y, _)| y > PANEL.height / 3));
+            assert!(rest.iter().all(|&(_, y, _)| y < PANEL.height * 4 / 5));
+            assert!(rest.iter().all(|&(_, _, lit)| lit == FOREGROUND));
+            assert!(frame.row(PANEL.height / 2).contains(&FOREGROUND));
+        }
         Ok(())
     }
 
     #[test]
-    fn a_frame_too_small_for_the_face_stays_blank() -> Result<(), TimeError> {
+    fn the_battery_leaves_the_time_and_the_alarm_as_they_were() -> Outcome {
+        let full = render(PANEL, &face(true, false, charged(100)?)?);
+        let unread = render(PANEL, &face(true, false, Gauge::UNREAD)?);
+        let below = PANEL.height / 10;
+        assert!((below..PANEL.height).all(|y| full.row(y) == unread.row(y)));
+        Ok(())
+    }
+
+    #[test]
+    fn a_frame_too_small_for_the_face_stays_blank() -> Outcome {
         let short = Size {
             width: 100,
             height: 64,
         };
-        let frame = render(short, &face(true, false, true)?);
+        let frame = render(short, &face(true, false, Gauge::UNREAD)?);
         assert_eq!(frame, Frame::filled(short, BACKGROUND));
         assert_eq!(target(short, 10, 10), Target::Elsewhere);
         Ok(())

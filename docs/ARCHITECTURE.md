@@ -57,8 +57,8 @@ It turns the panel off with `FBIOBLANK` on that descriptor, never by closing it.
 | `window` | `Window`: two minutes suspended after the panel goes off, then *power off*, unless an alarm rings, is snoozed or is due within two minutes of the end; the RTC instant to suspend until — ADR 0010, D2 |
 | `input` | `InputEvent`: a touch at a panel pixel, or a press of `VolumeUp`, `VolumeDown` or `Power` |
 | `schedule` | `arm_next`: read the clock, pick the earliest alarm, arm or disarm the RTC |
-| `battery` | `ChargeLimit`, `BatteryReading`, `stop_at_limit` and the 20 % mark — ADR 0008, D3 |
-| `face` | `Frame`, `Face` and `render`: the time in seven-segment digits, the battery mark, the alarm below, amber while ringing; `target` maps a tap to the alarm digit it steps |
+| `battery` | `ChargeLimit`, `BatteryReading`, `stop_at_limit`, and the `Gauge`: a `Level` of low at the 20 % mark, full from the limit, middle between, and the capacity when it was read — ADR 0008, D3 |
+| `face` | `Frame`, `Face` and `render`: the time in seven-segment digits, the battery in the top-right corner as one to three bars and a percentage, red when low, the alarm below, amber while ringing; `target` maps a tap to the alarm digit it steps |
 | `ringer` | `Ringer`: one daily alarm, armed or not, quiet, ringing or snoozed for 9 minutes, and the instant it next rings; `show` and `listen` drive it and the `Light` from the clock and `Input` |
 | `light` | `Light`: the panel lit for 10 s by a press, kept lit by a touch or a ringing alarm, off at a press or the timeout — ADR 0008, D2; the ringer hears input only while it is lit |
 
