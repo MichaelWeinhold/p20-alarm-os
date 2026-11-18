@@ -1193,3 +1193,21 @@ uv run python scripts/serial_shell.py false         exit 1
 `3acce6d3ac5d9b11276e9a59fe8ff9e1391cda887d74a629b130ca56ab6e6e2d`, went to `/mnt/alarmd`
 in 7.9 s, and `sha256sum` on the phone matched the Mac's. A 404120-byte random file took
 7.5 s. `base64` and `sha256sum` are the ROM's, in `/system/bin`. The copy was removed.
+
+## 2026-11-18 — the battery symbol, for issue 49
+
+`alarmd` built from `66d89bf`, 404784 bytes, sha256
+`2248d64e834a33677aeb94bbae5a67e605f5c6a5a389d0d55eed72ff0e5f67c9`, was copied over
+`/init` on `system` from TWRP. It replaced `64caf049…ddaa` and left `init.rom` at
+`e8e2768e…78ef`. Read in TWRP just before the reboot, on the cable:
+
+```
+Wed Nov 18 11:38:37 GMT 2026
+capacity 12
+status   Charging
+```
+
+**The lit face showed what the host renders for 12 %**, as read by the operator: the
+symbol in red with one bar, `12%` beside it in the top-right corner, and the time and
+the alarm where they were. The capacity was not read again while `alarmd` ran, since no
+`adb` reaches the phone then.
