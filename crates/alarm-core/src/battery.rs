@@ -124,11 +124,52 @@ pub fn shows_low_mark(capacity: Percent) -> bool {
     capacity <= LOW_MARK
 }
 
-#[must_use]
-pub fn wants_mark(battery: &impl Battery) -> bool {
-    battery
-        .read()
-        .map_or(true, |reading| shows_low_mark(reading.capacity))
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Level {
+    Low,
+    Middle,
+    Full,
+}
+
+impl Level {
+    #[must_use]
+    pub fn of(capacity: Percent, limit: ChargeLimit) -> Self {
+        if shows_low_mark(capacity) {
+            Self::Low
+        } else if capacity >= limit.percent() {
+            Self::Full
+        } else {
+            Self::Middle
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Gauge {
+    pub level: Level,
+    pub capacity: Option<Percent>,
+}
+
+impl Gauge {
+    pub const UNREAD: Self = Self {
+        level: Level::Low,
+        capacity: None,
+    };
+
+    #[must_use]
+    pub fn of(capacity: Percent, limit: ChargeLimit) -> Self {
+        Self {
+            level: Level::of(capacity, limit),
+            capacity: Some(capacity),
+        }
+    }
+
+    #[must_use]
+    pub fn read(battery: &impl Battery, limit: ChargeLimit) -> Self {
+        battery
+            .read()
+            .map_or(Self::UNREAD, |reading| Self::of(reading.capacity, limit))
+    }
 }
 
 pub fn stop_at_limit(
@@ -310,23 +351,47 @@ mod tests {
     }
 
     #[test]
-    fn the_mark_follows_the_capacity() -> Result<(), BatteryError> {
-        assert!(wants_mark(&FakeBattery::new(
-            20,
-            ChargeStatus::Discharging,
-            true
-        )?));
-        assert!(!wants_mark(&FakeBattery::new(
-            21,
-            ChargeStatus::Discharging,
-            true
-        )?));
+    fn the_level_is_low_to_20_full_from_the_limit_and_middle_between() -> Result<(), BatteryError> {
+        let level =
+            |value| Percent::new(value).map(|capacity| Level::of(capacity, ChargeLimit::DEFAULT));
+        assert_eq!(level(0)?, Level::Low);
+        assert_eq!(level(20)?, Level::Low);
+        assert_eq!(level(21)?, Level::Middle);
+        assert_eq!(level(79)?, Level::Middle);
+        assert_eq!(level(80)?, Level::Full);
+        assert_eq!(level(100)?, Level::Full);
         Ok(())
     }
 
     #[test]
-    fn an_unreadable_battery_shows_the_mark() {
-        assert!(wants_mark(&FakeBattery::unreadable(Some(true))));
+    fn a_limit_of_100_is_full_only_at_100() -> Result<(), BatteryError> {
+        let limit = ChargeLimit::new(100)?;
+        assert_eq!(Level::of(Percent::new(99)?, limit), Level::Middle);
+        assert_eq!(Level::of(Percent::new(100)?, limit), Level::Full);
+        Ok(())
+    }
+
+    #[test]
+    fn the_gauge_carries_the_capacity_it_read() -> Result<(), BatteryError> {
+        let battery = FakeBattery::new(57, ChargeStatus::Discharging, true)?;
+        assert_eq!(
+            Gauge::read(&battery, ChargeLimit::DEFAULT),
+            Gauge {
+                level: Level::Middle,
+                capacity: Some(Percent::new(57)?),
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_unreadable_battery_reads_low_with_no_capacity() {
+        assert_eq!(
+            Gauge::read(&FakeBattery::unreadable(Some(true)), ChargeLimit::DEFAULT),
+            Gauge::UNREAD
+        );
+        assert_eq!(Gauge::UNREAD.level, Level::Low);
+        assert_eq!(Gauge::UNREAD.capacity, None);
     }
 
     #[test]
