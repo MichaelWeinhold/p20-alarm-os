@@ -3,6 +3,7 @@ use std::fmt;
 use crate::battery::BatteryReading;
 use crate::face::{Frame, Size};
 use crate::input::InputEvent;
+use crate::settings::{RECORD_BYTES, SLOT_BYTES, Slot};
 use crate::time::UnixSeconds;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,4 +57,9 @@ pub trait Display {
 
 pub trait Input {
     fn wait(&mut self, seconds: u64) -> Result<Option<InputEvent>, HardwareError>;
+}
+
+pub trait Settings {
+    fn load(&mut self) -> Result<[u8; RECORD_BYTES], HardwareError>;
+    fn save(&mut self, slot: Slot, bytes: &[u8; SLOT_BYTES]) -> Result<(), HardwareError>;
 }

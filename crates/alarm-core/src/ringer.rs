@@ -40,6 +40,15 @@ impl Ringer {
     }
 
     #[must_use]
+    pub fn restored(alarm: TimeOfDay, armed: bool, now: UnixSeconds, offset: UtcOffset) -> Self {
+        let mut ringer = Self::new(alarm);
+        if armed {
+            ringer.next = Some(ringer.after(now, offset));
+        }
+        ringer
+    }
+
+    #[must_use]
     pub fn alarm(&self) -> TimeOfDay {
         self.alarm
     }
@@ -266,6 +275,20 @@ mod tests {
 
     fn ringer(hour: u8, minute: u8) -> Result<Ringer, TimeError> {
         Ok(Ringer::new(TimeOfDay::new(hour, minute)?))
+    }
+
+    #[test]
+    fn a_restored_alarm_is_armed_for_its_next_time_or_left_disarmed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let now = FakeClock::at(7, 30, 0).now()?;
+        let alarm = TimeOfDay::new(7, 0)?;
+        let armed = Ringer::restored(alarm, true, now, UtcOffset::UTC);
+        assert_eq!(armed.alarm(), alarm);
+        assert_eq!(armed.next(), Some(FakeClock::at(31, 0, 0).now()?));
+        assert_eq!(armed.ring(), Ring::Quiet);
+        let disarmed = Ringer::restored(alarm, false, now, UtcOffset::UTC);
+        assert_eq!(disarmed, Ringer::new(alarm));
+        Ok(())
     }
 
     #[test]

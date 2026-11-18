@@ -15,6 +15,7 @@ clock = { path = "../clock" }
 framebuffer = { path = "../framebuffer" }
 input = { path = "../input" }
 pid1 = { path = "../pid1" }
+storage = { path = "../storage" }
 suspend = { path = "../suspend" }
 
 [lints.rust]

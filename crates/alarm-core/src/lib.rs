@@ -6,5 +6,6 @@ pub mod input;
 pub mod light;
 pub mod ringer;
 pub mod schedule;
+pub mod settings;
 pub mod time;
 pub mod window;
