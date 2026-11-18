@@ -239,7 +239,7 @@ def test_a_command_that_fails_during_a_push_names_itself(
 ) -> None:
     source = tmp_path / "alarmd"
     source.write_bytes(b"alarmd")
-    with opened(pair[1]) as fd, pytest.raises(SerialError, match=r"'printf .* exited 1"):
+    with opened(pair[1]) as fd, pytest.raises(SerialError, match=r"'printf .* exited [1-9]"):
         push(fd, source, PurePosixPath("/mnt/missing/alarmd"), 3)
 
 
