@@ -236,6 +236,10 @@ shell comes back when the cable does.
 before its target; the boot then reads `normal_reset_type=BR_POWEROFF_ALARM` in
 `/proc/cmdline`. A cold boot empties pstore and `/mnt`.
 
+⚠️ With the cable in, a power-off boots our `/init` again within about 75 s, with
+`androidboot.mode=charger`; so does a plug-in to a phone that is off. Pull the cable
+before the power-off to keep it off. → `docs/device-history/phone.md`, issue 53.
+
 **The boot-fail monitor.** One `/init` that panicked the kernel was enough for the next
 boot to start eRecovery. → ADR 0005, D5.
 
