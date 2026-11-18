@@ -9,7 +9,9 @@ use std::time::{Duration, Instant};
 use alarm_core::hardware::{HardwareError, Input};
 use alarm_core::input::InputEvent;
 
-use crate::firmware::{BLOCKS, DIRECTORY, PARTITION, REQUESTS, partition, requested};
+use pid1::block::{BLOCKS, partition};
+
+use crate::firmware::{DIRECTORY, PARTITION, REQUESTS, requested};
 use crate::{DEVICES, Decoder, RECORD_SIZE, events};
 
 const CLASS: &str = "/sys/class/input";

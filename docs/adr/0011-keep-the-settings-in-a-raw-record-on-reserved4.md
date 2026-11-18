@@ -53,7 +53,7 @@ slot is little-endian:
 |---|---|---|
 | 0 | 8 | magic, `P20ALRM\0` |
 | 8 | 4 | format version, `1` |
-| 12 | 4 | payload length, at most 4072 |
+| 12 | 4 | payload length, at most 4068 |
 | 16 | 8 | sequence number |
 | 24 | n | payload |
 | 24 + n | 4 | CRC-32 (IEEE) of bytes 0 to 24 + n |

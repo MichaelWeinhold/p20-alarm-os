@@ -3,20 +3,24 @@ use std::io::{self, Write};
 use std::thread;
 use std::time::Duration;
 
-use alarm_core::hardware::{Clock, Display};
+use alarm_core::hardware::{Clock, Display, HardwareError};
 use alarm_core::light::{LIT_SECONDS, Light};
-use alarm_core::ringer::{Ringer, listen};
+use alarm_core::ringer::listen;
 use alarm_core::time::{TimeOfDay, UtcOffset};
-use alarm_core::window::{WINDOW_SECONDS, Window};
+use alarm_core::window::Window;
 use battery::SysfsBattery;
 use clock::SystemClock;
 use framebuffer::linux::Panel;
 use input::linux::{Answer, EvdevInput, FirmwareLoader};
 use pid1::kmsg;
 use pid1::linux::{into_recovery, mounted};
+use storage::Partition;
 use suspend::{SysfsSuspend, SysfsWakeAlarm};
 
-use crate::{ALARM_HOUR, ALARM_MINUTE, BRIGHTNESS, LOCAL_OFFSET_SECONDS, change, minute, rest};
+use crate::{
+    ALARM_HOUR, ALARM_MINUTE, BRIGHTNESS, LOCAL_OFFSET_SECONDS, Restored, change, choices, minute,
+    persisted, rest, restored,
+};
 
 const FIRMWARE_POLL: Duration = Duration::from_millis(250);
 const INPUT_RETRY: Duration = Duration::from_secs(1);
@@ -73,22 +77,40 @@ fn answering_firmware() {
     }
 }
 
-pub fn run() -> ! {
-    let mut log = started().ok();
+fn restoring(log: &mut Option<File>) -> (Result<Partition, HardwareError>, Restored) {
     let offset = match UtcOffset::from_seconds(LOCAL_OFFSET_SECONDS) {
         Ok(offset) => offset,
         Err(error) => {
-            logged(&mut log, &kmsg::failure("reading the UTC offset", &error));
+            logged(log, &kmsg::failure("reading the UTC offset", &error));
             into_recovery(log.as_mut())
         }
     };
-    let mut ringer = match TimeOfDay::new(ALARM_HOUR, ALARM_MINUTE) {
-        Ok(alarm) => Ringer::new(alarm),
+    let alarm = match TimeOfDay::new(ALARM_HOUR, ALARM_MINUTE) {
+        Ok(alarm) => alarm,
         Err(error) => {
-            logged(&mut log, &kmsg::failure("reading the alarm time", &error));
+            logged(log, &kmsg::failure("reading the alarm time", &error));
             into_recovery(log.as_mut())
         }
     };
+    let mut settings = Partition::open();
+    let restored = restored(&mut settings, &SystemClock, alarm, offset);
+    for line in &restored.log {
+        logged(log, line);
+    }
+    (settings, restored)
+}
+
+pub fn run() -> ! {
+    let mut log = started().ok();
+    let (
+        mut settings,
+        Restored {
+            mut saved,
+            mut ringer,
+            ..
+        },
+    ) = restoring(&mut log);
+    let offset = saved.offset;
     let mut panel = match Panel::open(BRIGHTNESS) {
         Ok(panel) => panel,
         Err(error) => {
@@ -115,7 +137,7 @@ pub fn run() -> ! {
     let mut battery = SysfsBattery::open();
     let mut wake = SysfsWakeAlarm::open();
     let mut suspend = SysfsSuspend::open();
-    let mut window = Window::lit(WINDOW_SECONDS);
+    let mut window = Window::lit(saved.window_seconds);
     let mut input = EvdevInput::open();
     let mut absent = Vec::new();
     let mut was_lit = false;
@@ -133,6 +155,10 @@ pub fn run() -> ! {
             let state = if light.lit() { "lit" } else { "off" };
             logged(&mut log, &kmsg::line(&format!("panel {state}")));
             was_lit = light.lit();
+            let current = choices(&ringer, offset, saved.window_seconds);
+            if !was_lit && let Some(line) = persisted(&mut settings, &mut saved, current) {
+                logged(&mut log, &line);
+            }
         }
         for line in &turn.log {
             logged(&mut log, line);

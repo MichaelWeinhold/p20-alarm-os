@@ -16,6 +16,7 @@ dependencies = [
  "framebuffer",
  "input",
  "pid1",
+ "storage",
  "suspend",
 ]
 
@@ -61,11 +62,20 @@ name = "input"
 version = "0.1.0"
 dependencies = [
  "alarm-core",
+ "pid1",
 ]
 
 [[package]]
 name = "pid1"
 version = "0.1.0"
+
+[[package]]
+name = "storage"
+version = "0.1.0"
+dependencies = [
+ "alarm-core",
+ "pid1",
+]
 
 [[package]]
 name = "suspend"

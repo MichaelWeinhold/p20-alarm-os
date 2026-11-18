@@ -1,0 +1,25 @@
+[package]
+name = "storage"
+description = "The settings adapter over the raw reserved4 partition: its first 8192 bytes, written a slot at a time, flushed and read back"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+alarm-core = { path = "../alarm-core" }
+pid1 = { path = "../pid1" }
+
+[lints.rust]
+unsafe_code = "allow"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

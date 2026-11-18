@@ -9,6 +9,16 @@ impl Weekdays {
     pub const WORKDAYS: Self = Self(0b001_1111);
 
     #[must_use]
+    pub fn from_bits(bits: u8) -> Option<Self> {
+        (bits & !Self::EVERY_DAY.0 == 0).then_some(Self(bits))
+    }
+
+    #[must_use]
+    pub fn bits(self) -> u8 {
+        self.0
+    }
+
+    #[must_use]
     pub fn with(self, day: Weekday) -> Self {
         Self(self.0 | day.bit())
     }
@@ -178,6 +188,16 @@ mod tests {
             Some(UnixSeconds(WEDNESDAY_MIDNIGHT + hours(6) + 30 * 60))
         );
         Ok(())
+    }
+
+    #[test]
+    fn weekdays_come_back_from_their_bits_and_an_eighth_day_is_refused() {
+        assert_eq!(
+            Weekdays::from_bits(Weekdays::WORKDAYS.bits()),
+            Some(Weekdays::WORKDAYS)
+        );
+        assert_eq!(Weekdays::from_bits(0), Some(Weekdays::NONE));
+        assert_eq!(Weekdays::from_bits(0b1000_0000), None);
     }
 
     #[test]

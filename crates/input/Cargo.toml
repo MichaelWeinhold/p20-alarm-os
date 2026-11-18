@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 alarm-core = { path = "../alarm-core" }
+pid1 = { path = "../pid1" }
 
 [lints.rust]
 unsafe_code = "allow"

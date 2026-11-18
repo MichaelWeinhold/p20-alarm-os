@@ -31,12 +31,14 @@ crates/
   input/        the adapter for the side keys and touch: the evdev nodes, found by name, and
                 the touch firmware the kernel asks for, answered from odm
   pid1/         what every /init takes from the kernel: mounts, the kernel log, a child
-                on a terminal, reaping, the reboot into recovery
+                on a terminal, reaping, the reboot into recovery, a partition found by name
+  storage/      the adapter for the settings: the first 8192 bytes of reserved4, a slot
+                written, flushed and read back (ADR 0011)
   suspend/      the adapters for the RTC's wake alarm and for suspending, over rtc0's
                 wakealarm and /sys/power/state
   alarmd/       the binary: opens the adapters, draws the time and the alarm, waits on input
-                until the next minute or until the panel is due off, suspends while it is
-                off, is PID 1
+                until the next minute or until the panel is due off, saves a changed alarm
+                as the panel goes off, suspends while it is off, is PID 1
   init-probe/   a probe /init that runs the charge stop and logs the power nodes
   debug-init/   the debug /init: the ROM's shell on a USB serial gadget (ADR 0009)
 ```
@@ -53,10 +55,11 @@ It turns the panel off with `FBIOBLANK` on that descriptor, never by closing it.
 |---|---|
 | `time` | `UnixSeconds`, `TimeOfDay`, `Weekday`, `UtcOffset` — civil time without a tz database |
 | `alarm` | `Alarm`, `Weekdays`, and when an alarm next fires after a given instant |
-| `hardware` | the traits `Clock`, `WakeAlarm`, `Suspend`, `Vibrator`, `Battery`, `Display`, `Input`, and `HardwareError` |
+| `hardware` | the traits `Clock`, `WakeAlarm`, `Suspend`, `Vibrator`, `Battery`, `Display`, `Input`, `Settings`, and `HardwareError` |
 | `window` | `Window`: two minutes suspended after the panel goes off, then *power off*, unless an alarm rings, is snoozed or is due within two minutes of the end; the RTC instant to suspend until — ADR 0010, D2 |
 | `input` | `InputEvent`: a touch at a panel pixel, or a press of `VolumeUp`, `VolumeDown` or `Power` |
 | `schedule` | `arm_next`: read the clock, pick the earliest alarm, arm or disarm the RTC |
+| `settings` | `Choices` and the record that holds them: two 4 KiB slots, each framed by magic, version, length, sequence and CRC-32; `load` takes the newest valid slot, `save` writes the other one — ADR 0011 |
 | `battery` | `ChargeLimit`, `BatteryReading`, `stop_at_limit`, and the `Gauge`: a `Level` of low at the 20 % mark, full from the limit, middle between, and the capacity when it was read — ADR 0008, D3 |
 | `face` | `Frame`, `Face` and `render`: the time in seven-segment digits, the battery in the top-right corner as one to three bars and a percentage, red when low, the alarm below, amber while ringing; `target` maps a tap to the alarm digit it steps |
 | `ringer` | `Ringer`: one daily alarm, armed or not, quiet, ringing or snoozed for 9 minutes, and the instant it next rings; `show` and `listen` drive it and the `Light` from the clock and `Input` |

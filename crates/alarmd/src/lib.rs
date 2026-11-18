@@ -1,9 +1,11 @@
+use alarm_core::alarm::{Alarm, Weekdays};
 use alarm_core::battery::{ChargeLimit, ChargeStep, Gauge, stop_at_limit};
-use alarm_core::hardware::{Battery, Clock, Display, HardwareError, Suspend, WakeAlarm};
+use alarm_core::hardware::{Battery, Clock, Display, HardwareError, Settings, Suspend, WakeAlarm};
 use alarm_core::light::Light;
 use alarm_core::ringer::{Ringer, show};
-use alarm_core::time::{UnixSeconds, UtcOffset, seconds_to_next_minute};
-use alarm_core::window::{Answer, Window};
+use alarm_core::settings::{self, Choices, SetAlarm};
+use alarm_core::time::{TimeOfDay, UnixSeconds, UtcOffset, seconds_to_next_minute};
+use alarm_core::window::{Answer, WINDOW_SECONDS, Window};
 use pid1::kmsg;
 
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
@@ -122,6 +124,94 @@ pub fn rest(
 }
 
 #[must_use]
+pub fn choices(ringer: &Ringer, offset: UtcOffset, window_seconds: i64) -> Choices {
+    Choices {
+        offset,
+        window_seconds,
+        alarms: vec![SetAlarm {
+            alarm: Alarm {
+                time: ringer.alarm(),
+                repeat: Weekdays::EVERY_DAY,
+            },
+            armed: ringer.armed(),
+        }],
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Restored {
+    pub saved: Choices,
+    pub ringer: Ringer,
+    pub log: Vec<String>,
+}
+
+pub fn restored(
+    settings: &mut Result<impl Settings, HardwareError>,
+    clock: &impl Clock,
+    alarm: TimeOfDay,
+    offset: UtcOffset,
+) -> Restored {
+    let mut log = Vec::new();
+    let loaded = match settings
+        .as_mut()
+        .map_err(|error| error.clone())
+        .and_then(settings::load)
+    {
+        Ok(Some(loaded)) => {
+            log.push(kmsg::line("settings loaded"));
+            loaded
+        }
+        Ok(None) => {
+            log.push(kmsg::line("settings never saved"));
+            choices(&Ringer::new(alarm), offset, WINDOW_SECONDS)
+        }
+        Err(error) => {
+            log.push(kmsg::failure("loading the settings", &error));
+            choices(&Ringer::new(alarm), offset, WINDOW_SECONDS)
+        }
+    };
+    let (alarm, armed) = loaded
+        .alarms
+        .first()
+        .map_or((alarm, false), |set| (set.alarm.time, set.armed));
+    let ringer = match clock.now() {
+        Ok(now) => Ringer::restored(alarm, armed, now, loaded.offset),
+        Err(error) => {
+            if armed {
+                log.push(kmsg::failure("arming the saved alarm", &error));
+            }
+            Ringer::new(alarm)
+        }
+    };
+    Restored {
+        saved: choices(&ringer, loaded.offset, loaded.window_seconds),
+        ringer,
+        log,
+    }
+}
+
+pub fn persisted(
+    settings: &mut Result<impl Settings, HardwareError>,
+    saved: &mut Choices,
+    current: Choices,
+) -> Option<String> {
+    if current == *saved {
+        return None;
+    }
+    let outcome = settings
+        .as_mut()
+        .map_err(|error| error.clone())
+        .and_then(|settings| settings::save(settings, &current));
+    Some(match outcome {
+        Ok(()) => {
+            *saved = current;
+            kmsg::line("settings saved")
+        }
+        Err(error) => kmsg::failure("saving the settings", &error),
+    })
+}
+
+#[must_use]
 pub fn change(before: &Ringer, after: &Ringer) -> Option<String> {
     let alarm = after.alarm();
     let armed = if after.armed() { "armed" } else { "disarmed" };
@@ -141,8 +231,8 @@ mod tests {
     use alarm_core::face::{Face, Frame, RINGING, Size, WARNING, render};
     use alarm_core::input::InputEvent;
     use alarm_core::light::LIT_SECONDS;
-    use alarm_core::time::{TimeError, TimeOfDay};
-    use alarm_core::window::WINDOW_SECONDS;
+    use alarm_core::settings::{RECORD_BYTES, SLOT_BYTES, Slot};
+    use alarm_core::time::TimeError;
 
     use super::*;
 
@@ -725,6 +815,180 @@ mod tests {
         assert_eq!(step.wait_seconds, RETRY_SECONDS);
         assert!(!resting.window.running());
         assert_eq!(resting.suspends(), Some(0));
+        Ok(())
+    }
+
+    struct FakeSettings {
+        record: [u8; RECORD_BYTES],
+        saves: u32,
+        failing: bool,
+    }
+
+    impl FakeSettings {
+        fn blank() -> Self {
+            Self {
+                record: [0; RECORD_BYTES],
+                saves: 0,
+                failing: false,
+            }
+        }
+    }
+
+    impl Settings for FakeSettings {
+        fn load(&mut self) -> Result<[u8; RECORD_BYTES], HardwareError> {
+            Ok(self.record)
+        }
+
+        fn save(&mut self, slot: Slot, bytes: &[u8; SLOT_BYTES]) -> Result<(), HardwareError> {
+            if self.failing {
+                return Err(refused("reserved4"));
+            }
+            self.record[slot.offset()..slot.offset() + SLOT_BYTES].copy_from_slice(bytes);
+            self.saves += 1;
+            Ok(())
+        }
+    }
+
+    fn berlin() -> Result<UtcOffset, TimeError> {
+        UtcOffset::from_seconds(LOCAL_OFFSET_SECONDS)
+    }
+
+    fn boot(
+        settings: &mut Result<FakeSettings, HardwareError>,
+        clock: &FixedClock,
+    ) -> Result<Restored, TimeError> {
+        Ok(restored(
+            settings,
+            clock,
+            TimeOfDay::new(ALARM_HOUR, ALARM_MINUTE)?,
+            berlin()?,
+        ))
+    }
+
+    fn saves(settings: &Result<FakeSettings, HardwareError>) -> Option<u32> {
+        settings.as_ref().ok().map(|settings| settings.saves)
+    }
+
+    #[test]
+    fn a_blank_record_boots_the_default_alarm_disarmed_and_saves_nothing()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut settings = Ok(FakeSettings::blank());
+        let mut started = boot(&mut settings, &at(19, 37, 30))?;
+        assert_eq!(started.ringer, ringer()?);
+        assert_eq!(started.saved.offset, berlin()?);
+        assert_eq!(started.saved.window_seconds, WINDOW_SECONDS);
+        assert_eq!(started.log, [kmsg::line("settings never saved")]);
+        let current = choices(&started.ringer, berlin()?, WINDOW_SECONDS);
+        assert_eq!(persisted(&mut settings, &mut started.saved, current), None);
+        assert_eq!(saves(&settings), Some(0));
+        Ok(())
+    }
+
+    #[test]
+    fn a_change_saves_once_and_the_next_boot_restores_it_armed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(19, 37, 30);
+        let mut settings = Ok(FakeSettings::blank());
+        let mut started = boot(&mut settings, &clock)?;
+        let ringer = armed_at(&clock)?;
+        let current = choices(&ringer, berlin()?, WINDOW_SECONDS);
+        assert_eq!(
+            persisted(&mut settings, &mut started.saved, current.clone()),
+            Some(kmsg::line("settings saved"))
+        );
+        assert_eq!(persisted(&mut settings, &mut started.saved, current), None);
+        assert_eq!(saves(&settings), Some(1));
+
+        let later = at(20, 0, 0);
+        let rebooted = boot(&mut settings, &later)?;
+        assert_eq!(rebooted.log, [kmsg::line("settings loaded")]);
+        assert!(rebooted.ringer.armed());
+        assert_eq!(
+            rebooted.ringer.next(),
+            Some(Alarm::once(rebooted.ringer.alarm()).next_after(later.now()?, berlin()?))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_failed_save_is_logged_and_tried_again_at_the_next_panel_off()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(19, 37, 30);
+        let mut settings = Ok(FakeSettings::blank());
+        let mut started = boot(&mut settings, &clock)?;
+        if let Ok(fake) = settings.as_mut() {
+            fake.failing = true;
+        }
+        let current = choices(&armed_at(&clock)?, berlin()?, WINDOW_SECONDS);
+        assert_eq!(
+            persisted(&mut settings, &mut started.saved, current.clone()),
+            Some(kmsg::failure("saving the settings", &refused("reserved4")))
+        );
+        if let Ok(fake) = settings.as_mut() {
+            fake.failing = false;
+        }
+        assert_eq!(
+            persisted(&mut settings, &mut started.saved, current),
+            Some(kmsg::line("settings saved"))
+        );
+        assert_eq!(saves(&settings), Some(1));
+        Ok(())
+    }
+
+    #[test]
+    fn an_absent_partition_boots_the_default_and_logs_each_save()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(19, 37, 30);
+        let mut settings: Result<FakeSettings, HardwareError> =
+            Err(HardwareError::Absent("reserved4"));
+        let mut started = boot(&mut settings, &clock)?;
+        assert_eq!(started.ringer, ringer()?);
+        assert_eq!(
+            started.log,
+            [kmsg::failure(
+                "loading the settings",
+                &HardwareError::Absent("reserved4")
+            )]
+        );
+        let current = choices(&armed_at(&clock)?, berlin()?, WINDOW_SECONDS);
+        assert_eq!(
+            persisted(&mut settings, &mut started.saved, current),
+            Some(kmsg::failure(
+                "saving the settings",
+                &HardwareError::Absent("reserved4")
+            ))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_unreadable_record_arms_nothing_and_a_clock_fault_does_not_overwrite_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(19, 37, 30);
+        let mut corrupt = FakeSettings::blank();
+        corrupt.record[0] = 1;
+        let mut settings = Ok(corrupt);
+        let started = boot(&mut settings, &clock)?;
+        assert!(!started.ringer.armed());
+        assert!(started.log[0].contains("loading the settings"));
+
+        let mut settings = Ok(FakeSettings::blank());
+        let mut first = boot(&mut settings, &clock)?;
+        let current = choices(&armed_at(&clock)?, berlin()?, WINDOW_SECONDS);
+        persisted(&mut settings, &mut first.saved, current);
+        let stopped = FixedClock(Err(HardwareError::Absent("realtime clock")));
+        let mut faulted = boot(&mut settings, &stopped)?;
+        assert!(!faulted.ringer.armed());
+        assert_eq!(
+            faulted.log[1],
+            kmsg::failure(
+                "arming the saved alarm",
+                &HardwareError::Absent("realtime clock")
+            )
+        );
+        let current = choices(&faulted.ringer, berlin()?, WINDOW_SECONDS);
+        assert_eq!(persisted(&mut settings, &mut faulted.saved, current), None);
+        assert!(boot(&mut settings, &clock)?.ringer.armed());
         Ok(())
     }
 }
