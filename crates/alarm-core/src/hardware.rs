@@ -72,3 +72,8 @@ pub trait Settings {
     fn load(&mut self) -> Result<[u8; RECORD_BYTES], HardwareError>;
     fn save(&mut self, slot: Slot, bytes: &[u8; SLOT_BYTES]) -> Result<(), HardwareError>;
 }
+
+pub trait Modem {
+    fn boot(&mut self) -> Result<(), HardwareError>;
+    fn radio_off(&mut self) -> Result<(), HardwareError>;
+}

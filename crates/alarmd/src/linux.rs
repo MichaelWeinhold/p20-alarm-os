@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::{self, Write};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use alarm_core::hardware::{Display, HardwareError};
@@ -12,6 +12,7 @@ use battery::SysfsBattery;
 use clock::SystemClock;
 use framebuffer::linux::Panel;
 use input::linux::{Answer, EvdevInput, FirmwareLoader};
+use modem::linux::Balong;
 use pid1::kmsg;
 use pid1::linux::{into_recovery, mounted};
 use power::Cmdline;
@@ -20,8 +21,8 @@ use storage::Partition;
 use suspend::{SysfsSuspend, SysfsWakeAlarm};
 
 use crate::{
-    ALARM_HOUR, ALARM_MINUTE, BRIGHTNESS, Booted, LOCAL_OFFSET_SECONDS, Restored, Sleep, booted,
-    cable_in, change, choices, minute, persisted, rest, restored,
+    ALARM_HOUR, ALARM_MINUTE, AfterModem, BRIGHTNESS, Booted, LOCAL_OFFSET_SECONDS, Restored,
+    Sleep, booted, cable_in, change, choices, minute, modem_booted, persisted, rest, restored,
 };
 
 const FIRMWARE_POLL: Duration = Duration::from_millis(250);
@@ -77,6 +78,21 @@ fn answering_firmware() {
         }
         thread::sleep(FIRMWARE_POLL);
     }
+}
+
+fn booting_modem() {
+    let mut log = pid1::linux::kmsg().ok();
+    for line in &modem_booted(&mut Balong::open()) {
+        logged(&mut log, line);
+    }
+}
+
+fn modem_started(log: &mut Option<File>) -> Option<JoinHandle<()>> {
+    thread::Builder::new()
+        .name("modem".to_owned())
+        .spawn(booting_modem)
+        .map_err(|error| logged(log, &kmsg::failure("starting the modem's boot", &error)))
+        .ok()
 }
 
 fn restoring(log: &mut Option<File>) -> (Result<Partition, HardwareError>, Restored) {
@@ -137,12 +153,13 @@ pub fn run() -> ! {
             &kmsg::failure("starting the firmware answers", &error),
         );
     }
+    let modem = modem_started(&mut log);
     let mut light = booting(&mut log);
     let mut battery = SysfsBattery::open();
     let mut sleep = Sleep {
         window: Window::lit(saved.window_seconds),
         wake: SysfsWakeAlarm::open(),
-        suspend: SysfsSuspend::open(),
+        suspend: SysfsSuspend::open().map(|suspend| AfterModem { suspend, modem }),
         power: PoweroffAlarm::open(),
     };
     let mut input = EvdevInput::open();

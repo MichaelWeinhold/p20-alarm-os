@@ -1,7 +1,10 @@
 use alarm_core::alarm::{Alarm, Weekdays};
 use alarm_core::battery::{ChargeLimit, ChargeStep, Gauge, stop_at_limit};
+use std::thread::JoinHandle;
+
 use alarm_core::hardware::{
-    Battery, BootReason, Clock, Display, HardwareError, PowerOff, Settings, Suspend, WakeAlarm,
+    Battery, BootReason, Clock, Display, HardwareError, Modem, PowerOff, Settings, Suspend,
+    WakeAlarm,
 };
 use alarm_core::light::{LIT_SECONDS, Light};
 use alarm_core::ringer::{Ringer, show};
@@ -293,6 +296,36 @@ pub fn persisted(
         }
         Err(error) => kmsg::failure("saving the settings", &error),
     })
+}
+
+pub fn modem_booted(modem: &mut Result<impl Modem, HardwareError>) -> Vec<String> {
+    let modem = match modem {
+        Ok(modem) => modem,
+        Err(error) => return vec![kmsg::failure("opening the modem", error)],
+    };
+    if let Err(error) = modem.boot() {
+        return vec![kmsg::failure("booting the modem", &error)];
+    }
+    let radio = match modem.radio_off() {
+        Ok(()) => kmsg::line("modem radio off"),
+        Err(error) => kmsg::failure("turning the modem's radio off", &error),
+    };
+    vec![kmsg::line("modem booted"), radio]
+}
+
+#[derive(Debug)]
+pub struct AfterModem<S> {
+    pub suspend: S,
+    pub modem: Option<JoinHandle<()>>,
+}
+
+impl<S: Suspend> Suspend for AfterModem<S> {
+    fn suspend(&mut self) -> Result<(), HardwareError> {
+        if let Some(modem) = self.modem.take() {
+            let _ = modem.join();
+        }
+        self.suspend.suspend()
+    }
 }
 
 #[must_use]
@@ -1276,6 +1309,118 @@ mod tests {
         let current = choices(&faulted.ringer, berlin()?, WINDOW_SECONDS);
         assert_eq!(persisted(&mut settings, &mut faulted.saved, current), None);
         assert!(boot(&mut settings, &clock)?.ringer.armed());
+        Ok(())
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Step {
+        Boot,
+        RadioOff,
+    }
+
+    #[derive(Default)]
+    struct FakeModem {
+        failing: Option<Step>,
+        done: Vec<Step>,
+    }
+
+    impl FakeModem {
+        fn failing(step: Step) -> Self {
+            Self {
+                failing: Some(step),
+                done: Vec::new(),
+            }
+        }
+
+        fn step(&mut self, step: Step, device: &'static str) -> Result<(), HardwareError> {
+            if self.failing == Some(step) {
+                return Err(refused(device));
+            }
+            self.done.push(step);
+            Ok(())
+        }
+    }
+
+    impl Modem for FakeModem {
+        fn boot(&mut self) -> Result<(), HardwareError> {
+            self.step(Step::Boot, "balong_power")
+        }
+
+        fn radio_off(&mut self) -> Result<(), HardwareError> {
+            self.step(Step::RadioOff, "appvcom")
+        }
+    }
+
+    fn done(modem: &Result<FakeModem, HardwareError>) -> Option<&[Step]> {
+        modem.as_ref().ok().map(|modem| modem.done.as_slice())
+    }
+
+    #[test]
+    fn the_modem_boots_and_then_its_radio_goes_off() {
+        let mut modem = Ok(FakeModem::default());
+        assert_eq!(
+            modem_booted(&mut modem),
+            vec![kmsg::line("modem booted"), kmsg::line("modem radio off")]
+        );
+        assert_eq!(done(&modem), Some(&[Step::Boot, Step::RadioOff][..]));
+    }
+
+    #[test]
+    fn a_failed_boot_is_logged_and_sends_no_radio_off() {
+        let mut modem = Ok(FakeModem::failing(Step::Boot));
+        assert_eq!(
+            modem_booted(&mut modem),
+            vec![kmsg::failure("booting the modem", &refused("balong_power"))]
+        );
+        assert_eq!(done(&modem), Some(&[][..]));
+    }
+
+    #[test]
+    fn a_failed_radio_off_is_logged_after_the_boot() {
+        let mut modem = Ok(FakeModem::failing(Step::RadioOff));
+        assert_eq!(
+            modem_booted(&mut modem),
+            vec![
+                kmsg::line("modem booted"),
+                kmsg::failure("turning the modem's radio off", &refused("appvcom")),
+            ]
+        );
+        assert_eq!(done(&modem), Some(&[Step::Boot][..]));
+    }
+
+    #[test]
+    fn an_absent_modem_is_logged_and_nothing_more() {
+        let mut modem: Result<FakeModem, HardwareError> = Err(HardwareError::Absent("his_modem"));
+        assert_eq!(
+            modem_booted(&mut modem),
+            vec![kmsg::failure(
+                "opening the modem",
+                &HardwareError::Absent("his_modem")
+            )]
+        );
+    }
+
+    #[test]
+    fn the_first_suspend_waits_for_the_modem_and_the_next_does_not()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let done = Arc::new(AtomicBool::new(false));
+        let finished = Arc::clone(&done);
+        let modem = std::thread::Builder::new().spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            finished.store(true, Ordering::SeqCst);
+        })?;
+        let mut suspend = AfterModem {
+            suspend: FakeSuspend::default(),
+            modem: Some(modem),
+        };
+        suspend.suspend()?;
+        assert!(done.load(Ordering::SeqCst));
+        assert!(suspend.modem.is_none());
+        suspend.suspend()?;
+        assert_eq!(suspend.suspend.suspends, 2);
         Ok(())
     }
 }

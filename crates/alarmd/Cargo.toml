@@ -14,6 +14,7 @@ battery = { path = "../battery" }
 clock = { path = "../clock" }
 framebuffer = { path = "../framebuffer" }
 input = { path = "../input" }
+modem = { path = "../modem" }
 pid1 = { path = "../pid1" }
 power = { path = "../power" }
 storage = { path = "../storage" }

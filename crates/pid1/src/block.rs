@@ -1,17 +1,24 @@
 pub const BLOCKS: &str = "/sys/class/block";
 
 #[must_use]
-pub fn partition(uevent: &str, name: &str) -> Option<String> {
+pub fn named_device(uevent: &str) -> Option<(String, String)> {
     let mut device = None;
-    let mut named = false;
+    let mut name = None;
     for line in uevent.lines() {
         match line.split_once('=') {
             Some(("DEVNAME", value)) => device = Some(value),
-            Some(("PARTNAME", value)) => named = value == name,
+            Some(("PARTNAME", value)) => name = Some(value),
             _ => {}
         }
     }
-    device.filter(|_| named).map(str::to_owned)
+    Some((name?.to_owned(), device?.to_owned()))
+}
+
+#[must_use]
+pub fn partition(uevent: &str, name: &str) -> Option<String> {
+    named_device(uevent)
+        .filter(|(named, _)| named == name)
+        .map(|(_, device)| device)
 }
 
 #[cfg(test)]
@@ -25,5 +32,14 @@ mod tests {
         assert_eq!(partition(ODM, "odm").as_deref(), Some("mmcblk0p44"));
         assert_eq!(partition(ODM, "system"), None);
         assert_eq!(partition("PARTNAME=odm\n", "odm"), None);
+    }
+
+    #[test]
+    fn a_partition_names_itself_and_its_device() {
+        assert_eq!(
+            named_device(ODM),
+            Some(("odm".to_owned(), "mmcblk0p44".to_owned()))
+        );
+        assert_eq!(named_device("DEVNAME=mmcblk0\nDEVTYPE=disk\n"), None);
     }
 }

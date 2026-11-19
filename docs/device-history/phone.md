@@ -1528,3 +1528,97 @@ script ran to the end.
 
 The debug `/init` stays on `system`, with `alarmd` at `/init.alarmd` and `init.rom` beside
 it.
+
+## 2026-11-19 — `alarmd` boots the modem with its radio off, and suspends at 4.8 mA, for issue 71
+
+Read under the debug `/init` (`997e8bb0…e0bf`), with `init.rom` at `e8e2768e…78ef` and
+`alarmd` at `/init.alarmd` left as they were. Each build of `alarmd` was pushed to `/mnt`
+and started by a script there once `USB/online` read 0, with `trap "" HUP` and
+`/proc/sys/kernel/printk` at 8; the script stopped `alarmd` with `SIGSTOP` after its first
+suspend and kept the kernel log in `/mnt`. Times are the kernel log's clock. The kernel
+logs went to the host's scratch space and are not in the repository.
+
+**The first builds booted the modem and logged `modem booted`, but not the radio.** Every
+`AT+CFUN=0` failed with `Operation not permitted`, for 60 s of tries. A probe opening
+`/dev/appvcom` four ways read the modem's queued reports and `+CFUN: 0` when opened
+blocking, with or without `O_NOCTTY`; with `O_NONBLOCK` every read answered `EPERM`.
+`appvcom` is now opened blocking and read on a thread of its own.
+
+**Every suspend was refused**, 0.3 s and 65 s after the boot:
+
+```
+icc: icc_channel_has_data NV[channel-2] stop suspend flow
+PM: suspend exit
+```
+
+With the modem booted by hand and the cable in, a suspend tried every 20 s was refused the
+same way 13 times over 4 minutes. The modem's boot had logged why:
+
+```
+[nv]:<modem_nv_delay 1154> modem nv wait for nv block device 0 s
+fail to open file /dev/block/by-name/modemnvm_backup, ret -2!
+…
+[nv]:<modem_nv_delay 1160> get block device modemnvm_backup fail
+fail to open file /dev/block/by-name/modemnvm_system, ret -2!
+```
+
+The kernel's NV driver finds a partition through `flash_find_ptn`, as
+`/dev/block/by-name/<name>`, which `ueventd` makes on the ROM and nothing made under our
+`/init`; issue 70 had made it by hand. With a link there to every partition, the same boot
+read `modemnvm_backup block size is 0x400000.` and `reload success!`, and `balong_power`
+read `MODEM_STATE_READY` 8 s after the write instead of 15 s.
+
+**One build powered off instead.** With the radio fixed but no links, the operator pulled
+the cable, saw the time, and plugged it back in some minutes later; the phone booted to
+the boot screen and stayed there with nothing on USB, through a forced restart and a
+second one after a replug. Two restarts emptied `pstore`, so the reading is inferred: the
+refused suspends ran out the two-minute window, `alarmd` powered off with no alarm set,
+and the plug-in booted it.
+
+**One hand suspend on the cable reset the phone.** With the links made and the modem
+booted by hand, one of the suspends tried every 20 s on the cable came back as a reboot
+with `reboot_reason=LPM3_S_EXCEPTION`. `printk` was at its default, and `pstore` holds
+nothing past 75.8 s. It did not come again in the three suspends below.
+
+**The suspend under `alarmd`** (`d264c48c…e77e`), off the cable:
+
+```
+342.921447 modem_sysboot_start write ok
+343.212646 [nv]:<bsp_nvm_core_init 1000> reload success!
+347.467132 p20-alarm-os: modem booted
+347.467132 p20-alarm-os: modem radio off
+352.224700 PM: suspend entry 2026-11-19 16:05:19.268162969 UTC
+352.478118 [hisi_coul_core]SUSPEND! cc=993, time=148, wakeup_avg_current:179
+471.516296 wake up irq num: 78, irq name: RTC0
+471.516326 SR:wakelock status, ap:1, modem:0, hifi:0, iomcu:0, hisee:0, hotplug:0,0.
+471.516357 SR:system sleeped 1 times.
+471.516387 SR:wake times, system:1, woken up by ap:1, modem:0, hifi:0, iomcu:0, lpm3:0.
+471.524658 [hisi_HI6555V100_coul]ccout_reg=0x13a83,ccin_reg = 0x1, cl_out_time=267, cl_in_time=0, cc_adjust=1152 uah
+471.525573 [hisi_coul_core]delta_time=130s, iavg_ua=29963
+```
+
+**The draw asleep, 4.8 mA**: the coulometer's count went from 993 µAh at the suspend to
+1152 µAh at the wake, 159 µAh over 119 s. `alarmd`'s window ends a suspend after two
+minutes, so the gauge's `iavg_ua`, 29963 over 130 s, takes in the 11 s before it, awake
+with the panel lit and the modem booting: 70 to 993 µAh, about 300 mA.
+
+**On the cable**, three suspends of 15 s each by hand, with `alarmd` stopped and its modem
+up, each read `modem:0`, woke on `RTC0` and counted in `system sleeped`.
+
+**The gauge's own average, 4.6 mA.** In the same boot, with `alarmd` stopped and the modem
+it booted still `MODEM_STATE_READY`, the operator pulled the cable; a script suspended for
+5 s and at once for 300 s, so the gauge's average covers almost nothing awake:
+
+```
+1519.658538 PM: suspend entry 2026-11-19 16:24:47.125841146 UTC
+1520.004241 [hisi_coul_core]SUSPEND! cc=104, time=401, wakeup_avg_current:85
+1819.537078 wake up irq num: 78, irq name: RTC0
+1819.537078 SR:wakelock status, ap:1, modem:0, hifi:0, iomcu:0, hisee:0, hotplug:0,0.
+1819.545867 [hisi_HI6555V100_coul]ccout_reg=0x8c5a,ccin_reg = 0x8c2, cl_out_time=509, cl_in_time=192, cc_adjust=482 uah
+1819.546417 [hisi_coul_core]delta_time=300s, iavg_ua=4560
+```
+
+The count agrees: 104 to 482 µAh over 300 s is 4.5 mA.
+
+The debug `/init` stays on `system`, with `alarmd` at `/init.alarmd` and `init.rom` beside
+it; the `alarmd` there is still `3d555c02…e97f`, without the modem.
