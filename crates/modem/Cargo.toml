@@ -1,0 +1,16 @@
+[package]
+name = "modem"
+description = "The modem adapter: the partitions mounted, teecd started, the modem booted over his_modem and its radio turned off over appvcom"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+alarm-core = { path = "../alarm-core" }
+pid1 = { path = "../pid1" }
+
+[lints]
+workspace = true

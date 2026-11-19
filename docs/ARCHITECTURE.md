@@ -30,6 +30,8 @@ crates/
   framebuffer/  the adapter for the panel: /dev/fb0, mapped once, drawn into a page and panned
   input/        the adapter for the side keys and touch: the evdev nodes, found by name, and
                 the touch firmware the kernel asks for, answered from odm
+  modem/        the adapter for the modem: its partitions mounted, teecd started, the boot
+                over his_modem, and the radio off over appvcom (ADR 0012, D3)
   pid1/         what every /init takes from the kernel: mounts, the kernel log, a child
                 on a terminal, reaping, the reboot into recovery, the power-off, a
                 partition found by name
@@ -42,7 +44,8 @@ crates/
   alarmd/       the binary: opens the adapters, draws the time and the alarm, waits on input
                 until the next minute or until the panel is due off, saves a changed alarm
                 as the panel goes off, suspends while it is off, powers off after the
-                window off the cable, starts dark on a boot by the alarm, is PID 1
+                window off the cable, starts dark on a boot by the alarm, boots the
+                modem with its radio off, is PID 1
   init-probe/   a probe /init that runs the charge stop and logs the power nodes
   debug-init/   the debug /init: the ROM's shell on a USB serial gadget (ADR 0009)
 ```
@@ -59,7 +62,7 @@ It turns the panel off with `FBIOBLANK` on that descriptor, never by closing it.
 |---|---|
 | `time` | `UnixSeconds`, `TimeOfDay`, `Weekday`, `UtcOffset` — civil time without a tz database |
 | `alarm` | `Alarm`, `Weekdays`, and when an alarm next fires after a given instant |
-| `hardware` | the traits `Clock`, `WakeAlarm`, `Suspend`, `PowerOff`, `BootReason`, `Vibrator`, `Battery`, `Display`, `Input`, `Settings`, and `HardwareError` |
+| `hardware` | the traits `Clock`, `WakeAlarm`, `Suspend`, `PowerOff`, `BootReason`, `Vibrator`, `Battery`, `Display`, `Input`, `Settings`, `Modem`, and `HardwareError` |
 | `boot` | `Boot`: why the phone started — the alarm, a press, the charger or anything else; only the alarm starts with the panel dark — ADR 0010, D4 |
 | `window` | `Window`: two minutes suspended after the panel goes off, then *power off*, unless an alarm rings, is snoozed or is due within two minutes of the end; the RTC instant to suspend until; `power_on_at`, two minutes before the alarm — ADR 0010, D2 and D3 |
 | `input` | `InputEvent`: a touch at a panel pixel, or a press of `VolumeUp`, `VolumeDown` or `Power` |
@@ -90,6 +93,16 @@ panel registers only after its firmware request is answered, which on Android is
 `ueventd`'s job. A thread of `alarmd` mounts `odm` read-only and answers each request in
 `/sys/class/firmware` from `etc/firmware/`, refusing one it has no file for. The touch
 controller sleeps while the panel is off, so touch works only while `fb0` is held open.
+
+`modem` boots the modem as the debug `/init` did by hand, on a thread of `alarmd`: a
+`tmpfs` on `/mnt` and on `/data`, the six partitions found by name and mounted with the
+ROM's options less `context=`, `/vendor/bin/teecd` started and held, `1` written to
+`modem_sysboot_start`, and `balong_power`'s `state` polled for 30 s until it reads
+`MODEM_STATE_READY`. It then sends `AT+CFUN=0` on `/dev/appvcom` and reads `AT+CFUN?` back
+for `+CFUN: 0`, reading each answer to its `OK` or refusal, past the modem's echo and
+queued reports, within 5 s. The first suspend waits for that thread, so the kernel never
+suspends mid-boot. A failure is logged and leaves the alarm working at the higher draw
+(ADR 0012, D3).
 
 ### The loop, as intended
 

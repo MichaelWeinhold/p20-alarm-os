@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::ffi::{CString, c_char, c_int, c_short, c_ulong, c_void};
+use std::ffi::{CString, c_int, c_short, c_ulong};
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::os::fd::AsRawFd;
@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use alarm_core::hardware::{HardwareError, Input};
 use alarm_core::input::InputEvent;
 
-use pid1::block::{BLOCKS, partition};
+use pid1::linux::{MS_RDONLY, mounted_from, named};
 
 use crate::firmware::{DIRECTORY, PARTITION, REQUESTS, requested};
 use crate::{DEVICES, Decoder, RECORD_SIZE, events};
@@ -23,7 +23,6 @@ const POLLIN: c_short = 0x1;
 const POLLERR: c_short = 0x8;
 const POLLHUP: c_short = 0x10;
 const POLLNVAL: c_short = 0x20;
-const MS_RDONLY: c_ulong = 0x1;
 const EINTR: i32 = 4;
 const EBUSY: i32 = 16;
 
@@ -36,13 +35,6 @@ struct PollFd {
 
 unsafe extern "C" {
     fn poll(descriptors: *mut PollFd, count: c_ulong, timeout: c_int) -> c_int;
-    fn mount(
-        source: *const c_char,
-        target: *const c_char,
-        filesystem: *const c_char,
-        flags: c_ulong,
-        data: *const c_void,
-    ) -> c_int;
 }
 
 fn failed(device: &'static str, error: &io::Error) -> HardwareError {
@@ -209,15 +201,6 @@ impl Input for EvdevInput {
     }
 }
 
-fn odm() -> Option<String> {
-    fs::read_dir(BLOCKS).ok()?.flatten().find_map(|entry| {
-        partition(
-            &fs::read_to_string(entry.path().join("uevent")).ok()?,
-            PARTITION,
-        )
-    })
-}
-
 fn text(value: &str) -> Result<CString, HardwareError> {
     CString::new(value).map_err(|error| HardwareError::Failed {
         device: "odm",
@@ -238,24 +221,14 @@ pub struct FirmwareLoader {
 
 impl FirmwareLoader {
     pub fn mount() -> Result<Self, HardwareError> {
-        let device = odm().ok_or(HardwareError::Absent("odm"))?;
+        let device = named(PARTITION).ok_or(HardwareError::Absent("odm"))?;
         fs::create_dir_all(MOUNT_POINT).map_err(|error| failed("odm", &error))?;
         let source = text(&format!("/dev/{device}"))?;
         let target = text(MOUNT_POINT)?;
-        let result = unsafe {
-            mount(
-                source.as_ptr(),
-                target.as_ptr(),
-                c"ext4".as_ptr(),
-                MS_RDONLY,
-                std::ptr::null(),
-            )
-        };
-        if result != 0 {
-            let error = io::Error::last_os_error();
-            if error.raw_os_error() != Some(EBUSY) {
-                return Err(failed("odm", &error));
-            }
+        if let Err(error) = mounted_from(&source, &target, c"ext4", MS_RDONLY, None)
+            && error.raw_os_error() != Some(EBUSY)
+        {
+            return Err(failed("odm", &error));
         }
         Ok(Self {
             root: Path::new(MOUNT_POINT).join(DIRECTORY),

@@ -1,5 +1,5 @@
 use std::ffi::{CStr, c_char, c_int, c_long, c_ulong, c_void};
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
@@ -8,7 +8,13 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::Duration;
 
+use crate::block::{BLOCKS, partition};
 use crate::kmsg;
+
+pub const MS_RDONLY: c_ulong = 0x1;
+pub const MS_NOSUID: c_ulong = 0x2;
+pub const MS_NODEV: c_ulong = 0x4;
+pub const MS_NOATIME: c_ulong = 0x400;
 
 const SYS_REBOOT: c_long = 142;
 const REBOOT_MAGIC1: c_long = 0xfee1_dead;
@@ -34,13 +40,24 @@ unsafe extern "C" {
 }
 
 pub fn mounted(filesystem: &CStr, target: &CStr) -> io::Result<()> {
+    mounted_from(filesystem, target, filesystem, 0, None)
+}
+
+pub fn mounted_from(
+    source: &CStr,
+    target: &CStr,
+    filesystem: &CStr,
+    flags: c_ulong,
+    data: Option<&CStr>,
+) -> io::Result<()> {
+    let data = data.map_or(std::ptr::null(), |data| data.as_ptr().cast::<c_void>());
     let result = unsafe {
         mount(
-            filesystem.as_ptr(),
+            source.as_ptr(),
             target.as_ptr(),
             filesystem.as_ptr(),
-            0,
-            std::ptr::null(),
+            flags,
+            data,
         )
     };
     if result == 0 {
@@ -48,6 +65,14 @@ pub fn mounted(filesystem: &CStr, target: &CStr) -> io::Result<()> {
     } else {
         Err(io::Error::last_os_error())
     }
+}
+
+#[must_use]
+pub fn named(name: &str) -> Option<String> {
+    fs::read_dir(BLOCKS)
+        .ok()?
+        .flatten()
+        .find_map(|entry| partition(&fs::read_to_string(entry.path().join("uevent")).ok()?, name))
 }
 
 pub fn kmsg() -> io::Result<File> {
