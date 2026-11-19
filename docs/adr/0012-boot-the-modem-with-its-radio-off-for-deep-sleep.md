@@ -1,6 +1,6 @@
 # 12. Boot the modem with its radio off, for deep sleep
 
-- **Status:** Accepted
+- **Status:** Accepted; D3 amended with the debug `/init`'s reading by issue 70
 - **Date:** 2026-11-19
 - **Issue:** #54
 
@@ -19,7 +19,7 @@ in `docs/device-history/phone.md`, *the deep-sleep votes*; the source is
 | 1. What sets the AP's vote and the modem's? | **`ap:1` is no vote**: the AP prints the report awake. **The modem's clears once its firmware runs**, and under our `/init` it never boots |
 | 2. Can our `/init` drop them? | **Yes for the modem, by booting it** the way the ROM does: four partitions mounted, `teecd`, one `sysfs` write |
 | 3. What owns `GPIO28`? | **Not found**: no device-tree property names it, no handler takes it |
-| 4. What does a suspend draw after that? | Under the ROM, **4.7 to 6.7 mA with the radio off**, 7.7 to 9.2 mA with it on |
+| 4. What does a suspend draw after that? | Under the ROM, **4.7 to 6.7 mA with the radio off**, 7.7 to 9.2 mA with it on; **under the debug `/init`, 2.9 mA** with it off (issue 70) |
 
 `pm_status_show` in `drivers/hisi/pm/hisi_lpregs.c` prints one byte the LPM3 firmware
 writes, on the resume path of `drivers/hisi/pm/pm.c`. No Linux driver writes it.
@@ -52,8 +52,14 @@ What the ROM's `init.balong_modem.rc` and `fstab.modem` do, in order:
 
 With the radio on, the modem's paging woke the SoC about twice a second and the draw sat
 on the 8 mA line; with it off, each suspend slept once. The ROM's charger mode boots the
-modem with no `rild`, so `rild` is assumed not to be needed for the boot; how the radio is
-turned off without it is the follow-up's to find.
+modem with no `rild`, so `rild` is assumed not to be needed for the boot.
+
+**Amended by issue 70**: the debug `/init` did all four steps by hand, with `vendor`
+mounted read-only first, the mounts' `context=` options dropped, and a `tmpfs` on `/data`
+for `teecd`. `balong_power` read `MODEM_STATE_READY` within 6 s of the write. With no
+`rild` the modem comes up at `+CFUN: 0`, and `AT+CFUN=0` on `/dev/appvcom` answers `OK`, so
+step 4 is that command, which also holds the radio off if anything had turned it on. A
+600 s suspend slept once, read `modem:0`, woke on `RTC0`, and drew 2.9 mA.
 
 The boot writes the `modemnvm_*` partitions through the kernel's `bsp_blk`. None is on ADR
 0005, D4's hard-brick list; their roles are recorded and all eight modem partitions are
@@ -102,3 +108,6 @@ power-off has failed in use.
   undo uses `mv`, and now says why.
 - Follow-up issues under issue 54: the modem booted from the debug `/init` with its radio
   off, and the suspend draw read (D3); then `alarmd` booting it, after that reading.
+- **D3's condition is met under the debug `/init`** (issue 70): the boot goes into
+  `alarmd` next, and ADR 0010's first rejected alternative reopens once a suspend under
+  `alarmd` reads under 8 mA.
