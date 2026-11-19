@@ -99,8 +99,9 @@ pub fn run() -> ! {
             .and_then(|child| reaped(&child));
         match status {
             Ok(status) => {
-                log(&mut kmsg, &shell::ended(status));
-                if shell::next(status) == Next::Recovery {
+                let next = shell::next(Path::new(shell::RECOVERY));
+                log(&mut kmsg, &shell::ended(status, next));
+                if next == Next::Recovery {
                     into_recovery(Some(&mut kmsg));
                 }
                 thread::sleep(shell::PAUSE);

@@ -1,6 +1,6 @@
 [package]
 name = "debug-init"
-description = "A debug /init that serves the ROM's shell on a USB serial gadget and reboots into recovery when it exits"
+description = "A debug /init that serves the ROM's shell on a USB serial gadget and reboots into recovery when asked"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

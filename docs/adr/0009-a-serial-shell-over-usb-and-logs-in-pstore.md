@@ -1,6 +1,6 @@
 # 9. A serial shell over USB, and the log in pstore
 
-- **Status:** Accepted
+- **Status:** Accepted; D2 amended for a lost line by issue 55
 - **Date:** 2026-11-12
 - **Issue:** #15
 - **Amends:** ADR 0002's consequence on the serial console
@@ -35,13 +35,14 @@ rebuild and no package on either side.
 **That a gadget with `acm` alone enumerates under our `/init` the same way is assumed**:
 in the ROM it sat beside `ffs.adb`, on the ROM's descriptors. Issue 9 proves it.
 
-### D2. The shell is the ROM's `mksh`, and exiting it reboots into TWRP
+### D2. The shell is the ROM's `mksh`, and exiting it on request reboots into TWRP
 
 The debug `/init` stays PID 1. It mounts `devtmpfs`, `proc`, `sysfs`, `pstore` and a
 `tmpfs` on `/mnt`, then starts `/system/bin/sh` as a child with `/dev/ttyGS0` as its
 descriptors 0 to 2 and `PATH=/system/bin`. `toybox` there gives `ls`, `cat`, `dmesg`,
-`dd`, `base64` and the rest. When the shell exits, `/init` reboots into recovery; a
-shell that dies is started again.
+`dd`, `base64` and the rest. When the shell ends with `/mnt/recovery` present, `/init`
+reboots into recovery; otherwise it starts the shell again, since mksh ends with the same
+status on a lost line as on `exit`.
 
 These are the ROM's files, already on `system` and never copied into the repository or
 into an image of ours. Run in a `chroot` of `system` from TWRP, with no Android init and

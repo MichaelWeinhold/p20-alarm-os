@@ -1306,3 +1306,44 @@ dark on that boot until the alarm was not reported.
 
 The keys that reached TWRP afterwards emptied pstore, so neither boot's `booted by` line
 nor the `powered off, on again at` line was read.
+
+## 2026-11-19 — the debug shell across a lost line, for issue 55
+
+The debug `/init` built from `014844e`, 383896 bytes, sha256
+`997e8bb0c454e171c7dda8bec8992eb51d81b8b1a6da290c95a9881c1532e0bf`, was copied over
+`/init` on `system` from TWRP. It replaced `alarmd` `3d555c02…e97f` and left `init.rom`
+at `e8e2768e…78ef`; `misc`'s command field read zero before `adb reboot` at 10:49:22 UTC.
+The port came back 16 s later. Times are the kernel log's clock; `/proc/uptime` read
+about 4 s behind it.
+
+**Every lost line started the shell again, and none rebooted into TWRP:**
+
+```
+ 13.659637  debug: /system/bin/sh started as 340
+183.099700  debug: /system/bin/sh ended with exit status: 0, starting it again
+184.100921  debug: /system/bin/sh started as 349
+367.143859  debug: /system/bin/sh ended with exit status: 0, starting it again
+368.146606  debug: /system/bin/sh started as 352
+481.992340  debug: /system/bin/sh ended with exit status: 0, starting it again
+482.995697  debug: /system/bin/sh started as 358
+```
+
+The end at 367 s was the operator's replug. The end at 482 s was a pull,
+`CHARGER_DISCONNECT` at 482.80 s and `CHARGER_CONNECT` at 632.94 s, and the shell ended
+with status 0, not the 129 an earlier pull gave. What ended it at 183 s was not seen; the
+operator touched nothing they recall, and the phone's port is sometimes loose. After
+each, `scripts/serial_shell.py 'cat /proc/uptime'` answered with the uptime still rising.
+
+**A shell started with the cable out waited for it.** Pid 358 started 0.2 s after the
+pull, logged no end in the 150 s the cable was out, and answered after the plug-in.
+
+**The marker still reaches TWRP.** `touch /mnt/recovery; exit` sent over the port, read
+back from TWRP's pstore:
+
+```
+671.080169  debug: /system/bin/sh ended with exit status: 0, /mnt/recovery asks for recovery, rebooting into it
+671.162322  reboot: Restarting system with command 'recovery'
+```
+
+`alarmd` (`3d555c02…e97f`) went back over `/init` from TWRP afterwards, with `misc`'s
+command field reading zero.

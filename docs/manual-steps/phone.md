@@ -175,7 +175,8 @@ characters first; a line that stops short means one was not.
 `tr '\0' '\n' < /proc/device-tree/SCUDATL_2900_39k_4400/temp_para`.
 
 **The debug `/init`**, `crates/debug-init`, swapped in as above. It serves the ROM's shell
-on a CDC-ACM gadget, starts it again if it is killed, and reboots into TWRP on `exit`.
+on a CDC-ACM gadget, starts it again whenever it ends, and reboots into TWRP on
+`touch /mnt/recovery; exit`.
 → ADR 0009.
 
 ```bash
@@ -188,7 +189,8 @@ uv run python scripts/serial_shell.py --push <file>        # to /mnt/<name>, sha
 Each run sends one command with no input, and exits 124 on a timeout, 125 with no port.
 The shell is root: ADR 0005, D4's hard-brick list holds for every `dd` sent to it.
 
-⚠️ No `adb` reaches a phone running it. `exit` returns to TWRP; so do the keys.
+⚠️ No `adb` reaches a phone running it. `touch /mnt/recovery; exit` returns to TWRP; so do
+the keys. Never push a file named `recovery`, which asks for TWRP the same way.
 
 **`alarmd`**, `crates/alarmd`, the clock: it draws the local time on the panel each minute
 and holds the charge at 80 %. The small digits below are one daily alarm, grey until a tap
@@ -204,7 +206,7 @@ cargo build --release --locked -p alarmd --target aarch64-unknown-linux-musl
 
 ⚠️ Run it as the first program to open `/dev/fb0` in a boot. The driver frees the buffer
 when the last holder closes it, and a later `mmap` can panic the kernel; before trying
-it again, `exit` to TWRP and `adb reboot`.
+it again, go to TWRP and `adb reboot`.
 
 ⚠️ The RTC read 1970 once. Set it from the debug shell with the Mac's UTC:
 `date -u <MMDDhhmmYYYY.ss>` then `hwclock -w -u -f /dev/rtc0`.

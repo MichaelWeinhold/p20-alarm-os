@@ -71,27 +71,7 @@ pub fn plan(configfs: &Path) -> Vec<Step> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
-    use std::process;
-
-    struct Scratch(PathBuf);
-
-    impl Scratch {
-        fn new(name: &str) -> io::Result<Self> {
-            let path = env::temp_dir().join(format!("debug-init-{name}-{}", process::id()));
-            if path.exists() {
-                fs::remove_dir_all(&path)?;
-            }
-            fs::create_dir_all(&path)?;
-            Ok(Self(path))
-        }
-    }
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
+    use crate::scratch::Scratch;
 
     #[test]
     fn the_gadget_is_the_linux_foundations_composite_with_one_acm_function() -> io::Result<()> {
