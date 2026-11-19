@@ -107,7 +107,8 @@ set up, backed up, and how our `/init` goes onto `system`.
   else.
 - **Deep sleep and RTC wake.** The RTC wakes a suspend and switches on a powered-off phone
   without Android's userspace, but the SoC never reaches deep sleep, so a suspend draws
-  about 53 mA. → ADR 0010.
+  about 53 mA. The modem holds the vote until it is booted, which the ROM does with the
+  secure OS's `teecd`. → ADR 0010 and 0012.
 
 The decisions behind the approach, and what was rejected, are in
 [ADR 0002](docs/adr/0002-vendor-kernel-and-own-userspace.md).

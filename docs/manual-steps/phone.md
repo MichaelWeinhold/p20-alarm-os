@@ -146,7 +146,7 @@ strings -n 6 <scratch>/dfx.bin | grep -E 'jump to execute /init|Kernel panic|p20
 and a changed one leaves the phone off USB until it is restarted from fastboot. → ADR 0009,
 D5.
 
-**Undo.**
+**Undo**, by `mv`: a `cp` labels the ROM's `init` `rootfs`, and fastboot comes up (#54).
 
 ```bash
 adb shell 'mount -o rw /dev/block/mmcblk0p52 /mnt/sys && rm /mnt/sys/init && mv /mnt/sys/init.rom /mnt/sys/init'
