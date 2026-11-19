@@ -1605,5 +1605,20 @@ with the panel lit and the modem booting: 70 to 993 µAh, about 300 mA.
 **On the cable**, three suspends of 15 s each by hand, with `alarmd` stopped and its modem
 up, each read `modem:0`, woke on `RTC0` and counted in `system sleeped`.
 
+**The gauge's own average, 4.6 mA.** In the same boot, with `alarmd` stopped and the modem
+it booted still `MODEM_STATE_READY`, the operator pulled the cable; a script suspended for
+5 s and at once for 300 s, so the gauge's average covers almost nothing awake:
+
+```
+1519.658538 PM: suspend entry 2026-11-19 16:24:47.125841146 UTC
+1520.004241 [hisi_coul_core]SUSPEND! cc=104, time=401, wakeup_avg_current:85
+1819.537078 wake up irq num: 78, irq name: RTC0
+1819.537078 SR:wakelock status, ap:1, modem:0, hifi:0, iomcu:0, hisee:0, hotplug:0,0.
+1819.545867 [hisi_HI6555V100_coul]ccout_reg=0x8c5a,ccin_reg = 0x8c2, cl_out_time=509, cl_in_time=192, cc_adjust=482 uah
+1819.546417 [hisi_coul_core]delta_time=300s, iavg_ua=4560
+```
+
+The count agrees: 104 to 482 µAh over 300 s is 4.5 mA.
+
 The debug `/init` stays on `system`, with `alarmd` at `/init.alarmd` and `init.rom` beside
 it; the `alarmd` there is still `3d555c02…e97f`, without the modem.
