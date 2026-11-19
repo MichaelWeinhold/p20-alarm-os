@@ -230,6 +230,8 @@ Start the script with `exec sh /mnt/run.sh < /dev/null > /mnt/run.out 2>&1` type
 the top-level shell, and end it with a loop that runs `sh -i` on `/dev/ttyGS0`, so the
 shell comes back when the cable does.
 
+⚠️ Make `trap "" HUP` the script's first line, or the plug-out's `SIGHUP` ends it.
+
 ⚠️ Never open `/dev/fb0` after a suspend in the same boot: it panicked the kernel.
 
 ⚠️ The phone powers off with `echo o > /proc/sysrq-trigger`; `reboot` needs Android's

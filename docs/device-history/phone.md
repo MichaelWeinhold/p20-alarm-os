@@ -1458,3 +1458,73 @@ TWRP's `dd` refuses `bs=1M`: `dd: block size '1M': illegal number`.
 
 `alarmd` (`3d555c02…e97f`) went back over `/init` from TWRP afterwards, with `init.rom` at
 `e8e2768e…78ef` and `misc`'s command field reading zero.
+
+## 2026-11-19 — the modem booted from the debug `/init` with its radio off, for issue 70
+
+Read under the debug `/init` (`997e8bb0…e0bf`), swapped in from TWRP over `alarmd`
+(`3d555c02…e97f`), which was kept beside it as `/init.alarmd`; `init.rom` stayed at
+`e8e2768e…78ef`. Every step was typed into the serial shell; the battery read 85 %. Times
+are the kernel log's clock. Both kernel logs went to the host's scratch space and are not
+in the repository.
+
+**The mounts**, with the ROM's `fstab.modem` and `fstab.hi6250` options less `context=`,
+since no SELinux policy is loaded: `vendor` (`mmcblk0p57`) read-only on `/vendor`, then
+`modem_secure`, `modem_om`, `modem_fw` read-only, `modemnvm_img` and `secure_storage`, each
+answering 0. `/dev/block` does not exist under the debug `/init`; the devices were mounted
+as `/dev/mmcblk0p<n>`, and `/dev/block/by-name` was made from each partition's `PARTNAME`
+in `uevent`. `modem_fw` holds `sec_balong_modem.bin`, `sec_lphy.bin`, `sec_modem_dt.img`,
+`sec_tas.bin`, `sec_was.bin` and `sec_xphy_mcore.bin`.
+
+**`teecd`** started as `/vendor/bin/teecd` from `/`, with a `tmpfs` on `/data` holding the
+`sec_storage_data` directories `init.tee.rc` makes, and no property service. It stayed up
+and logged only `TC_NS_sync_sys_time: tee adjust time failed, return error ffff0000`.
+
+**The boot.** The write came at 119.46 s:
+
+```
+119.459594 modem_sysboot_start write ok
+120.268402 [sec]: <load_image> load image /vendor/modem/modem_fw/sec_balong_modem.bin to secos success
+120.629516 [sec]: <load_image> verify image /vendor/modem/modem_fw/sec_balong_modem.bin success
+120.630554 send ipc to unreset ccore succeed
+121.675689 [sec]: <load_image> verify image /vendor/modem/modem_fw/sec_was.bin success
+123.696533 Balong_power mdrv_set_modem_state:101 set state 1 ,time slice 123696
+123.697692 [TAF_MMA_ProcStartCnfSucc_PowerInit_PhoneMode] mdrv_sysboot_get_bootmode = 1, ulAutoSwitchOnFlg = 0
+```
+
+`balong_power`'s `state` read `MODEM_STATE_READY` within 6 s of the write, and still did
+at the end, 1849 s into the boot.
+
+**The radio**, over `/dev/appvcom`, opened read-write from the shell with each command
+ended by a carriage return. The first `AT` drained the modem's queued reports, among them
+`^SIMST:255,0`, `^SRVST: 0` and `^SRCHEDPLMNINFO:0,1,26203,51157`, then answered `OK`.
+`AT+CFUN?` read `+CFUN: 0` before any command; `AT+CFUN=0` answered `OK`, `AT+CFUN?`
+read `+CFUN: 0` again, and `AT^SYSINFOEX` read
+`^SYSINFOEX:0,0,2,255,,0,"NO SERVICE",0,"NO SERVICE"`. With no `rild`, the modem comes up
+with its radio off.
+
+**The suspend**, from a script in `/mnt` that turned the panel off with `: < /dev/fb0`,
+waited for `USB/online` to read 0, and armed `wakealarm` for +600 s. The cable came out at
+1233.6 s:
+
+```
+1250.158477 [hisi_coul_core]SUSPEND! cc=-1943065, time=11093, wakeup_avg_current:49
+1849.537536 wake up irq num: 78, irq name: RTC0
+1849.537567 SR:wakelock status, ap:1, modem:0, hifi:0, iomcu:0, hisee:0, hotplug:0,0.
+1849.537597 SR:system sleeped 1 times.
+1849.537597 SR:wake times, system:1, woken up by ap:1, modem:0, hifi:0, iomcu:0, lpm3:0.
+1849.537628 SR:sr times of sub system, ap:s-1, r-1, modem:s-9, r-8, hifi:s-0, r-0, iomcu:s-1, r-1.
+1849.537658 SR:AP WAKE IRQ(LPM3 NVIC): 10 (RTC0)
+1849.546997 [hisi_coul_core]delta_time=604s, iavg_ua=2920
+```
+
+**The draw, 2920 µA over 604 s**, against the ROM's 4743 to 6668 µA with its radio off and
+the 53 mA of ADR 0010, D5. The battery read 88 % before and after; awake, off the cable and
+with the panel off, the gauge read 46 to 51 mA.
+
+**The first try did not suspend.** The script, started with `exec` from the serial shell,
+logged only its start: the plug-out hung up `/dev/ttyGS0`, and `SIGHUP` ended it, as
+issue 50's `alarmd` had needed `trap "" HUP`. With the trap as its first line, the same
+script ran to the end.
+
+The debug `/init` stays on `system`, with `alarmd` at `/init.alarmd` and `init.rom` beside
+it.
