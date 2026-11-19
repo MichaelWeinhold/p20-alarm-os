@@ -1347,3 +1347,114 @@ back from TWRP's pstore:
 
 `alarmd` (`3d555c02…e97f`) went back over `/init` from TWRP afterwards, with `misc`'s
 command field reading zero.
+
+## 2026-11-19 — the deep-sleep votes, for issue 54
+
+**The ROM, with Android's userspace, reaches deep sleep.** `init.rom` (`e8e2768e…78ef`)
+was put back over `/init` from TWRP, with `alarmd` (`3d555c02…e97f`) kept beside it as
+`init.alarmd`. LineageOS booted at 11:30:26 UTC with no SIM, Wi-Fi and Bluetooth off, and
+the modem registered for emergency calls only on MCC 262; the battery read 30 %. The
+kernel log was kept with `cat /proc/kmsg` to a file under `/data/local/tmp`, which went
+to the host's scratch space and is not in the repository. Times are the kernel log's
+clock.
+
+**With the radio on**, the cable out from 158.0 s to 498.9 s, Android suspended six
+times and woke on its own `RTC0` alarms, then on the side button and the plug-in:
+
+```
+183.517395 SR:wakelock status, ap:1, modem:0, hifi:0, iomcu:0, hisee:0, hotplug:0,0.
+183.517608 SR:system sleeped 67 times.
+183.517639 SR:sr times of sub system, ap:s-1, r-1, modem:s-449, r-448, hifi:s-2, r-2, iomcu:s-0, r-1.
+189.510833 SR:wakelock status, ap:1, modem:1, hifi:0, iomcu:0, hisee:0, hotplug:0,0.
+498.858428 wake up irq num: 139, irq name: GPIO23
+498.858459 wake up irq num: 195, irq name: GPIO29[]
+498.858734 SR:system sleeped 759 times.
+498.858734 SR:sr times of sub system, ap:s-6, r-6, modem:s-1146, r-1145, hifi:s-2, r-2, iomcu:s-0, r-1.
+```
+
+**With airplane mode on**, set by `settings put global airplane_mode_on 1` and its
+broadcast, `mVoiceRegState` 3, the cable out from 656.6 s to 984.9 s, three suspends:
+
+```
+775.521057 SR:system sleeped 760 times.
+775.521057 SR:sr times of sub system, ap:s-7, r-7, modem:s-1278, r-1277, hifi:s-2, r-2, iomcu:s-1, r-1.
+836.521972 SR:system sleeped 761 times.
+984.910400 SR:system sleeped 762 times.
+984.910400 SR:sr times of sub system, ap:s-9, r-9, modem:s-1278, r-1277, hifi:s-2, r-2, iomcu:s-3, r-3.
+```
+
+Of nine reports, eight read `ap:1, modem:0` and one `ap:1, modem:1`. With the radio on,
+`system sleeped` rose by 692 and the modem's own suspend count by 697: the SoC slept and
+woke again with the modem's paging. In airplane mode each suspend added one sleep and the
+modem none.
+
+**The draw**, the gauge's `iavg_ua` over its `delta_time`, read at each resume:
+
+| Radio | Suspend | Seconds | Average |
+|---|---|---|---|
+| on | 191.1 → 234.5 s | 44 | 9163 µA |
+| on | 234.9 → 338.5 s | 104 | 9069 µA |
+| on | 338.9 → 354.5 s | 16 | 19575 µA |
+| on | 354.9 → 498.9 s | 144 | 7700 µA |
+| off | 658.6 → 775.5 s | 119 | 6292 µA |
+| off | 775.9 → 836.5 s | 61 | 6668 µA |
+| off | 836.9 → 984.9 s | 148 | 4743 µA |
+
+No suspend was longer than 148 s, and no step waited more than 10 minutes.
+
+**What the ROM does to boot the modem.** `/vendor/etc/init/init.balong_modem.rc` mounts
+`/vendor/etc/fstab.modem` — `modem_secure` on `/mnt/modem/modem_secure`, `modem_om` on
+`/modem_log`, `modem_fw` on `/vendor/modem/modem_fw` read-only, `modemnvm_img` on
+`/mnt/modem/mnvm2:0` — and writes 1 to
+`/sys/devices/platform/his_modem/modem_sysboot_start` on `zygote-start`.
+`/vendor/etc/init/charger/init.chip.charger.rc` does the same in charger mode, with no
+`rild`. `teecd`, `/vendor/bin/teecd` as `u:r:tee:s0`, started at 17.09 s, with
+`secure_storage` on `/sec_storage`; the write came at 17.64 s.
+
+**Under the debug `/init`** (`997e8bb0…e0bf`), nothing writes `modem_sysboot_start`. The
+kernel's thread waits for it, and `balong_power` reads off:
+
+```
+13.150299 [pid:283,cpu5,modem_sysboot_s]modem_sysboot_start_init start
+$ cat /sys/devices/platform/balong_power/state
+MODEM_STATE_OFF
+```
+
+`/vendor/modem`, `/mnt/modem` and `/dev/block/by-name` do not exist there.
+
+**`GPIO28` has no owner in the live device tree.** It is line 4 of `gpio3`, phandle
+`0x268`, whose `gpio-ranges` is `<&pmx0 0 21 8>`, so pin 25 of `pmx0`. No property under
+`/sys/firmware/devicetree/base` holds `0x268` followed by 4, and none named `*gpio*` holds
+28. `/proc/interrupts` lists no handler for it. It woke none of the ROM's eleven suspends,
+all with the panel off.
+
+**The modem's partitions** were streamed from TWRP to `~/p20-backups/`, each
+`<name>-mmcblk0p<n>-2026-11-19.img`, with the phone's and the host's sha256 equal. Nothing
+was written to them but by the ROM's own kernel:
+
+| Name | Device | sha256 |
+|---|---|---|
+| `modemnvm_factory` | `mmcblk0p6` | `11123c37…892d` |
+| `modemnvm_backup` | `mmcblk0p10` | `df715361…1a91` |
+| `modemnvm_img` | `mmcblk0p11` | `3d0d3bc4…ea76` |
+| `modemnvm_system` | `mmcblk0p12` | `bdd1c3eb…1522` |
+| `secure_storage` | `mmcblk0p13` | `7e0a1321…e8a2` |
+| `modem_secure` | `mmcblk0p17` | `2df9ce8f…acf9` |
+| `modem_om` | `mmcblk0p18` | `d3fee5c2…944d` |
+| `modemnvm_update` | `mmcblk0p21` | `a902ebf2…be1c` |
+
+**The roles**, from the ROM's `fstab.modem` and the kernel's
+`drivers/hisi/modem/drv/nvim/`: `modemnvm_img` holds the modem's working NV,
+`/mnt/modem/mnvm2:0/modem_nv/nv.bin`; `modemnvm_backup`, `modemnvm_factory`,
+`modemnvm_system` and `modemnvm_update` are its raw copies, written by the kernel through
+`bsp_blk`; `modem_secure` and `modem_fw` hold the modem's images; `modem_om` its logs;
+`secure_storage` the secure OS's store, through `teecd`.
+
+**A ROM `init` copied with `cp` from TWRP did not boot.** The copy was labelled
+`u:object_r:rootfs:s0`, and the phone came up in fastboot twice. `rm` of the copy and `mv`
+of `init.rom` to `init` kept `u:object_r:init_exec:s0`, and the ROM booted.
+
+TWRP's `dd` refuses `bs=1M`: `dd: block size '1M': illegal number`.
+
+`alarmd` (`3d555c02…e97f`) went back over `/init` from TWRP afterwards, with `init.rom` at
+`e8e2768e…78ef` and `misc`'s command field reading zero.
