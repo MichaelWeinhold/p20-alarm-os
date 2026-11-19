@@ -95,12 +95,15 @@ panel registers only after its firmware request is answered, which on Android is
 controller sleeps while the panel is off, so touch works only while `fb0` is held open.
 
 `modem` boots the modem as the debug `/init` did by hand, on a thread of `alarmd`: a
-`tmpfs` on `/mnt` and on `/data`, the six partitions found by name and mounted with the
-ROM's options less `context=`, `/vendor/bin/teecd` started and held, `1` written to
-`modem_sysboot_start`, and `balong_power`'s `state` polled for 30 s until it reads
-`MODEM_STATE_READY`. It then sends `AT+CFUN=0` on `/dev/appvcom` and reads `AT+CFUN?` back
-for `+CFUN: 0`, reading each answer to its `OK` or refusal, past the modem's echo and
-queued reports, within 5 s. The first suspend waits for that thread, so the kernel never
+`tmpfs` on `/mnt` and on `/data`, a link in `/dev/block/by-name` to every partition, as
+`ueventd` makes them, since the kernel's NV driver opens `modemnvm_*` there and otherwise
+jams the NV channel that every suspend checks, the six partitions found by name and
+mounted with the ROM's options less `context=`, `/vendor/bin/teecd` started and held, `1`
+written to `modem_sysboot_start`, and `balong_power`'s `state` polled for 30 s until it
+reads `MODEM_STATE_READY`. It then sends `AT+CFUN=0` on `/dev/appvcom` and reads `AT+CFUN?`
+back for `+CFUN: 0`, reading each answer to its `OK` or refusal, past the modem's echo and
+queued reports, within 5 s, and tries again for 60 s. `appvcom` is opened blocking and read
+on a thread of its own, since a non-blocking read answers `EPERM`. The first suspend waits for that thread, so the kernel never
 suspends mid-boot. A failure is logged and leaves the alarm working at the higher draw
 (ADR 0012, D3).
 

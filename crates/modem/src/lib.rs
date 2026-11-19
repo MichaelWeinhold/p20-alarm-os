@@ -6,6 +6,7 @@ pub mod linux;
 pub const SYSBOOT: &str = "/sys/devices/platform/his_modem/modem_sysboot_start";
 pub const STATE: &str = "/sys/devices/platform/balong_power/state";
 pub const VCOM: &str = "/dev/appvcom";
+pub const BY_NAME: &str = "/dev/block/by-name";
 pub const TEECD: &str = "/vendor/bin/teecd";
 pub const PATH: &str = "/system/bin";
 pub const SCRATCH: [&str; 2] = ["/mnt", "/data"];

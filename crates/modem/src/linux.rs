@@ -1,27 +1,28 @@
 use std::ffi::{CStr, CString, c_ulong};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{OpenOptionsExt, symlink};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use alarm_core::hardware::{HardwareError, Modem};
-use pid1::linux::{MS_NOATIME, MS_NODEV, MS_NOSUID, MS_RDONLY, mounted_from, named};
+use pid1::linux::{MS_NOATIME, MS_NODEV, MS_NOSUID, MS_RDONLY, mounted_from, named, named_devices};
 
 use crate::{
-    Access, BOOT, MOUNTS, Mount, PATH, RADIO, RADIO_OFF, Reply, SCRATCH, STATE, SYSBOOT,
+    Access, BOOT, BY_NAME, MOUNTS, Mount, PATH, RADIO, RADIO_OFF, Reply, SCRATCH, STATE, SYSBOOT,
     TEE_DIRECTORIES, TEECD, VCOM, radio_off, ready, reply,
 };
 
 const O_NOCTTY: i32 = 0o400;
-const O_NONBLOCK: i32 = 0o4000;
 const TEECD_SETTLE: Duration = Duration::from_secs(1);
 const READY_WITHIN: Duration = Duration::from_secs(30);
 const READY_POLL: Duration = Duration::from_millis(250);
 const ANSWER_WITHIN: Duration = Duration::from_secs(5);
-const ANSWER_POLL: Duration = Duration::from_millis(50);
+const RADIO_WITHIN: Duration = Duration::from_secs(60);
+const RADIO_POLL: Duration = Duration::from_millis(500);
 const READ_BYTES: usize = 512;
 
 fn failed(device: &'static str, error: &io::Error) -> HardwareError {
@@ -78,7 +79,21 @@ fn partition_mounted(mount: Mount) -> Result<(), HardwareError> {
     )
 }
 
+fn linked() -> Result<(), HardwareError> {
+    fs::create_dir_all(BY_NAME).map_err(|error| failed("by-name", &error))?;
+    for (name, device) in named_devices().map_err(|error| failed("by-name", &error))? {
+        match symlink(format!("/dev/{device}"), format!("{BY_NAME}/{name}")) {
+            Err(error) if error.kind() != io::ErrorKind::AlreadyExists => {
+                return Err(failed("by-name", &error));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 fn prepared() -> Result<(), HardwareError> {
+    linked()?;
     for target in SCRATCH {
         mounted("tmpfs", "tmpfs", target, c"tmpfs", 0, None)?;
     }
@@ -134,22 +149,42 @@ fn sysbooted() -> Result<(), HardwareError> {
     }
 }
 
-fn answered(vcom: &mut File, command: &str) -> Result<Vec<String>, HardwareError> {
+type Answers = Receiver<io::Result<Vec<u8>>>;
+
+fn answers(vcom: &File) -> Result<Answers, HardwareError> {
+    let mut vcom = vcom
+        .try_clone()
+        .map_err(|error| failed("appvcom", &error))?;
+    let (sender, receiver) = mpsc::channel();
+    thread::Builder::new()
+        .name("appvcom".to_owned())
+        .spawn(move || {
+            let mut buffer = [0; READ_BYTES];
+            loop {
+                let read = match vcom.read(&mut buffer) {
+                    Ok(0) => Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
+                    read => read.map(|count| buffer[..count].to_vec()),
+                };
+                let ended = read.is_err();
+                if sender.send(read).is_err() || ended {
+                    return;
+                }
+            }
+        })
+        .map_err(|error| failed("appvcom", &error))?;
+    Ok(receiver)
+}
+
+fn answered(
+    vcom: &mut File,
+    answers: &Answers,
+    command: &str,
+) -> Result<Vec<String>, HardwareError> {
     vcom.write_all(command.as_bytes())
         .map_err(|error| failed("appvcom", &error))?;
     let deadline = Instant::now() + ANSWER_WITHIN;
     let mut read = Vec::new();
-    let mut buffer = [0; READ_BYTES];
     loop {
-        match vcom.read(&mut buffer) {
-            Ok(count) => read.extend_from_slice(&buffer[..count]),
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
-                ) => {}
-            Err(error) => return Err(failed("appvcom", &error)),
-        }
         match reply(&read) {
             Reply::Answered(lines) => return Ok(lines),
             Reply::Refused(line) => {
@@ -158,7 +193,12 @@ fn answered(vcom: &mut File, command: &str) -> Result<Vec<String>, HardwareError
                     reason: format!("{:?} answered {line:?}", command.trim_end()),
                 });
             }
-            Reply::Pending if Instant::now() >= deadline => {
+            Reply::Pending => {}
+        }
+        match answers.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok(Ok(bytes)) => read.extend_from_slice(&bytes),
+            Ok(Err(error)) => return Err(failed("appvcom", &error)),
+            Err(_) => {
                 return Err(HardwareError::Failed {
                     device: "appvcom",
                     reason: format!(
@@ -169,9 +209,13 @@ fn answered(vcom: &mut File, command: &str) -> Result<Vec<String>, HardwareError
                     ),
                 });
             }
-            Reply::Pending => thread::sleep(ANSWER_POLL),
         }
     }
+}
+
+fn radio_turned_off(vcom: &mut File, answers: &Answers) -> Result<(), HardwareError> {
+    answered(vcom, answers, RADIO_OFF)?;
+    radio_off(&answered(vcom, answers, RADIO)?)
 }
 
 #[derive(Debug)]
@@ -202,10 +246,16 @@ impl Modem for Balong {
         let mut vcom = OpenOptions::new()
             .read(true)
             .write(true)
-            .custom_flags(O_NOCTTY | O_NONBLOCK)
+            .custom_flags(O_NOCTTY)
             .open(VCOM)
             .map_err(|error| failed("appvcom", &error))?;
-        answered(&mut vcom, RADIO_OFF)?;
-        radio_off(&answered(&mut vcom, RADIO)?)
+        let answers = answers(&vcom)?;
+        let deadline = Instant::now() + RADIO_WITHIN;
+        loop {
+            match radio_turned_off(&mut vcom, &answers) {
+                Err(_) if Instant::now() < deadline => thread::sleep(RADIO_POLL),
+                turned => return turned,
+            }
+        }
     }
 }

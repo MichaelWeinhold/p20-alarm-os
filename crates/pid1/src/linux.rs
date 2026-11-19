@@ -8,7 +8,7 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::Duration;
 
-use crate::block::{BLOCKS, partition};
+use crate::block::{BLOCKS, named_device, partition};
 use crate::kmsg;
 
 pub const MS_RDONLY: c_ulong = 0x1;
@@ -73,6 +73,16 @@ pub fn named(name: &str) -> Option<String> {
         .ok()?
         .flatten()
         .find_map(|entry| partition(&fs::read_to_string(entry.path().join("uevent")).ok()?, name))
+}
+
+pub fn named_devices() -> io::Result<Vec<(String, String)>> {
+    let mut devices = Vec::new();
+    for entry in fs::read_dir(BLOCKS)? {
+        if let Some(device) = named_device(&fs::read_to_string(entry?.path().join("uevent"))?) {
+            devices.push(device);
+        }
+    }
+    Ok(devices)
 }
 
 pub fn kmsg() -> io::Result<File> {
