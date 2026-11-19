@@ -1,4 +1,4 @@
-use std::os::unix::process::ExitStatusExt;
+use std::path::Path;
 use std::process::ExitStatus;
 use std::time::Duration;
 
@@ -7,6 +7,7 @@ use pid1::kmsg;
 pub const PROGRAM: &str = "/system/bin/sh";
 pub const PATH: &str = "/system/bin";
 pub const PAUSE: Duration = Duration::from_secs(1);
+pub const RECOVERY: &str = "/mnt/recovery";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Next {
@@ -15,19 +16,19 @@ pub enum Next {
 }
 
 #[must_use]
-pub fn next(status: ExitStatus) -> Next {
-    if status.signal().is_some() {
-        Next::Restart
-    } else {
+pub fn next(marker: &Path) -> Next {
+    if marker.exists() {
         Next::Recovery
+    } else {
+        Next::Restart
     }
 }
 
 #[must_use]
-pub fn ended(status: ExitStatus) -> String {
-    let then = match next(status) {
-        Next::Restart => "starting it again",
-        Next::Recovery => "rebooting into recovery",
+pub fn ended(status: ExitStatus, next: Next) -> String {
+    let then = match next {
+        Next::Restart => "starting it again".to_owned(),
+        Next::Recovery => format!("{RECOVERY} asks for recovery, rebooting into it"),
     };
     kmsg::line(&format!("debug: {PROGRAM} ended with {status}, {then}"))
 }
@@ -35,26 +36,41 @@ pub fn ended(status: ExitStatus) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
+    use std::fs;
+    use std::io;
+    use std::os::unix::process::ExitStatusExt;
 
     #[test]
-    fn exit_reboots_into_recovery_whatever_its_status() {
-        assert_eq!(next(ExitStatus::from_raw(0)), Next::Recovery);
-        assert_eq!(next(ExitStatus::from_raw(1 << 8)), Next::Recovery);
-        assert_eq!(next(ExitStatus::from_raw(130 << 8)), Next::Recovery);
+    fn without_the_marker_the_shell_is_started_again() -> io::Result<()> {
+        let scratch = Scratch::new("no-marker")?;
+        assert_eq!(next(&scratch.0.join("recovery")), Next::Restart);
+        Ok(())
     }
 
     #[test]
-    fn a_shell_killed_by_a_signal_is_started_again() {
-        assert_eq!(next(ExitStatus::from_raw(9)), Next::Restart);
-        assert_eq!(next(ExitStatus::from_raw(1)), Next::Restart);
+    fn the_marker_reboots_into_recovery() -> io::Result<()> {
+        let scratch = Scratch::new("marker")?;
+        let marker = scratch.0.join("recovery");
+        fs::write(&marker, "")?;
+        assert_eq!(next(&marker), Next::Recovery);
+        Ok(())
     }
 
     #[test]
     fn the_log_says_how_the_shell_ended_and_what_comes_next() {
         assert_eq!(
-            ended(ExitStatus::from_raw(0)),
-            "<3>p20-alarm-os: debug: /system/bin/sh ended with exit status: 0, rebooting into recovery\n"
+            ended(ExitStatus::from_raw(0), Next::Restart),
+            "<3>p20-alarm-os: debug: /system/bin/sh ended with exit status: 0, starting it again\n"
         );
-        assert!(ended(ExitStatus::from_raw(9)).ends_with(", starting it again\n"));
+        assert_eq!(
+            ended(ExitStatus::from_raw(129 << 8), Next::Restart),
+            "<3>p20-alarm-os: debug: /system/bin/sh ended with exit status: 129, starting it again\n"
+        );
+        assert!(ended(ExitStatus::from_raw(9), Next::Restart).ends_with(", starting it again\n"));
+        assert_eq!(
+            ended(ExitStatus::from_raw(0), Next::Recovery),
+            "<3>p20-alarm-os: debug: /system/bin/sh ended with exit status: 0, /mnt/recovery asks for recovery, rebooting into it\n"
+        );
     }
 }

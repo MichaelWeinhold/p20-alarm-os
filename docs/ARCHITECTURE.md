@@ -115,7 +115,8 @@ stock image in `kernel`.
 
 There is no serial port. The first image built is a debug `/init` that serves the ROM's
 `mksh` on a CDC-ACM USB gadget, `/dev/ttyGS0` on the phone and `/dev/cu.usbmodem*` on the
-Mac, and reboots into TWRP when the shell exits; `scripts/serial_shell.py` runs one command
+Mac, starts the shell again when it ends, and reboots into TWRP when it ends with
+`/mnt/recovery` present; `scripts/serial_shell.py` runs one command
 on it and pushes a file to `/mnt`. Every `/init` logs to `/dev/kmsg`, which
 pstore keeps across a reboot; `dfx` keeps a panic in `/init`. → ADR 0009; `docs/ROADMAP.md`,
 P2.
