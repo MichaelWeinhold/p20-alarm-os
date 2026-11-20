@@ -1622,3 +1622,61 @@ The count agrees: 104 to 482 µAh over 300 s is 4.5 mA.
 
 The debug `/init` stays on `system`, with `alarmd` at `/init.alarmd` and `init.rom` beside
 it; the `alarmd` there is still `3d555c02…e97f`, without the modem.
+
+## 2026-11-20 — the off draw, 1.2 mA, for issue 53
+
+Read under the debug `/init` `997e8bb0…e0bf`, left on `system` from issue 55 with `alarmd`
+`3d555c02…e97f` at `/init.alarmd` and `init.rom` at `e8e2768e…78ef`. It was built from
+`014844e`; a build from `b3d7677` on `main` is the same 383896 bytes and hashes
+`7a27e4dc…e7f8`, the two trees differing only in `Cargo.lock` entries of other crates.
+Every reading went through `scripts/serial_shell.py`. Each power-off was a script in
+`/mnt` that cleared `rtc0/wakealarm`, waited for `USB/online` to read 0, slept 5 s and
+wrote `o` to `/proc/sysrq-trigger`, with `trap "" HUP` as its first line; its time is
+when the serial port left the Mac, plus 5 s. Times are UTC on the Mac's clock; the
+phone's read 4 to 5 s behind it.
+
+**Start, 2026-11-19.** After a boot by `LPM3_S_EXCEPTION`, on the cable at 25.0 °C:
+`status` `Full`, `capacity` 100, `voltage_now` 4347764, `capacity_rm` 2282,
+`charge_full` 2283, `charge_full_design` 3000, `cycle_count` 7. Powered off at 16:49:05.
+
+**`abs_cc` counts in mAh**, with the kernel log's sign: it read −2285 while `CC=` read
+−2282347 µAh, the charge that had gone in.
+
+**Both ends were fresh-OCV boots**, by a plug-in to a phone that was off, each read
+`androidboot.mode=charger`, `normal_reset_type=BR_POWEROFF_CHARGE` and
+`reboot_reason=AP_S_COLDBOOT`. `enable_charger` 0 was written as the first command, at `/proc/uptime`
+15.9 s and 11.7 s, and `abs_cc` read 0 then.
+
+| | 2026-11-20, after 17 h 20 min off | after 8 h 31 min more off |
+|---|---|---|
+| plug-in | about 10:08:37 | about 18:41:21 |
+| battery | 21.0 °C | 22.0 °C |
+| `initial OCV` | 4312772 µV, `OCV_temp=220` | 4307773 µV, `OCV_temp=230` |
+| `SOC real` | 971 | 966 |
+| `FCC=` | 2280000 µAh | 2281000 µAh |
+| `RC=` | 2213880 µAh | 2203446 µAh |
+| `CC=` | 0 µAh | 0 µAh |
+
+Both logged `using pmu ocv from fastboot.`, `fcc_flag= 1, ocv_level:0`. Between the
+two, the phone was powered off at 10:10:19. A plug-in's time is the kernel log's first
+wall-clock stamp, less its kernel time and the command line's `bl1_time`, `bl2_time` and
+`logo_time`, about 14.5 s.
+
+**The draw while off is about 1.2 mA**: 10.43 mAh over the 30662 s from 10:10:19 to
+18:41:21. The charge taken before `enable_charger` 0 was `abs_cc` 0, under the counter's
+1 mAh step, and the 5 s on the battery before the power-off cost well under 1 mAh. The
+two OCVs are 5.0 mV apart for those 10.43 mAh, so an error of 1 mV in either moves the
+figure by about 0.25 mA. At 1.2 mA the band from 80 to 20 % of the 2280 mAh read would
+last about 47 days with the phone off.
+
+**The full charge was not a good start.** From `capacity_rm` 2282 at `Full` to the first
+fresh `RC=` is 68 mAh over 17 h 20 min, 3.9 mA, three times the figure between two fresh
+OCVs.
+
+The debug shell's `touch /mnt/recovery; exit` started TWRP, but `adb` saw nothing until
+the operator plugged the cable in again, about 4 minutes later. From TWRP, `alarmd` built
+from `b3d7677`, 507376 bytes, sha256
+`d264c48c798a44799ddfd4c113c801ae18b294a20b32766e0529c777b320e77e`, was copied over
+`/init` on `system`, replacing the debug `/init`; `init.rom` still hashed `e8e2768e…78ef`,
+`init.alarmd` was left at `3d555c02…e97f`, and `misc`'s command field read zero before
+`adb reboot` at 18:47:34.
