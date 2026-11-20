@@ -41,11 +41,13 @@ crates/
                 written, flushed and read back (ADR 0011)
   suspend/      the adapters for the RTC's wake alarm and for suspending, over rtc0's
                 wakealarm and /sys/power/state
+  vibrator/     the adapter for the vibrator: the LED class device `vibrator`, timed by
+                its transient trigger
   alarmd/       the binary: opens the adapters, draws the time and the alarm, waits on input
                 until the next minute or until the panel is due off, saves a changed alarm
                 as the panel goes off, suspends while it is off, powers off after the
                 window off the cable, starts dark on a boot by the alarm, boots the
-                modem with its radio off, is PID 1
+                modem with its radio off, pulses the vibrator while it rings, is PID 1
   init-probe/   a probe /init that runs the charge stop and logs the power nodes
   debug-init/   the debug /init: the ROM's shell on a USB serial gadget (ADR 0009)
 ```
@@ -94,6 +96,11 @@ panel registers only after its firmware request is answered, which on Android is
 `ueventd`'s job. A thread of `alarmd` mounts `odm` read-only and answers each request in
 `/sys/class/firmware` from `etc/firmware/`, refusing one it has no file for. The touch
 controller sleeps while the panel is off, so touch works only while `fb0` is held open.
+
+`vibrator` drives `hisi_vibrator`, the PMU's motor, which the driver only switches on and
+off. At start-up it checks that `trigger` offers `transient` and writes `transient`, which
+resets `duration`; a pulse writes `duration`, then `state` 1, then `activate` 1, and the
+kernel's timer switches the motor off. A stop writes `activate` 0.
 
 `modem` boots the modem as the debug `/init` did by hand, on a thread of `alarmd`: a
 `tmpfs` on `/mnt` and on `/data`, a link in `/dev/block/by-name` to every partition, as
