@@ -1680,3 +1680,84 @@ from `b3d7677`, 507376 bytes, sha256
 `/init` on `system`, replacing the debug `/init`; `init.rom` still hashed `e8e2768e…78ef`,
 `init.alarmd` was left at `3d555c02…e97f`, and `misc`'s command field read zero before
 `adb reboot` at 18:47:34.
+
+## 2026-11-20 — the notification LED, for issue 64
+
+Read from TWRP and then under the debug `/init` `7a27e4dc…e7f8`, swapped in from TWRP over
+`alarmd` `d264c48c…e77e`; `init.rom` stayed at `e8e2768e…78ef` and `init.alarmd` at
+`3d555c02…e97f`. The kernel source read is `Abdelhay-Ali/android_kernel_huawei_hi6250_KernelSU`
+at `4a89ea72`, `drivers/leds/hisi_leds.c`. Every LED was off when no step lit it. Times
+are the kernel log's clock; the kernel logs went to the host's scratch space and are not
+in the repository.
+
+**The nodes** are `/sys/class/leds/red`, `green` and `blue`, one `hisilicon,hisi-pmic-led`
+driver on the PMU at `fff34000`. `brightness` takes 0 to 255 and has three steps: 0 turns
+the colour off, 255 sets the current to the device tree's `each_max_iset` (red 7, green
+1, blue 7), and anything else to 1. `led_alwayson` acts only in factory mode, and
+`led_config` has no colour flag set in the device tree.
+
+**The PMU blinks on its own.** The three colours share one timing register, its high
+nibble the on code and its low nibble the off code, each from `hisi_led_get_time`: 0 for
+0 ms, then 1 to 9 for up to 500, 1000, 2000, 4000, 6000, 8000, 12000, 14000 ms and over.
+Every write to `brightness` sets it back to steady on. Writing `trigger` `timer`, then
+`delay_on` 500, then `delay_off` 2000, logged
+
+```
+[hisi_led_set_blink] id is 0, delay-on:500, delay-off:0
+[hisi_led_set_blink] id is 0, delay-on:0, delay-off:2000
+```
+
+so only the last delay written survives. With on code 0 the operator saw red flash; with
+off code 9 and the current at 1, each flash lasted about half a second, more than 20 s
+apart. The current at 1, steady, was clearly visible in room light.
+
+**What it costs awake**, from TWRP with `enable_hiz` 1 and the panel timed out: 15 reads
+of `current_now` a second apart per step, each lit step against the unlit one before it,
+three rounds, about −200 mA unlit and a spread of ±2 mA:
+
+| Step | Over unlit |
+|---|---|
+| red 255 / 128 | 5.3 / 0.3 mA |
+| green 255 / 128, both current 1 | 1.3 / 3.0 mA |
+| blue 255 / 128 | 5.0 / 1.1 mA |
+
+**What it costs asleep.** The modem was booted as in `docs/manual-steps/modem.md` and
+answered `+CFUN: 0`, and the panel was turned off with `: < /dev/fb0` past 95 s. A script
+in `/mnt` then wrote `enable_hiz` 1 and ran eleven suspends of 240 s, set an LED before
+each and read the coulometer from the count at `SUSPEND!` to the one at the wake. The
+cable stayed in; `cl_in_time` did not move. The count reset itself at the eighth wake,
+after its reading.
+
+| | Step | Count | Draw |
+|---|---|---|---|
+| 1 | off | 1450 → 1635 µAh | 2.79 mA |
+| 2 | red 255 | 1658 → 2235 µAh | 8.69 mA |
+| 3 | off | 2258 → 2569 µAh | 4.68 mA |
+| 4 | green 255 | 2590 → 2994 µAh | 6.09 mA |
+| 5 | off | 3015 → 3312 µAh | 4.47 mA |
+| 6 | red 1 | 3335 → 3702 µAh | 5.53 mA |
+| 7 | off | 3726 → 3992 µAh | 4.01 mA |
+| 8 | red 255, on code 0, off code 3 | 4012 → 4347 µAh | 5.05 mA |
+| 9 | off | 23 → 291 µAh | 4.04 mA |
+| 10 | red 1, on code 0, off code 9 | 23 → 351 µAh | 4.94 mA |
+| 11 | off | 22 → 394 µAh | 5.63 mA |
+
+The six unlit suspends read 2.8 to 5.6 mA, 4.3 on average. Against the two either side,
+red at 255 costs 4.9 mA, as awake; green at 255 1.5 mA, red at 1 1.3 mA, red at 255
+blinking 1.0 mA, and red at 1 blinking every 20 s 0.1 mA. Anything under about 1.5 mA is
+inside the unlit suspends' spread. Red at 1 with off code 3 was not read; at the blink's
+duty from step 8 it would cost about 0.3 mA.
+
+**It stays lit and holds no vote.** Every suspend woke on `RTC0`, read
+`ap:1, modem:0, hifi:0, iomcu:0, hisee:0` and added one to `system sleeped`; the coulometer
+counted the lit LED's current through each. The driver's `suspend` and `resume` only take
+and release its mutex.
+
+**A power-off turns it off.** From TWRP, red at 255 steady, a script waited for
+`USB/online` to read 0, slept 5 s and wrote `o` to `/proc/sysrq-trigger`. The operator saw
+the LED go dark 2 to 10 s after the panel. `hisi_led_shutdown` disables all three colours,
+and `alarmd`'s power-off reaches it through `device_shutdown`.
+
+From TWRP, `alarmd` `d264c48c…e77e` was copied back over `/init` on `system`;
+`init.rom` still hashed `e8e2768e…78ef`, `init.alarmd` was left at `3d555c02…e97f`, and
+`misc`'s command field read zero before `adb reboot` at 20:35:39 UTC.
