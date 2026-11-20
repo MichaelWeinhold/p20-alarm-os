@@ -19,6 +19,7 @@ pid1 = { path = "../pid1" }
 power = { path = "../power" }
 storage = { path = "../storage" }
 suspend = { path = "../suspend" }
+vibrator = { path = "../vibrator" }
 
 [lints.rust]
 unsafe_code = "allow"
