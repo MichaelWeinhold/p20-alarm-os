@@ -50,6 +50,7 @@ pub trait BootReason {
 
 pub trait Vibrator {
     fn vibrate(&mut self, milliseconds: u32) -> Result<(), HardwareError>;
+    fn stop(&mut self) -> Result<(), HardwareError>;
 }
 
 pub trait Battery {

@@ -9,4 +9,5 @@ pub mod ringer;
 pub mod schedule;
 pub mod settings;
 pub mod time;
+pub mod vibration;
 pub mod window;

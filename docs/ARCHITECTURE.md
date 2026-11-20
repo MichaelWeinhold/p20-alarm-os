@@ -72,6 +72,7 @@ It turns the panel off with `FBIOBLANK` on that descriptor, never by closing it.
 | `face` | `Frame`, `Face` and `render`: the time in seven-segment digits, the battery in the top-right corner as one to three bars and a percentage, red when low, the alarm below, amber while ringing; `target` maps a tap to the alarm digit it steps |
 | `ringer` | `Ringer`: one daily alarm, armed or not, quiet, ringing or snoozed for 9 minutes, and the instant it next rings; `show` and `listen` drive it and the `Light` from the clock and `Input` |
 | `light` | `Light`: the panel lit for 10 s by a press, kept lit by a touch or a ringing alarm, off at a press or the timeout — ADR 0008, D2; the ringer hears input only while it is lit |
+| `vibration` | `Vibration`: a 1 s pulse every 2 s while the alarm rings, stopped at once by a snooze or a dismissal; a vibrator that fails is left alone until the next ring |
 
 The panel is the legacy framebuffer, `/dev/fb0` under our `devtmpfs`, with no DRM (ADR
 0004).
