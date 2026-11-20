@@ -33,7 +33,7 @@ documentation, starting from the vendor kernel rather than from nothing.
 | RTC wake and power-off | **Decided.** Suspended for two minutes after a use, then off until the RTC switches it on for the alarm — [ADR 0010](docs/adr/0010-suspend-briefly-then-power-off-until-the-alarm.md), issue 12. |
 | Settings across a power-off | **Decided.** A raw record of two checksummed slots on `reserved4`, a partition the ROM never used — [ADR 0011](docs/adr/0011-keep-the-settings-in-a-raw-record-on-reserved4.md), issue 30. |
 | Low-battery light | **Decided.** The LED blinks red at its lowest current while suspended at or below 20 % off the cable; the power model does not change for it — [ADR 0013](docs/adr/0013-blink-the-led-red-while-suspended-on-a-low-battery.md), issue 64. |
-| Vibration | Planned — P6. |
+| Vibration | **Built and on the phone.** A 1 s pulse every 2 s while the alarm rings, stopped at once by a snooze or a dismissal, issue 13. |
 | Speaker | Parked. |
 
 ## How it works

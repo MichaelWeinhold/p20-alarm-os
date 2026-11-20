@@ -1761,3 +1761,50 @@ and `alarmd`'s power-off reaches it through `device_shutdown`.
 From TWRP, `alarmd` `d264c48c…e77e` was copied back over `/init` on `system`;
 `init.rom` still hashed `e8e2768e…78ef`, `init.alarmd` was left at `3d555c02…e97f`, and
 `misc`'s command field read zero before `adb reboot` at 20:35:39 UTC.
+
+## 2026-11-20 — the vibrator, for issue 13
+
+Read from TWRP and then under the debug `/init` `7a27e4dc…e7f8`, swapped in from TWRP over
+`alarmd` `d264c48c…e77e`; `init.rom` stayed at `e8e2768e…78ef` and `init.alarmd` at
+`3d555c02…e97f`. The kernel source read is
+`Abdelhay-Ali/android_kernel_huawei_hi6250_KernelSU` at `4a89ea72`:
+`drivers/input/misc/hisi_vibrator.c` and `Abdelhay_defconfig`, which sets
+`CONFIG_HISI_VIBRATOR=y`, `CONFIG_LEDS_TRIGGER_TRANSIENT=y` and leaves
+`CONFIG_HISI_PMIC_VIBRATOR` unset. Times in the kernel log lines are its clock.
+
+**The node** is `/sys/class/leds/vibrator`, linked to `hisi_vibrator@fff34000`, an LED
+class device whose `brightness_set` writes the PMU's register `0x31` on any non-zero value
+and clears it on 0; `max_brightness` reads 255 and `vibrator_min_timeout` 30. Under TWRP
+and under our `/init` alike, `trigger` offers `timer` and `transient` and has
+`[transient]` selected before anything writes it, and `activate`, `duration`, `state` and
+`brightness` read `0`. The `trigger` and `activate` reads under our `/init` are
+`crates/vibrator/testdata/`.
+
+**A pulse runs on the kernel's timer.** Writing `transient` to `trigger` again set
+`duration` back to 0. Then `1000` to `duration`, `1` to `state` and `1` to `activate` read
+`activate` 1 and `brightness` 255 at once, and both 0 after 1.5 s:
+
+```
+[   42.452545] [pid:342,cpu7,sh]vibrator hisi_vibrator@fff34000: hisi_vibrator open
+[   43.444366] [pid:0,cpu7,swapper/7]vibrator hisi_vibrator@fff34000: hisi_vibrator close
+```
+
+**`activate` 0 stops it at once.** A `duration` of 5000, stopped 0.5 s in, closed at
+`53.143096` after opening at `52.631530`, and nothing followed in the next 5 s.
+
+**`alarmd` woke from a suspend and vibrated.** Built from `7b90fe4`, 511232 bytes, sha256
+`d4ddf76db5b7ae5e4e70528d2bb7ac7e0f171bed607994f58437114ab3786e7a`, it was copied over
+`/init` on `system` from TWRP in place of the debug `/init`; `init.rom` still hashed
+`e8e2768e…78ef` and `misc`'s command field read zero. `reserved4`'s newer slot, sequence
+5, held one alarm at 19:59 every day, armed, at UTC+1. The RTC was set to 18:56:00 UTC at
+21:13:50 by the Mac, on the cable. As the operator watched, the panel went dark, then lit
+amber at the alarm and vibrated in 1 s pulses; Volume Down stopped the vibration at once.
+A later press of Power dismissed the snooze, as `ringer` does, and nothing rang again.
+
+**A snoozed alarm vibrates again.** The RTC was set to 18:58:15 UTC at 21:41:39 by the
+Mac, from TWRP, and the phone rebooted. Volume Down snoozed the ring; it rang and vibrated
+again when the snooze ended, about 21:51:25 by the Mac, and Power stopped the vibration at
+once.
+
+From TWRP, the RTC was set back to the Mac's UTC at 21:55:23, `wakealarm` disarmed, and
+the phone rebooted into `alarmd` `d4ddf76d…6e7a` at 21:55:30.

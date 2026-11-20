@@ -195,10 +195,10 @@ the keys. Never push a file named `recovery`, which asks for TWRP the same way.
 **`alarmd`**, `crates/alarmd`, the clock: it draws the local time on the panel each minute
 and holds the charge at 80 %. The small digits below are one daily alarm, grey until a tap
 off them arms it: a tap on their upper half steps the hour (left) or minute (right) up, on
-the lower half down. Ringing turns the panel amber; a volume key snoozes 9 minutes, Power
-dismisses. Try it from the debug shell first, pushed to `/mnt`, then
-swap it in as above; with the debug `/init` already on `system`, replace `init` alone and
-leave `init.rom` as it is. → `docs/device-history/phone.md`, issue 10.
+the lower half down. Ringing turns the panel amber and pulses the vibrator; a volume key
+snoozes 9 minutes, Power dismisses. Try it from the debug shell first, pushed to `/mnt`,
+then swap it in as above; with the debug `/init` already on `system`, replace `init` alone
+and leave `init.rom` as it is. → `docs/device-history/phone.md`, issues 10 and 13.
 
 ```bash
 cargo build --release --locked -p alarmd --target aarch64-unknown-linux-musl
