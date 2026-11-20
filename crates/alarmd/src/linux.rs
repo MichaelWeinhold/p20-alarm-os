@@ -7,6 +7,7 @@ use alarm_core::hardware::{Display, HardwareError};
 use alarm_core::light::Light;
 use alarm_core::ringer::listen;
 use alarm_core::time::{TimeOfDay, UtcOffset};
+use alarm_core::vibration::Vibration;
 use alarm_core::window::Window;
 use battery::SysfsBattery;
 use clock::SystemClock;
@@ -19,10 +20,12 @@ use power::Cmdline;
 use power::linux::PoweroffAlarm;
 use storage::Partition;
 use suspend::{SysfsSuspend, SysfsWakeAlarm};
+use vibrator::LedVibrator;
 
 use crate::{
-    ALARM_HOUR, ALARM_MINUTE, AfterModem, BRIGHTNESS, Booted, LOCAL_OFFSET_SECONDS, Restored,
-    Sleep, booted, cable_in, change, choices, minute, modem_booted, persisted, rest, restored,
+    ALARM_HOUR, ALARM_MINUTE, AfterModem, BRIGHTNESS, Booted, Buzz, LOCAL_OFFSET_SECONDS, Restored,
+    Sleep, booted, cable_in, change, choices, minute, modem_booted, persisted, pulse, rest,
+    restored,
 };
 
 const FIRMWARE_POLL: Duration = Duration::from_millis(250);
@@ -126,6 +129,17 @@ fn booting(log: &mut Option<File>) -> Light {
     light
 }
 
+fn buzzing(log: &mut Option<File>) -> Buzz<LedVibrator> {
+    let vibrator = LedVibrator::open();
+    if let Err(error) = &vibrator {
+        logged(log, &kmsg::failure("opening the vibrator", error));
+    }
+    Buzz {
+        vibration: Vibration::still(),
+        vibrator,
+    }
+}
+
 pub fn run() -> ! {
     let mut log = started().ok();
     let (
@@ -162,6 +176,7 @@ pub fn run() -> ! {
         suspend: SysfsSuspend::open().map(|suspend| AfterModem { suspend, modem }),
         power: PoweroffAlarm::open(),
     };
+    let mut buzz = buzzing(&mut log);
     let mut input = EvdevInput::open();
     let mut absent = Vec::new();
     let mut was_lit = false;
@@ -184,7 +199,8 @@ pub fn run() -> ! {
                 logged(&mut log, &line);
             }
         }
-        for line in &turn.log {
+        let pulsed = pulse(&SystemClock, &ringer, &mut buzz, turn.wait_seconds);
+        for line in turn.log.iter().chain(&pulsed.log) {
             logged(&mut log, line);
         }
         let rested = rest(
@@ -193,7 +209,7 @@ pub fn run() -> ! {
             &light,
             cable_in(&battery),
             &mut sleep,
-            turn.wait_seconds,
+            pulsed.wait_seconds,
         );
         for line in &rested.log {
             logged(&mut log, line);

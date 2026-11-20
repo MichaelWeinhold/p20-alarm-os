@@ -75,6 +75,10 @@ window are built; the power-off with its power-on alarm, off the cable only, is 
 
 Ring the alarm through the vibrator.
 
+**Built** — issue 13. The alarm pulses `hisi_vibrator` through its LED class device and
+the transient trigger, and woke a suspended phone vibrating; a snooze and a dismissal
+stop it at once.
+
 ## Research before P7
 
 - **Where settings persist across a reboot.** **Decided** — in ADR 0011: a raw record of

@@ -4,12 +4,13 @@ use std::thread::JoinHandle;
 
 use alarm_core::hardware::{
     Battery, BootReason, Clock, Display, HardwareError, Modem, PowerOff, Settings, Suspend,
-    WakeAlarm,
+    Vibrator, WakeAlarm,
 };
 use alarm_core::light::{LIT_SECONDS, Light};
 use alarm_core::ringer::{Ringer, show};
 use alarm_core::settings::{self, Choices, SetAlarm};
 use alarm_core::time::{TimeOfDay, UnixSeconds, UtcOffset, seconds_to_next_minute};
+use alarm_core::vibration::Vibration;
 use alarm_core::window::{Answer, WINDOW_SECONDS, Window, power_on_at};
 use pid1::kmsg;
 
@@ -61,6 +62,32 @@ pub fn minute(
             RETRY_SECONDS
         }
     };
+    Minute { log, wait_seconds }
+}
+
+#[derive(Debug)]
+pub struct Buzz<V> {
+    pub vibration: Vibration,
+    pub vibrator: Result<V, HardwareError>,
+}
+
+pub fn pulse(
+    clock: &impl Clock,
+    ringer: &Ringer,
+    buzz: &mut Buzz<impl Vibrator>,
+    wait_seconds: u64,
+) -> Minute {
+    let mut log = Vec::new();
+    let (Ok(vibrator), Ok(now)) = (&mut buzz.vibrator, clock.now()) else {
+        return Minute { log, wait_seconds };
+    };
+    if let Err(error) = buzz.vibration.tick(now, ringer.ring(), vibrator) {
+        log.push(kmsg::failure("driving the vibrator", &error));
+    }
+    let wait_seconds = buzz
+        .vibration
+        .seconds_left(now)
+        .map_or(wait_seconds, |left| left.min(wait_seconds));
     Minute { log, wait_seconds }
 }
 
@@ -347,9 +374,11 @@ mod tests {
     use alarm_core::battery::{BatteryReading, ChargeStatus, Health, Percent};
     use alarm_core::boot::Boot;
     use alarm_core::face::{Face, Frame, RINGING, Size, WARNING, render};
-    use alarm_core::input::InputEvent;
+    use alarm_core::input::{InputEvent, Key};
+    use alarm_core::ringer::Ring;
     use alarm_core::settings::{RECORD_BYTES, SLOT_BYTES, Slot};
     use alarm_core::time::TimeError;
+    use alarm_core::vibration::{PERIOD_SECONDS, PULSE_MILLISECONDS};
 
     use super::*;
 
@@ -414,6 +443,49 @@ mod tests {
             self.lit.push(on);
             Ok(())
         }
+    }
+
+    #[derive(Default)]
+    struct FakeVibrator {
+        pulses: Vec<u32>,
+        stops: u32,
+        refusing: bool,
+    }
+
+    impl Vibrator for FakeVibrator {
+        fn vibrate(&mut self, milliseconds: u32) -> Result<(), HardwareError> {
+            self.pulses.push(milliseconds);
+            if self.refusing {
+                Err(refused("vibrator"))
+            } else {
+                Ok(())
+            }
+        }
+
+        fn stop(&mut self) -> Result<(), HardwareError> {
+            self.stops += 1;
+            Ok(())
+        }
+    }
+
+    fn buzz(vibrator: Result<FakeVibrator, HardwareError>) -> Buzz<FakeVibrator> {
+        Buzz {
+            vibration: Vibration::still(),
+            vibrator,
+        }
+    }
+
+    fn ringing_at(clock: &FixedClock) -> Result<Ringer, Box<dyn std::error::Error>> {
+        let mut ringer = ringer()?;
+        let before = UnixSeconds(clock.now()?.0 - 60);
+        ringer.heard(
+            InputEvent::Touch { x: 0, y: 0 },
+            SIZE,
+            before,
+            UtcOffset::UTC,
+        );
+        ringer.tick(clock.now()?, UtcOffset::UTC);
+        Ok(ringer)
     }
 
     #[derive(Default)]
@@ -1421,6 +1493,68 @@ mod tests {
         assert!(suspend.modem.is_none());
         suspend.suspend()?;
         assert_eq!(suspend.suspend.suspends, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn a_ringing_alarm_pulses_the_vibrator_and_wakes_the_loop_for_the_next_pulse()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(7, 0, 0);
+        let mut ringer = ringing_at(&clock)?;
+        assert_eq!(ringer.ring(), Ring::Ringing);
+        let mut buzz = buzz(Ok(FakeVibrator::default()));
+        let step = pulse(&clock, &ringer, &mut buzz, 10);
+        assert_eq!(
+            step,
+            Minute {
+                log: Vec::new(),
+                wait_seconds: PERIOD_SECONDS.unsigned_abs(),
+            }
+        );
+        ringer.heard(
+            InputEvent::Press(Key::Power),
+            SIZE,
+            clock.now()?,
+            UtcOffset::UTC,
+        );
+        let step = pulse(&clock, &ringer, &mut buzz, 10);
+        assert_eq!(step.wait_seconds, 10);
+        let vibrator = buzz.vibrator.as_ref().map_err(Clone::clone)?;
+        assert_eq!(vibrator.pulses, [PULSE_MILLISECONDS]);
+        assert_eq!(vibrator.stops, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn a_refusing_vibrator_is_logged_once_and_the_ring_goes_on()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(7, 0, 0);
+        let ringer = ringing_at(&clock)?;
+        let mut buzz = buzz(Ok(FakeVibrator {
+            refusing: true,
+            ..FakeVibrator::default()
+        }));
+        let step = pulse(&clock, &ringer, &mut buzz, 10);
+        assert_eq!(step.log.len(), 1);
+        assert_eq!(step.wait_seconds, 10);
+        let step = pulse(&at(7, 0, 2), &ringer, &mut buzz, 10);
+        assert_eq!(step.log, Vec::<String>::new());
+        assert_eq!(ringer.ring(), Ring::Ringing);
+        Ok(())
+    }
+
+    #[test]
+    fn an_absent_vibrator_leaves_the_wait_alone() -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(7, 0, 0);
+        let ringer = ringing_at(&clock)?;
+        let mut buzz = buzz(Err(HardwareError::Absent("vibrator")));
+        assert_eq!(
+            pulse(&clock, &ringer, &mut buzz, 10),
+            Minute {
+                log: Vec::new(),
+                wait_seconds: 10,
+            }
+        );
         Ok(())
     }
 }

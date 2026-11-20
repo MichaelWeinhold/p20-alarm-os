@@ -20,6 +20,7 @@ dependencies = [
  "power",
  "storage",
  "suspend",
+ "vibrator",
 ]
 
 [[package]]
@@ -97,6 +98,13 @@ dependencies = [
 
 [[package]]
 name = "suspend"
+version = "0.1.0"
+dependencies = [
+ "alarm-core",
+]
+
+[[package]]
+name = "vibrator"
 version = "0.1.0"
 dependencies = [
  "alarm-core",
