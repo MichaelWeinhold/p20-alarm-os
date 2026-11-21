@@ -192,13 +192,13 @@ The shell is root: ADR 0005, D4's hard-brick list holds for every `dd` sent to i
 ⚠️ No `adb` reaches a phone running it. `touch /mnt/recovery; exit` returns to TWRP; so do
 the keys. Never push a file named `recovery`, which asks for TWRP the same way.
 
-**`alarmd`**, `crates/alarmd`, the clock: it draws the local time on the panel each minute
-and holds the charge at 80 %. The small digits below are one daily alarm, grey until a tap
-off them arms it: a tap on their upper half steps the hour (left) or minute (right) up, on
+**`alarmd`**, `crates/alarmd`, the clock: the local time each minute, the charge held at
+80 %, a bar of alarm, timer and settings tabs. The small digits are one daily alarm, grey
+until a tap off them arms it: their upper half steps the hour (left) or minute (right) up,
 the lower half down. Ringing turns the panel amber and pulses the vibrator; a volume key
 snoozes 9 minutes, Power dismisses. Try it from the debug shell first, pushed to `/mnt`,
 then swap it in as above; with the debug `/init` already on `system`, replace `init` alone
-and leave `init.rom` as it is. → `docs/device-history/phone.md`, issues 10 and 13.
+and leave `init.rom`. → `docs/device-history/phone.md`, issues 10, 13 and 79.
 
 ```bash
 cargo build --release --locked -p alarmd --target aarch64-unknown-linux-musl
