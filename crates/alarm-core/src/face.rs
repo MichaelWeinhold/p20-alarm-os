@@ -25,6 +25,9 @@ const SECTION_GAP_UNITS: usize = 3;
 const COLON_UNITS: usize = 2 * (DIGIT_UNITS + 1);
 const MINUTE_UNITS: usize = COLON_UNITS + 2;
 const DASH: u8 = 0b100_0000;
+const STROKE_PARTS: usize = 3;
+const ARROW_UNITS: usize = 2;
+const ARROW_GAP_UNITS: usize = 2;
 
 pub const SAVED_ALARMS: usize = 4;
 
@@ -294,21 +297,47 @@ fn sheet(size: Size, layout: &Layout) -> Option<Sheet> {
     })
 }
 
+fn stroke(unit: usize) -> usize {
+    (unit / STROKE_PARTS).max(1)
+}
+
+fn slanted(
+    frame: &mut Frame,
+    (x, y): (usize, usize),
+    (across, down): (usize, usize),
+    unit: usize,
+    rising: bool,
+    colour: Colour,
+) {
+    let thick = stroke(unit);
+    let reach = across.saturating_sub(thick);
+    let last = down.saturating_sub(1).max(1);
+    for row in 0..down {
+        let step = if rising { last - row.min(last) } else { row };
+        frame.fill(x + step * reach / last, y + row, thick, 1, colour);
+    }
+}
+
 fn digit(frame: &mut Frame, x: usize, y: usize, unit: usize, value: u8, colour: Colour) {
     segmented(frame, x, y, unit, SEGMENTS[usize::from(value % 10)], colour);
 }
 
 fn segmented(frame: &mut Frame, x: usize, y: usize, unit: usize, segments: u8, colour: Colour) {
+    let thick = stroke(unit);
     let width = DIGIT_UNITS * unit;
-    let right = x + width - unit;
+    let height = DIGIT_HEIGHT_UNITS * unit;
+    let right = x + width - thick;
+    let middle = y + (height - thick) / 2;
+    let upper = middle + thick - y;
+    let lower = y + height - middle;
     let bars = [
-        (x, y, width, unit),
-        (right, y, unit, 4 * unit),
-        (right, y + 3 * unit, unit, 4 * unit),
-        (x, y + 6 * unit, width, unit),
-        (x, y + 3 * unit, unit, 4 * unit),
-        (x, y, unit, 4 * unit),
-        (x, y + 3 * unit, width, unit),
+        (x, y, width, thick),
+        (right, y, thick, upper),
+        (right, middle, thick, lower),
+        (x, y + height - thick, width, thick),
+        (x, middle, thick, lower),
+        (x, y, thick, upper),
+        (x, middle, width, thick),
     ];
     for (index, (left, top, across, down)) in bars.into_iter().enumerate() {
         if segments & (1 << index) != 0 {
@@ -330,8 +359,10 @@ fn pair(frame: &mut Frame, (x, y): (usize, usize), unit: usize, value: u8, colou
 }
 
 fn colon(frame: &mut Frame, (x, y): (usize, usize), unit: usize, colour: Colour) {
-    frame.fill(x, y + 2 * unit, unit, unit, colour);
-    frame.fill(x, y + 4 * unit, unit, unit, colour);
+    let thick = stroke(unit);
+    let inset = (unit - thick) / 2;
+    frame.fill(x + inset, y + 2 * unit + inset, thick, thick, colour);
+    frame.fill(x + inset, y + 4 * unit + inset, thick, thick, colour);
 }
 
 fn time(
@@ -366,10 +397,14 @@ fn time(
 fn percent_sign(frame: &mut Frame, x: usize, y: usize, unit: usize, colour: Colour) {
     frame.fill(x, y, unit, unit, colour);
     frame.fill(x + 3 * unit, y + 6 * unit, unit, unit, colour);
-    for row in 0..DIGIT_HEIGHT_UNITS {
-        let column = (DIGIT_HEIGHT_UNITS - 1 - row) * 3 / (DIGIT_HEIGHT_UNITS - 1);
-        frame.fill(x + column * unit, y + row * unit, unit, unit, colour);
-    }
+    slanted(
+        frame,
+        (x, y),
+        (PERCENT_UNITS * unit, DIGIT_HEIGHT_UNITS * unit),
+        unit,
+        true,
+        colour,
+    );
 }
 
 fn battery_symbol(
@@ -379,12 +414,13 @@ fn battery_symbol(
     gauge: Gauge,
     colour: Colour,
 ) {
+    let thick = stroke(unit);
     let width = (SYMBOL_UNITS - 1) * unit;
     let height = DIGIT_HEIGHT_UNITS * unit;
-    frame.fill(x, y, width, unit, colour);
-    frame.fill(x, y + height - unit, width, unit, colour);
-    frame.fill(x, y, unit, height, colour);
-    frame.fill(x + width - unit, y, unit, height, colour);
+    frame.fill(x, y, width, thick, colour);
+    frame.fill(x, y + height - thick, width, thick, colour);
+    frame.fill(x, y, thick, height, colour);
+    frame.fill(x + width - thick, y, thick, height, colour);
     frame.fill(x + width, y + 2 * unit, unit, 3 * unit, colour);
     let bars = match gauge.level {
         Level::Low => 1,
@@ -436,44 +472,40 @@ fn symbol(
 }
 
 fn plus(frame: &mut Frame, (x, y): (usize, usize), unit: usize, colour: Colour) {
-    let middle = SIDE_UNITS / 2 * unit;
-    frame.fill(x, y + middle, SIDE_UNITS * unit, unit, colour);
-    frame.fill(x + middle, y, unit, SIDE_UNITS * unit, colour);
+    let thick = stroke(unit);
+    let across = SIDE_UNITS * unit;
+    let middle = (across - thick) / 2;
+    frame.fill(x, y + middle, across, thick, colour);
+    frame.fill(x + middle, y, thick, across, colour);
 }
 
 fn cross(frame: &mut Frame, (x, y): (usize, usize), unit: usize, colour: Colour) {
-    for step in 0..SIDE_UNITS {
-        let back = SIDE_UNITS - 1 - step;
-        frame.fill(x + step * unit, y + step * unit, unit, unit, colour);
-        frame.fill(x + back * unit, y + step * unit, unit, unit, colour);
+    let across = SIDE_UNITS * unit;
+    for rising in [false, true] {
+        slanted(frame, (x, y), (across, across), unit, rising, colour);
     }
+}
+
+fn arrow(frame: &mut Frame, (centre, y): (usize, usize), unit: usize, up: bool, colour: Colour) {
+    let half = ARROW_UNITS * unit;
+    let left = centre.saturating_sub(half);
+    let down = ARROW_UNITS * unit;
+    slanted(frame, (left, y), (half, down), unit, up, colour);
+    slanted(frame, (centre, y), (half, down), unit, !up, colour);
 }
 
 fn wheels(frame: &mut Frame, sheet: Sheet, picked: TimeOfDay) {
     let unit = sheet.unit;
-    for row in Row::ALL {
-        let y = sheet.wheel_row(row);
-        let colour = if row == Row::Picked { FOREGROUND } else { DIM };
-        let hour = picked.stepped_hour(row.step()).hour();
-        let minute = picked.stepped_minute(row.step()).minute();
-        pair(frame, (sheet.left, y), unit, hour, colour);
-        pair(
-            frame,
-            (sheet.left + MINUTE_UNITS * unit, y),
-            unit,
-            minute,
-            colour,
-        );
+    let y = sheet.wheel_row(Row::Picked);
+    time(frame, (sheet.left, y), unit, Some(picked), FOREGROUND);
+    let above = y - (ARROW_UNITS + ARROW_GAP_UNITS) * unit;
+    let below = y + (DIGIT_HEIGHT_UNITS + ARROW_GAP_UNITS) * unit;
+    let middle = (2 * DIGIT_UNITS + 1) * unit / 2;
+    for start in [0, MINUTE_UNITS * unit] {
+        let centre = sheet.left + start + middle;
+        arrow(frame, (centre, above), unit, true, DIM);
+        arrow(frame, (centre, below), unit, false, DIM);
     }
-    colon(
-        frame,
-        (
-            sheet.left + COLON_UNITS * unit,
-            sheet.wheel_row(Row::Picked),
-        ),
-        unit,
-        FOREGROUND,
-    );
 }
 
 fn alarm_screen(frame: &mut Frame, layout: &Layout, sheet: Sheet, face: &Face) {
