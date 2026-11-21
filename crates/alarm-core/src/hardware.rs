@@ -58,6 +58,11 @@ pub trait Speaker {
     fn stop(&mut self) -> Result<(), HardwareError>;
 }
 
+pub trait Indicator {
+    fn warn(&mut self) -> Result<(), HardwareError>;
+    fn clear(&mut self) -> Result<(), HardwareError>;
+}
+
 pub trait Battery {
     fn read(&self) -> Result<BatteryReading, HardwareError>;
     fn charger_enabled(&self) -> Result<bool, HardwareError>;
