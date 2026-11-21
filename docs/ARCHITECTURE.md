@@ -28,6 +28,8 @@ crates/
   battery/      the adapter for the battery and the charger, over sysfs
   clock/        the adapter for the clock, over the system time the kernel sets from the RTC
   framebuffer/  the adapter for the panel: /dev/fb0, mapped once, drawn into a page and panned
+  indicator/    the adapter for the low-battery warning: the LED class device `red`, blinked
+                by the PMU through its timer trigger (ADR 0013, D1)
   input/        the adapter for the side keys and touch: the evdev nodes, found by name, and
                 the touch firmware the kernel asks for, answered from odm
   modem/        the adapter for the modem: its partitions mounted, teecd started, the boot
@@ -47,7 +49,8 @@ crates/
                 until the next minute or until the panel is due off, saves a changed alarm
                 as the panel goes off, suspends while it is off, powers off after the
                 window off the cable, starts dark on a boot by the alarm, boots the
-                modem with its radio off, pulses the vibrator while it rings, is PID 1
+                modem with its radio off, pulses the vibrator while it rings, blinks
+                the red LED while the battery is low off the cable, is PID 1
   init-probe/   a probe /init that runs the charge stop and logs the power nodes
   debug-init/   the debug /init: the ROM's shell on a USB serial gadget (ADR 0009)
 ```
@@ -64,7 +67,7 @@ It turns the panel off with `FBIOBLANK` on that descriptor, never by closing it.
 |---|---|
 | `time` | `UnixSeconds`, `TimeOfDay`, `Weekday`, `UtcOffset` — civil time without a tz database |
 | `alarm` | `Alarm`, `Weekdays`, and when an alarm next fires after a given instant |
-| `hardware` | the traits `Clock`, `WakeAlarm`, `Suspend`, `PowerOff`, `BootReason`, `Vibrator`, `Battery`, `Display`, `Input`, `Settings`, `Modem`, and `HardwareError` |
+| `hardware` | the traits `Clock`, `WakeAlarm`, `Suspend`, `PowerOff`, `BootReason`, `Vibrator`, `Indicator`, `Battery`, `Display`, `Input`, `Settings`, `Modem`, and `HardwareError` |
 | `boot` | `Boot`: why the phone started — the alarm, a press, the charger or anything else; only the alarm starts with the panel dark — ADR 0010, D4 |
 | `window` | `Window`: two minutes suspended after the panel goes off, then *power off*, unless an alarm rings, is snoozed or is due within two minutes of the end; the RTC instant to suspend until; `power_on_at`, two minutes before the alarm — ADR 0010, D2 and D3 |
 | `input` | `InputEvent`: a touch at a panel pixel, or a press of `VolumeUp`, `VolumeDown` or `Power` |
@@ -75,6 +78,7 @@ It turns the panel off with `FBIOBLANK` on that descriptor, never by closing it.
 | `ringer` | `Ringer`: one daily alarm, armed or not, quiet, ringing or snoozed for 9 minutes, and the instant it next rings; `show` draws the open screen, and `listen` sends a tab tap to the `Light` and any other tap or press to the `Ringer` |
 | `light` | `Light`: the panel lit for 10 s by a press, kept lit by a touch or a ringing alarm, off at a press or the timeout — ADR 0008, D2; the ringer hears input only while it is lit; the open `Screen`, back to the alarm screen when the panel goes off or an alarm rings |
 | `vibration` | `Vibration`: a 1 s pulse every 2 s while the alarm rings, stopped at once by a snooze or a dismissal; a vibrator that fails is left alone until the next ring |
+| `warning` | `Warning`: the indicator lit while the battery reads at or below the 20 % mark off the cable, cleared otherwise and on a battery that cannot be read; written on the first turn and then only on a change, since a write restarts the PMU's blink; an indicator that fails is left alone until the battery changes — ADR 0013, D2 |
 
 The panel is the legacy framebuffer, `/dev/fb0` under our `devtmpfs`, with no DRM (ADR
 0004).
@@ -101,6 +105,13 @@ controller sleeps while the panel is off, so touch works only while `fb0` is hel
 off. At start-up it checks that `trigger` offers `transient` and writes `transient`, which
 resets `duration`; a pulse writes `duration`, then `state` 1, then `activate` 1, and the
 kernel's timer switches the motor off. A stop writes `activate` 0.
+
+`indicator` drives `/sys/class/leds/red`, which the PMU blinks with no wake of the AP. At
+start-up it checks that `trigger` and `brightness` exist. A warning writes `trigger`
+`timer`, then `brightness` 1, then `delay_off` 2000, the node the timer trigger adds: a
+write to `brightness` sets the PMU's blink back to steady, and only the last delay written
+survives (ADR 0013, D1). A clear writes `brightness` 0. The power-off turns it off on its
+own, through the driver's `shutdown`.
 
 `modem` boots the modem as the debug `/init` did by hand, on a thread of `alarmd`: a
 `tmpfs` on `/mnt` and on `/data`, a link in `/dev/block/by-name` to every partition, as

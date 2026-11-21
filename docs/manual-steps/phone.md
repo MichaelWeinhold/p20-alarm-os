@@ -198,7 +198,7 @@ until a tap off them arms it: their upper half steps the hour (left) or minute (
 the lower half down. Ringing turns the panel amber and pulses the vibrator; a volume key
 snoozes 9 minutes, Power dismisses. Try it from the debug shell first, pushed to `/mnt`,
 then swap it in as above; with the debug `/init` already on `system`, replace `init` alone
-and leave `init.rom`. → `docs/device-history/phone.md`, issues 10, 13 and 79.
+and leave `init.rom`. → `docs/device-history/phone.md`, issues 10, 13, 76 and 79.
 
 ```bash
 cargo build --release --locked -p alarmd --target aarch64-unknown-linux-musl
