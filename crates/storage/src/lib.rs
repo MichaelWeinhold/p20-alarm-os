@@ -173,6 +173,7 @@ mod tests {
                 armed: true,
             }],
             timers: vec![Countdown::new(3, 0)?],
+            lit_seconds: 30,
         })
     }
 

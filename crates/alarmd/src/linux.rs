@@ -121,8 +121,8 @@ fn restoring(log: &mut Option<File>) -> (Result<Partition, HardwareError>, Resto
     (settings, restored)
 }
 
-fn booting(log: &mut Option<File>) -> Light {
-    let Booted { light, log: lines } = booted(&Cmdline::open(), &SystemClock);
+fn booting(log: &mut Option<File>, lit_seconds: i64) -> Light {
+    let Booted { light, log: lines } = booted(&Cmdline::open(), &SystemClock, lit_seconds);
     for line in &lines {
         logged(log, line);
     }
@@ -168,7 +168,7 @@ pub fn run() -> ! {
         );
     }
     let modem = modem_started(&mut log);
-    let mut light = booting(&mut log);
+    let mut light = booting(&mut log, ringer.lit_seconds());
     let mut battery = SysfsBattery::open();
     let mut sleep = Sleep {
         window: Window::lit(saved.window_seconds),
