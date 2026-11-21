@@ -2047,3 +2047,40 @@ switch still dim.
 the cable and turned the panel off; a press at least four minutes later booted the phone,
 as only a power-on from off does. Slot 1 held sequence 17, version 2, with the toggle byte
 `01` and the alarms unchanged, CRC good. The image was left on the phone.
+
+## 2026-11-21 — the DSP init and the speaker route on `system`, for issue 91
+
+Under the ROM, booted from TWRP with `system`'s `/init` swapped for `init.rom` by `mv` and
+ours kept as `init.ours` (`da4dc63c…c867d`). `dsp-recorder` was built from `3e0658f` and
+pushed to `/data/local/tmp`; nothing else on the phone was written under the ROM.
+
+**The HAL opens `/dev/hifi_misc` only once `audioserver` connects.** With `audioserver`
+stopped and the HAL started under the recorder, the recorder waited out its 30 s with 0
+`ioctl`s; started HAL first, then `audioserver`, it saw all twelve.
+
+**A slow tracer gets the HAL restarted.** With the recorder polling `waitpid` with
+`WNOHANG`, `audioserver` aborted on its 5 s `TimeCheck` and the HAL ended after 6
+`ioctl`s. Waiting blocking, with a watchdog thread for the deadline, every recording
+finished.
+
+**Messages 8–11 race.** Seven recordings had the twelve `ioctl`s of the issue 14 reading,
+messages 0–7 the same byte for byte. Five carried 8–11 as `SET_PARA`, `SET_PARA`,
+`SET_SOURCE`, `SET_SOURCE`; two as `SET_PARA`, `SET_SOURCE`, `SET_PARA`, `SET_SOURCE`, with
+the same bodies, `08df0700 01000000 04000000 04000080` and `95dd0000 00000000`.
+`dsp_init.py` writes both `SET_PARA` first; the two recordings of the final run, one of
+each order, then agreed.
+
+**The speaker route** is 257 defaults and 15 `media-speaker` controls, read from
+`/etc/audio/hissc/mixer_paths_anne.xml` in `~/p20-backups/odm-mmcblk0p44-2026-11-21.img`.
+
+**Pushed from TWRP** by `system_push.py` to `system/etc/alarmd/`, mode 644: on the
+partition `/etc` is a link to `/system/etc`, and a first push to `etc/alarmd` failed on it.
+
+| File | Bytes | sha256 |
+|---|---|---|
+| `dsp-init.bin` | 928990 | `bd239d63c82bdf09c88df740407550e142d8822ee0b43324bfcfea9a53b41efa` |
+| `speaker-route.tsv` | 10067 | `f522fb9512b7bfe82de84a81f6dd0b9d7a22e3b475b69dcf910b57ede6c709b7` |
+
+Then `init` was moved to `init.rom` and `init.ours` to `init`; read back on a fresh
+mount, `init` hashed `da4dc63c…c867d`, `init.rom` `e8e2768e…78ef` and `init.alarmd`
+`3d555c02…e94f`. `misc`'s first 32 bytes were zeroed, and the phone was left in TWRP.

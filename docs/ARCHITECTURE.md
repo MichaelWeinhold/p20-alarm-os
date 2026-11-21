@@ -50,6 +50,8 @@ crates/
                 modem with its radio off, pulses the vibrator while it rings, is PID 1
   init-probe/   a probe /init that runs the charge stop and logs the power nodes
   debug-init/   the debug /init: the ROM's shell on a USB serial gadget (ADR 0009)
+  dsp-recorder/ run under the ROM, not in the image: records the audio HAL's ioctls on
+                /dev/hifi_misc by ptrace (ADR 0015)
 ```
 
 The other adapters arrive with the roadmap phases that need them.
@@ -131,9 +133,16 @@ suspends mid-boot. A failure is logged and leaves the alarm working at the highe
 ## Host tooling
 
 ```
-scripts/        the repository's guards, the boot image round trip and the serial shell
+scripts/        the repository's guards, the boot image round trip, the serial shell and
+                the audio files' recording and push
 tests/          their tests
 ```
+
+`scripts/dsp_init.py` runs `dsp-recorder` under the ROM and writes the DSP init from two
+recordings that agree; `scripts/speaker_route.py` reads the speaker's route out of the
+`odm` backup; `scripts/system_push.py` pushes files onto `system` from TWRP, each checked
+by sha256 and size before and after its rename. → ADR 0014, D3; ADR 0015;
+`docs/manual-steps/audio.md`.
 
 `scripts/boot_image.py` unpacks a header-v0 image into its sections and a `header.json`, and
 repacks it; it refuses an image it could not reproduce byte for byte, and reproduces the
