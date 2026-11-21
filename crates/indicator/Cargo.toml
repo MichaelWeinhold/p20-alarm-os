@@ -1,0 +1,15 @@
+[package]
+name = "indicator"
+description = "The indicator adapter over the red notification LED class device, blinked by the PMU through its timer trigger"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+alarm-core = { path = "../alarm-core" }
+
+[lints]
+workspace = true

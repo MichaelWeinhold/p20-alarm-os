@@ -3,8 +3,8 @@ use alarm_core::battery::{ChargeLimit, ChargeStep, Gauge, stop_at_limit};
 use std::thread::JoinHandle;
 
 use alarm_core::hardware::{
-    Battery, BootReason, Clock, Display, HardwareError, Modem, PowerOff, Settings, Speaker,
-    Suspend, Vibrator, WakeAlarm,
+    Battery, BootReason, Clock, Display, HardwareError, Indicator, Modem, PowerOff, Settings,
+    Speaker, Suspend, Vibrator, WakeAlarm,
 };
 use alarm_core::light::Light;
 use alarm_core::ringer::{Ringer, show};
@@ -12,6 +12,7 @@ use alarm_core::settings::{self, Choices, SetAlarm};
 use alarm_core::sound::Sound;
 use alarm_core::time::{Countdown, TimeOfDay, UnixSeconds, UtcOffset, seconds_to_next_minute};
 use alarm_core::vibration::Vibration;
+use alarm_core::warning::Warning;
 use alarm_core::window::{Answer, WINDOW_SECONDS, Window, power_on_at};
 use pid1::kmsg;
 
@@ -106,6 +107,31 @@ pub fn pulse(
         .seconds_left(now)
         .map_or(wait_seconds, |left| left.min(wait_seconds));
     Minute { log, wait_seconds }
+}
+
+#[derive(Debug)]
+pub struct Lamp<I> {
+    pub warning: Warning,
+    pub indicator: Result<I, HardwareError>,
+}
+
+pub fn warned(
+    battery: &Result<impl Battery, HardwareError>,
+    lamp: &mut Lamp<impl Indicator>,
+) -> Vec<String> {
+    let Ok(indicator) = &mut lamp.indicator else {
+        return Vec::new();
+    };
+    let reading = battery
+        .as_ref()
+        .ok()
+        .and_then(|battery| battery.read().ok());
+    lamp.warning
+        .tick(reading, indicator)
+        .err()
+        .map(|error| kmsg::failure("driving the low-battery warning", &error))
+        .into_iter()
+        .collect()
 }
 
 #[derive(Debug)]
@@ -551,6 +577,36 @@ mod tests {
         fn stop(&mut self) -> Result<(), HardwareError> {
             self.stops += 1;
             Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeIndicator {
+        warnings: u32,
+        clears: u32,
+        refusing: bool,
+    }
+
+    impl Indicator for FakeIndicator {
+        fn warn(&mut self) -> Result<(), HardwareError> {
+            self.warnings += 1;
+            if self.refusing {
+                Err(refused("indicator"))
+            } else {
+                Ok(())
+            }
+        }
+
+        fn clear(&mut self) -> Result<(), HardwareError> {
+            self.clears += 1;
+            Ok(())
+        }
+    }
+
+    fn lamp(indicator: Result<FakeIndicator, HardwareError>) -> Lamp<FakeIndicator> {
+        Lamp {
+            warning: Warning::unset(),
+            indicator,
         }
     }
 
@@ -1929,6 +1985,51 @@ mod tests {
         assert_eq!(step.log, Vec::<String>::new());
         assert_eq!(ringer.ring(), Ring::Ringing);
         Ok(())
+    }
+
+    #[test]
+    fn a_low_battery_off_the_cable_warns_until_the_cable_goes_in()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut lamp = lamp(Ok(FakeIndicator::default()));
+        let unplugged = battery(20, ChargeStatus::Discharging);
+        assert_eq!(warned(&unplugged, &mut lamp), Vec::<String>::new());
+        assert_eq!(warned(&unplugged, &mut lamp), Vec::<String>::new());
+        assert!(lamp.warning.shown());
+        warned(&battery(20, ChargeStatus::Charging), &mut lamp);
+        assert!(!lamp.warning.shown());
+        let indicator = lamp.indicator.as_ref().map_err(Clone::clone)?;
+        assert_eq!((indicator.warnings, indicator.clears), (1, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn an_absent_battery_clears_the_warning() -> Result<(), Box<dyn std::error::Error>> {
+        let mut lamp = lamp(Ok(FakeIndicator::default()));
+        warned(&battery(10, ChargeStatus::Discharging), &mut lamp);
+        let absent: Result<FakeBattery, HardwareError> = Err(HardwareError::Absent("battery"));
+        warned(&absent, &mut lamp);
+        assert!(!lamp.warning.shown());
+        let indicator = lamp.indicator.as_ref().map_err(Clone::clone)?;
+        assert_eq!((indicator.warnings, indicator.clears), (1, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn a_refusing_indicator_is_logged_once() {
+        let mut lamp = lamp(Ok(FakeIndicator {
+            refusing: true,
+            ..FakeIndicator::default()
+        }));
+        let low = battery(10, ChargeStatus::Discharging);
+        assert_eq!(warned(&low, &mut lamp).len(), 1);
+        assert_eq!(warned(&low, &mut lamp), Vec::<String>::new());
+    }
+
+    #[test]
+    fn an_absent_indicator_logs_nothing() {
+        let mut lamp = lamp(Err(HardwareError::Absent("indicator")));
+        let low = battery(10, ChargeStatus::Discharging);
+        assert_eq!(warned(&low, &mut lamp), Vec::<String>::new());
     }
 
     #[test]
