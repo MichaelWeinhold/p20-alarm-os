@@ -141,7 +141,9 @@ tests/          their tests
 `scripts/dsp_init.py` runs `dsp-recorder` under the ROM and writes the DSP init from two
 recordings that agree; `scripts/speaker_route.py` reads the speaker's route out of the
 `odm` backup; `scripts/system_push.py` pushes files onto `system` from TWRP, each checked
-by sha256 and size before and after its rename. → ADR 0014, D3; ADR 0015;
+by sha256 and size before and after its rename. `scripts/alarm_sound.py` converts a sound
+to 16-bit 48 kHz stereo WAV with `ffmpeg` and pushes it beside the ROM's alarms; it
+replaces no file and refuses any other header. → ADR 0014, D3; ADR 0015;
 `docs/manual-steps/audio.md`.
 
 `scripts/boot_image.py` unpacks a header-v0 image into its sections and a `header.json`, and

@@ -50,4 +50,29 @@ they match the table above.
 
 **Undo.** From TWRP, `rm -r /mnt/sys/system/etc/alarmd` with `system` mounted read-write.
 
-The readings: [docs/device-history/phone.md](../device-history/phone.md), issues 14 and 91.
+## Alarm sounds
+
+**State.** `/system/media/audio/alarms` holds the ROM's eleven Vorbis alarms; `alarmd`
+plays only the `.wav` files beside them. → ADR 0014, D2 and D3; ADR 0015, D3.
+
+**Reproduce.** From TWRP, on the Mac:
+
+```sh
+uv run python scripts/alarm_sound.py sounds/ringtone.mp3   # out/sounds/ringtone.wav, pushed
+```
+
+⚠️ A name already on the phone with other contents is refused and nothing is written; push
+a changed sound under a new name, or `rm` the old one first.
+
+⚠️ A sound's name is its stem plus `.wav`, letters, digits, `.`, `_` and `-`, at most 64
+bytes, which is what the settings record holds (ADR 0014, D4).
+
+**Verify.** The script prints each sound's size and sha256 read back on the phone, and
+the count of files beside them whose sha256 did not change; a second run prints
+`already there` and pushes nothing.
+
+**Undo.** From TWRP, `rm /mnt/sys/system/media/audio/alarms/<name>.wav` with `system`
+mounted read-write.
+
+The readings: [docs/device-history/phone.md](../device-history/phone.md), issues 14, 87
+and 91.

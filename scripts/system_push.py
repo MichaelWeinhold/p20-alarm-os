@@ -5,7 +5,8 @@ import hashlib
 import shlex
 import subprocess
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Final
@@ -131,13 +132,19 @@ def placed(adb: Adb, local: Path, relative: PurePosixPath) -> Pushed:
     return Pushed(final, size, digest)
 
 
-def push(adb: Adb, files: Sequence[tuple[Path, PurePosixPath]]) -> list[Pushed]:
+@contextmanager
+def writable(adb: Adb) -> Iterator[None]:
     state(adb, RECOVERY)
     mounted(adb)
     try:
-        return [placed(adb, local, relative) for local, relative in files]
+        yield
     finally:
         shell(adb, f"umount {shlex.quote(str(MOUNT))}")
+
+
+def push(adb: Adb, files: Sequence[tuple[Path, PurePosixPath]]) -> list[Pushed]:
+    with writable(adb):
+        return [placed(adb, local, relative) for local, relative in files]
 
 
 def parser() -> argparse.ArgumentParser:
