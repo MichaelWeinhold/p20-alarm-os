@@ -43,8 +43,8 @@ crates/
                 wakealarm and /sys/power/state
   vibrator/     the adapter for the vibrator: the LED class device `vibrator`, timed by
                 its transient trigger
-  alarmd/       the binary: opens the adapters, draws the time and the alarm, waits on input
-                until the next minute or until the panel is due off, saves a changed alarm
+  alarmd/       the binary: opens the adapters, draws the time and the alarms, waits on input
+                until the next minute or until the panel is due off, saves a changed list
                 as the panel goes off, suspends while it is off, powers off after the
                 window off the cable, starts dark on a boot by the alarm, boots the
                 modem with its radio off, pulses the vibrator while it rings, is PID 1
@@ -67,12 +67,12 @@ It turns the panel off with `FBIOBLANK` on that descriptor, never by closing it.
 | `hardware` | the traits `Clock`, `WakeAlarm`, `Suspend`, `PowerOff`, `BootReason`, `Vibrator`, `Battery`, `Display`, `Input`, `Settings`, `Modem`, and `HardwareError` |
 | `boot` | `Boot`: why the phone started — the alarm, a press, the charger or anything else; only the alarm starts with the panel dark — ADR 0010, D4 |
 | `window` | `Window`: two minutes suspended after the panel goes off, then *power off*, unless an alarm rings, is snoozed or is due within two minutes of the end; the RTC instant to suspend until; `power_on_at`, two minutes before the alarm — ADR 0010, D2 and D3 |
-| `input` | `InputEvent`: a touch at a panel pixel, or a press of `VolumeUp`, `VolumeDown` or `Power` |
+| `input` | `InputEvent`: a touch at a panel pixel, the finger moved while held, its lift, or a press of `VolumeUp`, `VolumeDown` or `Power` |
 | `schedule` | `arm_next`: read the clock, pick the earliest alarm, arm or disarm the RTC |
 | `settings` | `Choices` and the record that holds them: two 4 KiB slots, each framed by magic, version, length, sequence and CRC-32; `load` takes the newest valid slot, `save` writes the other one — ADR 0011 |
 | `battery` | `ChargeLimit`, `BatteryReading`, `stop_at_limit`, and the `Gauge`: a `Level` of low at the 20 % mark, full from the limit, middle between, and the capacity when it was read — ADR 0008, D3 |
-| `face` | `Frame`, `Face`, `Screen` and `render`: a bar along the bottom with a bell, an hourglass and a gear for the alarm, timer and settings screens, the open one lit; the alarm screen adds the time in seven-segment digits, the battery in the top-right corner as one to three bars and a percentage, red when low, and the alarm below; a ringing alarm fills the panel amber with no bar; `target` maps a tap to a tab by thirds of the bar, to the alarm digit it steps, or to nothing on an empty screen |
-| `ringer` | `Ringer`: one daily alarm, armed or not, quiet, ringing or snoozed for 9 minutes, and the instant it next rings; `show` draws the open screen, and `listen` sends a tab tap to the `Light` and any other tap or press to the `Ringer` |
+| `face` | `Frame`, `Face`, `Screen` and `render`: a bar along the bottom with a bell, an hourglass and a gear for the alarm, timer and settings screens, the open one lit; the alarm screen adds the time in seven-segment digits, the battery in the top-right corner as one to three bars and a percentage, red when low, the active alarm or dim dashes, a slider of an hour wheel and a minute wheel with each neighbour dim and a `+` beside the picked time, and up to four saved alarms, the active one lit, each with a cross; a ringing alarm fills the panel amber with no bar; `target` maps a tap to a tab by thirds of the bar, to a wheel's row, the `+`, a saved alarm or its cross, or to nothing on an empty screen; `pitch` is the drag that steps a wheel once |
+| `ringer` | `Ringer`: up to four daily alarms, sorted, at most one of them active; quiet, ringing or snoozed for 9 minutes, and the instant the active one next rings; the slider's picked time, moved by a drag on a wheel or a tap on a neighbour, added to the list by the `+`; a tap on a saved alarm makes it active, or disarms it when it already is, and its cross removes it; `show` draws the open screen, and `listen` sends a tab tap to the `Light` and every tap, move, lift or press to the `Ringer`, touch only while no alarm rings |
 | `light` | `Light`: the panel lit for 10 s by a press, kept lit by a touch or a ringing alarm, off at a press or the timeout — ADR 0008, D2; the ringer hears input only while it is lit; the open `Screen`, back to the alarm screen when the panel goes off or an alarm rings |
 | `vibration` | `Vibration`: a 1 s pulse every 2 s while the alarm rings, stopped at once by a snooze or a dismissal; a vibrator that fails is left alone until the next ring |
 
@@ -96,6 +96,10 @@ panel registers only after its firmware request is answered, which on Android is
 `ueventd`'s job. A thread of `alarmd` mounts `odm` read-only and answers each request in
 `/sys/class/firmware` from `etc/firmware/`, refusing one it has no file for. The touch
 controller sleeps while the panel is off, so touch works only while `fb0` is held open.
+It reports protocol A with no slots: `BTN_TOUCH` 1 in a finger's first report, a position
+in each report while it is held, and `BTN_TOUCH` 0 when it lifts. The decoder turns those
+into a touch, moves and a lift, keeps only the last of a read's moves, and drops the hold
+at a `SYN_DROPPED`, sending no lift.
 
 `vibrator` drives `hisi_vibrator`, the PMU's motor, which the driver only switches on and
 off. At start-up it checks that `trigger` offers `transient` and writes `transient`, which

@@ -242,13 +242,18 @@ pub fn choices(ringer: &Ringer, offset: UtcOffset, window_seconds: i64) -> Choic
     Choices {
         offset,
         window_seconds,
-        alarms: vec![SetAlarm {
-            alarm: Alarm {
-                time: ringer.alarm(),
-                repeat: Weekdays::EVERY_DAY,
-            },
-            armed: ringer.armed(),
-        }],
+        alarms: ringer
+            .alarms()
+            .iter()
+            .enumerate()
+            .map(|(index, &time)| SetAlarm {
+                alarm: Alarm {
+                    time,
+                    repeat: Weekdays::EVERY_DAY,
+                },
+                armed: ringer.active_index() == Some(index) && ringer.armed(),
+            })
+            .collect(),
     }
 }
 
@@ -284,19 +289,28 @@ pub fn restored(
             choices(&Ringer::new(alarm), offset, WINDOW_SECONDS)
         }
     };
-    let (alarm, armed) = loaded
+    let armed = loaded
         .alarms
-        .first()
-        .map_or((alarm, false), |set| (set.alarm.time, set.armed));
-    let ringer = match clock.now() {
-        Ok(now) => Ringer::restored(alarm, armed, now, loaded.offset),
-        Err(error) => {
-            if armed {
-                log.push(kmsg::failure("arming the saved alarm", &error));
+        .iter()
+        .find(|set| set.armed)
+        .map(|set| set.alarm.time);
+    let picked = armed
+        .or_else(|| loaded.alarms.first().map(|set| set.alarm.time))
+        .unwrap_or(alarm);
+    let mut ringer = Ringer::listed(
+        loaded.alarms.iter().map(|set| set.alarm.time).collect(),
+        picked,
+    );
+    if let Some(armed) = armed {
+        match clock.now() {
+            Ok(now) => {
+                if let Some(index) = ringer.alarms().iter().position(|&time| time == armed) {
+                    ringer.activate(index, now, loaded.offset);
+                }
             }
-            Ringer::new(alarm)
+            Err(error) => log.push(kmsg::failure("arming the saved alarm", &error)),
         }
-    };
+    }
     Restored {
         saved: choices(&ringer, loaded.offset, loaded.window_seconds),
         ringer,
@@ -357,13 +371,14 @@ impl<S: Suspend> Suspend for AfterModem<S> {
 
 #[must_use]
 pub fn change(before: &Ringer, after: &Ringer) -> Option<String> {
-    let alarm = after.alarm();
-    let armed = if after.armed() { "armed" } else { "disarmed" };
-    (before != after).then(|| {
+    let state = |ringer: &Ringer| (ringer.alarms().to_vec(), ringer.next(), ringer.ring());
+    let clock = |time: TimeOfDay| format!("{:02}:{:02}", time.hour(), time.minute());
+    (state(before) != state(after)).then(|| {
+        let alarms: Vec<String> = after.alarms().iter().map(|&time| clock(time)).collect();
+        let active = after.active().map_or_else(|| "none".to_owned(), clock);
         kmsg::line(&format!(
-            "alarm {:02}:{:02} {armed}, {:?}",
-            alarm.hour(),
-            alarm.minute(),
+            "alarms [{}], active {active}, {:?}",
+            alarms.join(", "),
             after.ring()
         ))
     })
@@ -373,7 +388,9 @@ pub fn change(before: &Ringer, after: &Ringer) -> Option<String> {
 mod tests {
     use alarm_core::battery::{BatteryReading, ChargeStatus, Health, Percent};
     use alarm_core::boot::Boot;
-    use alarm_core::face::{Face, Frame, RINGING, Screen, Size, Target, WARNING, render};
+    use alarm_core::face::{
+        Face, Field, Frame, RINGING, Row, Screen, Size, Target, WARNING, render,
+    };
     use alarm_core::input::Key;
     use alarm_core::ringer::Ring;
     use alarm_core::settings::{RECORD_BYTES, SLOT_BYTES, Slot};
@@ -383,8 +400,8 @@ mod tests {
     use super::*;
 
     const SIZE: Size = Size {
-        width: 100,
-        height: 140,
+        width: 108,
+        height: 228,
     };
 
     struct FixedClock(Result<UnixSeconds, HardwareError>);
@@ -478,7 +495,7 @@ mod tests {
     fn ringing_at(clock: &FixedClock) -> Result<Ringer, Box<dyn std::error::Error>> {
         let mut ringer = ringer()?;
         let before = UnixSeconds(clock.now()?.0 - 60);
-        ringer.touched(Target::Elsewhere, before, UtcOffset::UTC);
+        ringer.touched(Target::Entry(0), 0, before, UtcOffset::UTC);
         ringer.tick(clock.now()?, UtcOffset::UTC);
         Ok(ringer)
     }
@@ -637,7 +654,7 @@ mod tests {
 
     fn armed_at(clock: &FixedClock) -> Result<Ringer, Box<dyn std::error::Error>> {
         let mut ringer = ringer()?;
-        ringer.touched(Target::Elsewhere, clock.now()?, UtcOffset::UTC);
+        ringer.touched(Target::Entry(0), 0, clock.now()?, UtcOffset::UTC);
         Ok(ringer)
     }
 
@@ -652,8 +669,9 @@ mod tests {
     fn face(hour: u8, minute: u8, battery: Gauge) -> Result<Face, TimeError> {
         Ok(Face {
             time: TimeOfDay::new(hour, minute)?,
-            alarm: TimeOfDay::new(ALARM_HOUR, ALARM_MINUTE)?,
-            armed: false,
+            alarms: vec![TimeOfDay::new(ALARM_HOUR, ALARM_MINUTE)?],
+            active: None,
+            picked: TimeOfDay::new(ALARM_HOUR, ALARM_MINUTE)?,
             ringing: false,
             battery,
             screen: Screen::Alarm,
@@ -795,7 +813,7 @@ mod tests {
         let mut display = FakeDisplay::default();
         let mut ringer = ringer()?;
         let before = at(6, 59, 0);
-        ringer.touched(Target::Elsewhere, before.now()?, UtcOffset::UTC);
+        ringer.touched(Target::Entry(0), 0, before.now()?, UtcOffset::UTC);
         minute(
             &before,
             UtcOffset::UTC,
@@ -823,12 +841,60 @@ mod tests {
     #[test]
     fn a_change_to_the_ringer_is_logged_once() -> Result<(), Box<dyn std::error::Error>> {
         let before = ringer()?;
-        let mut after = before;
+        let mut after = before.clone();
         assert_eq!(change(&before, &after), None);
-        after.touched(Target::Elsewhere, at(6, 0, 0).now()?, UtcOffset::UTC);
+        after.touched(Target::Entry(0), 0, at(6, 0, 0).now()?, UtcOffset::UTC);
         assert_eq!(
             change(&before, &after),
-            Some(kmsg::line("alarm 07:00 armed, Quiet"))
+            Some(kmsg::line("alarms [07:00], active 07:00, Quiet"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_moved_slider_is_not_logged() -> Result<(), Box<dyn std::error::Error>> {
+        let before = ringer()?;
+        let mut after = before.clone();
+        after.touched(
+            Target::Wheel(Field::Hour, Row::Picked),
+            500,
+            at(6, 0, 0).now()?,
+            UtcOffset::UTC,
+        );
+        after.dragged(400, 46);
+        assert_ne!(after.picked(), before.picked());
+        assert_eq!(change(&before, &after), None);
+        Ok(())
+    }
+
+    #[test]
+    fn every_saved_alarm_is_restored_and_the_armed_one_rings_next()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(19, 37, 30);
+        let mut settings = Ok(FakeSettings::blank());
+        let mut started = boot(&mut settings, &clock)?;
+        let mut ringer = started.ringer.clone();
+        for target in [
+            Target::Wheel(Field::Hour, Row::Above),
+            Target::Add,
+            Target::Wheel(Field::Hour, Row::Below),
+            Target::Wheel(Field::Hour, Row::Below),
+            Target::Add,
+        ] {
+            ringer.touched(target, 0, clock.now()?, berlin()?);
+            ringer.lifted();
+        }
+        ringer.touched(Target::Entry(2), 0, clock.now()?, berlin()?);
+        let current = choices(&ringer, berlin()?, WINDOW_SECONDS);
+        assert_eq!(current.alarms.iter().filter(|set| set.armed).count(), 1);
+        persisted(&mut settings, &mut started.saved, current);
+
+        let rebooted = boot(&mut settings, &at(20, 0, 0))?;
+        assert_eq!(rebooted.ringer.alarms(), ringer.alarms());
+        assert_eq!(rebooted.ringer.active(), ringer.active());
+        assert_eq!(
+            rebooted.ringer.next(),
+            Some(Alarm::once(TimeOfDay::new(8, 0)?).next_after(at(20, 0, 0).now()?, berlin()?))
         );
         Ok(())
     }
@@ -1278,7 +1344,10 @@ mod tests {
         assert!(rebooted.ringer.armed());
         assert_eq!(
             rebooted.ringer.next(),
-            Some(Alarm::once(rebooted.ringer.alarm()).next_after(later.now()?, berlin()?))
+            Some(
+                Alarm::once(TimeOfDay::new(ALARM_HOUR, ALARM_MINUTE)?)
+                    .next_after(later.now()?, berlin()?)
+            )
         );
         Ok(())
     }

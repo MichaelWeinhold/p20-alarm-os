@@ -18,6 +18,15 @@ const PERCENT_UNITS: usize = 4;
 const FIGURES: usize = 3;
 const TAB_UNITS: usize = 9;
 const TAB_MARGIN_UNITS: usize = 4;
+const SIDE_UNITS: usize = 7;
+const SIDE_GAP_UNITS: usize = 3;
+const ROW_UNITS: usize = 8;
+const SECTION_GAP_UNITS: usize = 3;
+const COLON_UNITS: usize = 2 * (DIGIT_UNITS + 1);
+const MINUTE_UNITS: usize = COLON_UNITS + 2;
+const DASH: u8 = 0b100_0000;
+
+pub const SAVED_ALARMS: usize = 4;
 
 const BELL: [&str; TAB_UNITS] = [
     "....#....",
@@ -86,27 +95,68 @@ impl Screen {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Face {
     pub time: TimeOfDay,
-    pub alarm: TimeOfDay,
-    pub armed: bool,
+    pub alarms: Vec<TimeOfDay>,
+    pub active: Option<usize>,
+    pub picked: TimeOfDay,
     pub ringing: bool,
     pub battery: Gauge,
     pub screen: Screen,
 }
 
+impl Face {
+    fn active_alarm(&self) -> Option<TimeOfDay> {
+        self.active
+            .and_then(|index| self.alarms.get(index).copied())
+    }
+
+    fn addable(&self) -> bool {
+        self.alarms.len() < SAVED_ALARMS && !self.alarms.contains(&self.picked)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Step {
-    Up,
-    Down,
+pub enum Field {
+    Hour,
+    Minute,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Row {
+    Above,
+    Picked,
+    Below,
+}
+
+impl Row {
+    const ALL: [Self; 3] = [Self::Above, Self::Picked, Self::Below];
+
+    #[must_use]
+    pub fn step(self) -> i8 {
+        match self {
+            Self::Above => -1,
+            Self::Picked => 0,
+            Self::Below => 1,
+        }
+    }
+
+    fn index(self) -> usize {
+        match self {
+            Self::Above => 0,
+            Self::Picked => 1,
+            Self::Below => 2,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Target {
-    Hour(Step),
-    Minute(Step),
-    Elsewhere,
+    Wheel(Field, Row),
+    Add,
+    Entry(usize),
+    Remove(usize),
     Tab(Screen),
     Blank,
 }
@@ -196,8 +246,59 @@ fn layout(size: Size) -> Option<Layout> {
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Sheet {
+    unit: usize,
+    clock: (usize, usize),
+    active: (usize, usize),
+    left: usize,
+    side: usize,
+    wheel_top: usize,
+    list_top: usize,
+}
+
+impl Sheet {
+    fn wheel_row(self, row: Row) -> usize {
+        self.wheel_top + row.index() * ROW_UNITS * self.unit
+    }
+
+    fn list_row(self, index: usize) -> usize {
+        self.list_top + index * ROW_UNITS * self.unit
+    }
+
+    fn band(self, top: usize, y: usize) -> bool {
+        y + self.unit / 2 >= top && y + self.unit / 2 < top + ROW_UNITS * self.unit
+    }
+}
+
+fn sheet(size: Size, layout: &Layout) -> Option<Sheet> {
+    let unit = layout.alarm_unit;
+    let clock_top = 3 * layout.unit;
+    let active_top = clock_top + DIGIT_HEIGHT_UNITS * layout.unit + 2 * unit;
+    let wheel_top = active_top + (DIGIT_HEIGHT_UNITS + SECTION_GAP_UNITS) * unit;
+    let list_top = wheel_top + (2 * ROW_UNITS + DIGIT_HEIGHT_UNITS + SECTION_GAP_UNITS) * unit;
+    let list_bottom = list_top + (SAVED_ALARMS * ROW_UNITS - 1) * unit;
+    let across = (UNITS_ACROSS + SIDE_GAP_UNITS + SIDE_UNITS) * unit;
+    if list_bottom > layout.bar_top || across > size.width {
+        return None;
+    }
+    let left = (size.width - across) / 2;
+    Some(Sheet {
+        unit,
+        clock: (layout.clock.0, clock_top),
+        active: (layout.alarm.0, active_top),
+        left,
+        side: left + (UNITS_ACROSS + SIDE_GAP_UNITS) * unit,
+        wheel_top,
+        list_top,
+    })
+}
+
 fn digit(frame: &mut Frame, x: usize, y: usize, unit: usize, value: u8, colour: Colour) {
-    let segments = SEGMENTS[usize::from(value % 10)];
+    segmented(frame, x, y, unit, SEGMENTS[usize::from(value % 10)], colour);
+}
+
+fn segmented(frame: &mut Frame, x: usize, y: usize, unit: usize, segments: u8, colour: Colour) {
     let width = DIGIT_UNITS * unit;
     let right = x + width - unit;
     let bars = [
@@ -216,26 +317,50 @@ fn digit(frame: &mut Frame, x: usize, y: usize, unit: usize, value: u8, colour: 
     }
 }
 
-fn time(
-    frame: &mut Frame,
-    (left, y): (usize, usize),
-    unit: usize,
-    value: TimeOfDay,
-    colour: Colour,
-) {
-    let mut x = left;
-    let advance = (DIGIT_UNITS + 1) * unit;
-    for figure in [value.hour() / 10, value.hour() % 10] {
-        digit(frame, x, y, unit, figure, colour);
-        x += advance;
-    }
+fn pair(frame: &mut Frame, (x, y): (usize, usize), unit: usize, value: u8, colour: Colour) {
+    digit(frame, x, y, unit, value / 10, colour);
+    digit(
+        frame,
+        x + (DIGIT_UNITS + 1) * unit,
+        y,
+        unit,
+        value % 10,
+        colour,
+    );
+}
+
+fn colon(frame: &mut Frame, (x, y): (usize, usize), unit: usize, colour: Colour) {
     frame.fill(x, y + 2 * unit, unit, unit, colour);
     frame.fill(x, y + 4 * unit, unit, unit, colour);
-    x += 2 * unit;
-    for figure in [value.minute() / 10, value.minute() % 10] {
-        digit(frame, x, y, unit, figure, colour);
-        x += advance;
-    }
+}
+
+fn time(
+    frame: &mut Frame,
+    (x, y): (usize, usize),
+    unit: usize,
+    value: Option<TimeOfDay>,
+    colour: Colour,
+) {
+    colon(frame, (x + COLON_UNITS * unit, y), unit, colour);
+    let Some(value) = value else {
+        for figure in [
+            0,
+            DIGIT_UNITS + 1,
+            MINUTE_UNITS,
+            MINUTE_UNITS + DIGIT_UNITS + 1,
+        ] {
+            segmented(frame, x + figure * unit, y, unit, DASH, colour);
+        }
+        return;
+    };
+    pair(frame, (x, y), unit, value.hour(), colour);
+    pair(
+        frame,
+        (x + MINUTE_UNITS * unit, y),
+        unit,
+        value.minute(),
+        colour,
+    );
 }
 
 fn percent_sign(frame: &mut Frame, x: usize, y: usize, unit: usize, colour: Colour) {
@@ -310,6 +435,68 @@ fn symbol(
     }
 }
 
+fn plus(frame: &mut Frame, (x, y): (usize, usize), unit: usize, colour: Colour) {
+    let middle = SIDE_UNITS / 2 * unit;
+    frame.fill(x, y + middle, SIDE_UNITS * unit, unit, colour);
+    frame.fill(x + middle, y, unit, SIDE_UNITS * unit, colour);
+}
+
+fn cross(frame: &mut Frame, (x, y): (usize, usize), unit: usize, colour: Colour) {
+    for step in 0..SIDE_UNITS {
+        let back = SIDE_UNITS - 1 - step;
+        frame.fill(x + step * unit, y + step * unit, unit, unit, colour);
+        frame.fill(x + back * unit, y + step * unit, unit, unit, colour);
+    }
+}
+
+fn wheels(frame: &mut Frame, sheet: Sheet, picked: TimeOfDay) {
+    let unit = sheet.unit;
+    for row in Row::ALL {
+        let y = sheet.wheel_row(row);
+        let colour = if row == Row::Picked { FOREGROUND } else { DIM };
+        let hour = picked.stepped_hour(row.step()).hour();
+        let minute = picked.stepped_minute(row.step()).minute();
+        pair(frame, (sheet.left, y), unit, hour, colour);
+        pair(
+            frame,
+            (sheet.left + MINUTE_UNITS * unit, y),
+            unit,
+            minute,
+            colour,
+        );
+    }
+    colon(
+        frame,
+        (
+            sheet.left + COLON_UNITS * unit,
+            sheet.wheel_row(Row::Picked),
+        ),
+        unit,
+        FOREGROUND,
+    );
+}
+
+fn alarm_screen(frame: &mut Frame, layout: &Layout, sheet: Sheet, face: &Face) {
+    let unit = sheet.unit;
+    time(frame, sheet.clock, layout.unit, Some(face.time), FOREGROUND);
+    let active = face.active_alarm();
+    let colour = if active.is_some() { FOREGROUND } else { DIM };
+    time(frame, sheet.active, unit, active, colour);
+    wheels(frame, sheet, face.picked);
+    let add = if face.addable() { FOREGROUND } else { DIM };
+    plus(frame, (sheet.side, sheet.wheel_row(Row::Picked)), unit, add);
+    for (index, &alarm) in face.alarms.iter().take(SAVED_ALARMS).enumerate() {
+        let top = sheet.list_row(index);
+        let colour = if face.active == Some(index) {
+            FOREGROUND
+        } else {
+            DIM
+        };
+        time(frame, (sheet.left, top), unit, Some(alarm), colour);
+        cross(frame, (sheet.side, top), unit, DIM);
+    }
+}
+
 fn bar(frame: &mut Frame, layout: &Layout, current: Screen) {
     let width = frame.size().width;
     let across = TAB_UNITS * layout.tab_unit;
@@ -334,9 +521,9 @@ pub fn render(size: Size, face: &Face) -> Frame {
     let Some(layout) = layout(size) else {
         return frame;
     };
-    if face.ringing || face.screen == Screen::Alarm {
-        let digits = if face.ringing { BACKGROUND } else { FOREGROUND };
-        time(&mut frame, layout.clock, layout.unit, face.time, digits);
+    let digits = if face.ringing { BACKGROUND } else { FOREGROUND };
+    let sheet = sheet(size, &layout).filter(|_| face.screen == Screen::Alarm);
+    if face.ringing || sheet.is_some() {
         let status = if face.battery.level == Level::Low {
             WARNING
         } else {
@@ -349,27 +536,76 @@ pub fn render(size: Size, face: &Face) -> Frame {
             face.battery,
             status,
         );
-        let alarm = if face.armed { digits } else { DIM };
+    }
+    if face.ringing {
+        time(
+            &mut frame,
+            layout.clock,
+            layout.unit,
+            Some(face.time),
+            digits,
+        );
         time(
             &mut frame,
             layout.alarm,
             layout.alarm_unit,
-            face.alarm,
-            alarm,
+            face.active_alarm(),
+            digits,
         );
+        return frame;
     }
-    if !face.ringing {
-        bar(&mut frame, &layout, face.screen);
+    if let Some(sheet) = sheet {
+        alarm_screen(&mut frame, &layout, sheet, face);
     }
+    bar(&mut frame, &layout, face.screen);
     frame
 }
 
 #[must_use]
+pub fn pitch(size: Size) -> usize {
+    layout(size).map_or(1, |layout| layout.unit.max(1))
+}
+
+fn sheet_target(sheet: Sheet, x: usize, y: usize) -> Target {
+    let unit = sheet.unit;
+    let side = x + 3 * unit / 2 >= sheet.side;
+    let wheel_bottom = sheet.wheel_row(Row::Below) + (DIGIT_HEIGHT_UNITS + 1) * unit;
+    if y + unit >= sheet.wheel_top && y < wheel_bottom {
+        if side {
+            return if sheet.band(sheet.wheel_row(Row::Picked), y) {
+                Target::Add
+            } else {
+                Target::Blank
+            };
+        }
+        let field = if x < sheet.left + COLON_UNITS * unit + unit / 2 {
+            Field::Hour
+        } else {
+            Field::Minute
+        };
+        let row = Row::ALL
+            .into_iter()
+            .find(|&row| sheet.band(sheet.wheel_row(row), y))
+            .unwrap_or(if y < sheet.wheel_top {
+                Row::Above
+            } else {
+                Row::Below
+            });
+        return Target::Wheel(field, row);
+    }
+    match (0..SAVED_ALARMS).find(|&index| sheet.band(sheet.list_row(index), y)) {
+        Some(index) if side => Target::Remove(index),
+        Some(index) => Target::Entry(index),
+        None => Target::Blank,
+    }
+}
+
+#[must_use]
 pub fn target(size: Size, screen: Screen, x: usize, y: usize) -> Target {
-    let layout = layout(size);
-    if let Some(layout) = layout
-        && y >= layout.bar_top
-    {
+    let Some(layout) = layout(size) else {
+        return Target::Blank;
+    };
+    if y >= layout.bar_top {
         return Target::Tab(if x < size.width / 3 {
             Screen::Alarm
         } else if x < size.width * 2 / 3 {
@@ -378,26 +614,9 @@ pub fn target(size: Size, screen: Screen, x: usize, y: usize) -> Target {
             Screen::Settings
         });
     }
-    if screen != Screen::Alarm {
-        return Target::Blank;
-    }
-    let Some(layout) = layout else {
-        return Target::Elsewhere;
-    };
-    let height = DIGIT_HEIGHT_UNITS * layout.alarm_unit;
-    let (_, top) = layout.alarm;
-    if y + height / 2 < top || y >= top + height + height / 2 {
-        return Target::Elsewhere;
-    }
-    let step = if y < top + height / 2 {
-        Step::Up
-    } else {
-        Step::Down
-    };
-    if x < size.width / 2 {
-        Target::Hour(step)
-    } else {
-        Target::Minute(step)
+    match sheet(size, &layout) {
+        Some(sheet) if screen == Screen::Alarm => sheet_target(sheet, x, y),
+        _ => Target::Blank,
     }
 }
 
@@ -411,6 +630,10 @@ mod tests {
     const SMALL: Size = Size {
         width: 100,
         height: 140,
+    };
+    const SHEET: Size = Size {
+        width: 108,
+        height: 228,
     };
     const PANEL: Size = Size {
         width: 1080,
@@ -441,14 +664,15 @@ mod tests {
     }
 
     fn face(
-        armed: bool,
+        active: Option<usize>,
         ringing: bool,
         battery: Gauge,
     ) -> Result<Face, Box<dyn std::error::Error>> {
         Ok(Face {
             time: TimeOfDay::new(19, 37)?,
-            alarm: TimeOfDay::new(6, 45)?,
-            armed,
+            alarms: vec![TimeOfDay::new(6, 45)?, TimeOfDay::new(7, 30)?],
+            active,
+            picked: TimeOfDay::new(7, 15)?,
             ringing,
             battery,
             screen: Screen::Alarm,
@@ -456,25 +680,46 @@ mod tests {
     }
 
     #[test]
-    fn the_time_the_armed_alarm_and_a_full_battery_are_drawn_as_recorded() -> Outcome {
-        let frame = render(SMALL, &face(true, false, charged(80)?)?);
-        assert_eq!(picture(&frame), include_str!("../testdata/face-1937.txt"));
+    fn the_alarm_screen_shows_the_active_alarm_the_slider_and_the_list_as_recorded() -> Outcome {
+        let frame = render(SHEET, &face(Some(0), false, charged(80)?)?);
+        assert_eq!(picture(&frame), include_str!("../testdata/face-sheet.txt"));
         Ok(())
     }
 
     #[test]
-    fn a_low_battery_is_a_warning_and_a_disarmed_alarm_is_dim() -> Outcome {
-        let frame = render(SMALL, &face(false, false, charged(7)?)?);
+    fn with_no_active_alarm_and_a_full_list_the_alarm_and_the_add_are_dim() -> Outcome {
+        let full = Face {
+            alarms: [(5, 0), (6, 45), (7, 30), (9, 0)]
+                .into_iter()
+                .map(|(hour, minute)| TimeOfDay::new(hour, minute))
+                .collect::<Result<_, _>>()?,
+            ..face(None, false, charged(7)?)?
+        };
+        let frame = render(SHEET, &full);
         assert_eq!(
             picture(&frame),
-            include_str!("../testdata/face-1937-low.txt")
+            include_str!("../testdata/face-sheet-full.txt")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_empty_list_shows_dashes_and_an_unread_battery_the_low_symbol() -> Outcome {
+        let empty = Face {
+            alarms: Vec::new(),
+            ..face(None, false, Gauge::UNREAD)?
+        };
+        let frame = render(SHEET, &empty);
+        assert_eq!(
+            picture(&frame),
+            include_str!("../testdata/face-sheet-empty.txt")
         );
         Ok(())
     }
 
     #[test]
     fn a_ringing_alarm_turns_the_face_amber() -> Outcome {
-        let frame = render(SMALL, &face(true, true, charged(64)?)?);
+        let frame = render(SMALL, &face(Some(0), true, charged(64)?)?);
         assert_eq!(
             picture(&frame),
             include_str!("../testdata/face-1937-ringing.txt")
@@ -483,20 +728,10 @@ mod tests {
     }
 
     #[test]
-    fn an_unread_battery_draws_the_low_symbol_and_no_figures() -> Outcome {
-        let frame = render(SMALL, &face(true, false, Gauge::UNREAD)?);
-        assert_eq!(
-            picture(&frame),
-            include_str!("../testdata/face-1937-unread.txt")
-        );
-        Ok(())
-    }
-
-    #[test]
     fn the_timer_screen_shows_only_the_bar_with_its_tab_marked() -> Outcome {
         let timer = Face {
             screen: Screen::Timer,
-            ..face(true, false, charged(80)?)?
+            ..face(Some(0), false, charged(80)?)?
         };
         let frame = render(SMALL, &timer);
         assert_eq!(picture(&frame), include_str!("../testdata/face-timer.txt"));
@@ -504,17 +739,17 @@ mod tests {
     }
 
     #[test]
-    fn each_screen_marks_its_own_tab_and_only_the_alarm_screen_shows_the_time() -> Outcome {
+    fn each_screen_marks_its_own_tab_and_only_the_alarm_screen_shows_the_slider() -> Outcome {
         let mut seen = Vec::new();
         for screen in Screen::ALL {
             let face = Face {
                 screen,
-                ..face(true, false, charged(80)?)?
+                ..face(Some(0), false, charged(80)?)?
             };
             let frame = render(PANEL, &face);
             let marked: Vec<_> = lit(&frame)
                 .into_iter()
-                .filter(|&(_, y, colour)| y > PANEL.height * 9 / 10 && colour == FOREGROUND)
+                .filter(|&(_, y, colour)| y > PANEL.height * 19 / 20 && colour == FOREGROUND)
                 .map(|(x, _, _)| x * Screen::ALL.len() / PANEL.width)
                 .collect();
             assert_ne!(marked, []);
@@ -522,7 +757,7 @@ mod tests {
             assert!(!seen.contains(&marked[0]));
             seen.push(marked[0]);
             assert_eq!(
-                frame.row(PANEL.height / 2).contains(&FOREGROUND),
+                frame.row(1000).contains(&FOREGROUND),
                 screen == Screen::Alarm
             );
         }
@@ -531,10 +766,23 @@ mod tests {
 
     #[test]
     fn a_ringing_alarm_takes_the_whole_panel_with_no_bar() -> Outcome {
-        let frame = render(PANEL, &face(true, true, charged(64)?)?);
+        let frame = render(PANEL, &face(Some(0), true, charged(64)?)?);
         assert!(
             (PANEL.height * 9 / 10..PANEL.height)
                 .all(|y| frame.row(y).iter().all(|&colour| colour == RINGING))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_ringing_face_with_no_active_alarm_shows_dashes() -> Outcome {
+        let none = render(SMALL, &face(None, true, charged(64)?)?);
+        let some = render(SMALL, &face(Some(0), true, charged(64)?)?);
+        assert_ne!(none, some);
+        assert!(
+            lit(&none)
+                .iter()
+                .all(|&(_, _, colour)| colour != FOREGROUND)
         );
         Ok(())
     }
@@ -545,9 +793,9 @@ mod tests {
         for value in 0..10 {
             let face = Face {
                 time: TimeOfDay::new(0, value)?,
-                ..face(true, false, charged(50)?)?
+                ..face(Some(0), false, charged(50)?)?
             };
-            let shape = picture(&render(SMALL, &face));
+            let shape = picture(&render(SHEET, &face));
             assert!(!seen.contains(&shape));
             seen.push(shape);
         }
@@ -558,10 +806,24 @@ mod tests {
     fn every_level_and_capacity_has_its_own_symbol() -> Outcome {
         let mut seen = Vec::new();
         for value in [0, 9, 20, 21, 55, 79, 80, 100] {
-            let shape = picture(&render(SMALL, &face(true, false, charged(value)?)?));
+            let shape = picture(&render(SHEET, &face(Some(0), false, charged(value)?)?));
             assert!(!seen.contains(&shape));
             seen.push(shape);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn the_wheels_wrap_past_midnight_and_the_hour() -> Outcome {
+        let wrapped = Face {
+            picked: TimeOfDay::new(23, 59)?,
+            ..face(Some(0), false, charged(50)?)?
+        };
+        let zero = Face {
+            picked: TimeOfDay::new(0, 0)?,
+            ..face(Some(0), false, charged(50)?)?
+        };
+        assert_ne!(render(SHEET, &wrapped), render(SHEET, &zero));
         Ok(())
     }
 
@@ -582,13 +844,12 @@ mod tests {
     #[test]
     fn the_face_fits_the_panel_with_the_battery_in_the_top_right_corner() -> Outcome {
         for (value, colour) in [(7, WARNING), (100, FOREGROUND)] {
-            let frame = render(PANEL, &face(true, false, charged(value)?)?);
+            let frame = render(PANEL, &face(Some(0), false, charged(value)?)?);
             assert_eq!(frame.size(), PANEL);
             assert!((0..PANEL.height).all(|y| frame.row(y).len() == PANEL.width));
-            let corner = |x: usize, y: usize| x > PANEL.width / 2 && y < PANEL.height / 10;
-            let (bar, above): (Vec<_>, Vec<_>) = lit(&frame)
-                .into_iter()
-                .partition(|&(_, y, _)| y > PANEL.height * 9 / 10);
+            let corner = |x: usize, y: usize| x > PANEL.width / 2 && y < 130;
+            let (bar, above): (Vec<_>, Vec<_>) =
+                lit(&frame).into_iter().partition(|&(_, y, _)| y >= 2093);
             let (status, rest): (Vec<_>, Vec<_>) =
                 above.into_iter().partition(|&(x, y, _)| corner(x, y));
             assert!(
@@ -603,18 +864,20 @@ mod tests {
                     .iter()
                     .all(|&(x, y, _)| x < PANEL.width - 40 && y > 40)
             );
-            assert!(rest.iter().all(|&(_, y, _)| y > PANEL.height / 3));
-            assert!(rest.iter().all(|&(_, y, _)| y < PANEL.height * 4 / 5));
-            assert!(rest.iter().all(|&(_, _, lit)| lit == FOREGROUND));
-            assert!(frame.row(PANEL.height / 2).contains(&FOREGROUND));
+            assert!(rest.iter().all(|&(_, y, _)| y >= 138));
+            assert!(rest.iter().all(|&(x, _, _)| x > 40 && x < PANEL.width - 40));
+            assert!(
+                rest.iter()
+                    .all(|&(_, _, lit)| lit == FOREGROUND || lit == DIM)
+            );
         }
         Ok(())
     }
 
     #[test]
-    fn the_battery_leaves_the_time_and_the_alarm_as_they_were() -> Outcome {
-        let full = render(PANEL, &face(true, false, charged(100)?)?);
-        let unread = render(PANEL, &face(true, false, Gauge::UNREAD)?);
+    fn the_battery_leaves_the_rest_of_the_screen_as_it_was() -> Outcome {
+        let full = render(PANEL, &face(Some(0), false, charged(100)?)?);
+        let unread = render(PANEL, &face(Some(0), false, Gauge::UNREAD)?);
         let below = PANEL.height / 10;
         assert!((below..PANEL.height).all(|y| full.row(y) == unread.row(y)));
         Ok(())
@@ -626,29 +889,66 @@ mod tests {
             width: 100,
             height: 64,
         };
-        let frame = render(short, &face(true, false, Gauge::UNREAD)?);
+        let frame = render(short, &face(Some(0), false, Gauge::UNREAD)?);
         assert_eq!(frame, Frame::filled(short, BACKGROUND));
-        assert_eq!(target(short, Screen::Alarm, 10, 10), Target::Elsewhere);
+        assert_eq!(target(short, Screen::Alarm, 10, 10), Target::Blank);
         assert_eq!(target(short, Screen::Timer, 10, 10), Target::Blank);
         Ok(())
     }
 
     #[test]
-    fn a_tap_on_the_alarm_steps_the_half_it_lands_on() {
-        let alarm = |x, y| target(PANEL, Screen::Alarm, x, y);
-        assert_eq!(alarm(400, 1600), Target::Hour(Step::Up));
-        assert_eq!(alarm(400, 1700), Target::Hour(Step::Down));
-        assert_eq!(alarm(700, 1510), Target::Minute(Step::Up));
-        assert_eq!(alarm(1079, 1810), Target::Minute(Step::Down));
+    fn a_frame_too_short_for_the_sheet_shows_only_the_bar() -> Outcome {
+        let frame = render(SMALL, &face(Some(0), false, charged(80)?)?);
+        let timer = Face {
+            screen: Screen::Timer,
+            ..face(Some(0), false, charged(80)?)?
+        };
+        assert_eq!(picture(&frame).len(), picture(&render(SMALL, &timer)).len());
+        assert!(lit(&frame).iter().all(|&(_, y, _)| y > SMALL.height / 2));
+        assert_eq!(target(SMALL, Screen::Alarm, 50, 20), Target::Blank);
+        Ok(())
     }
 
     #[test]
-    fn a_tap_away_from_the_alarm_and_the_bar_is_elsewhere() {
+    fn a_tap_on_a_wheel_picks_its_field_and_row() {
         let alarm = |x, y| target(PANEL, Screen::Alarm, x, y);
-        assert_eq!(alarm(509, 1100), Target::Elsewhere);
-        assert_eq!(alarm(400, 1490), Target::Elsewhere);
-        assert_eq!(alarm(700, 1820), Target::Elsewhere);
-        assert_eq!(alarm(540, 2000), Target::Elsewhere);
+        assert_eq!(alarm(300, 720), Target::Wheel(Field::Hour, Row::Above));
+        assert_eq!(alarm(423, 800), Target::Wheel(Field::Hour, Row::Above));
+        assert_eq!(alarm(424, 800), Target::Wheel(Field::Minute, Row::Above));
+        assert_eq!(alarm(300, 1000), Target::Wheel(Field::Hour, Row::Picked));
+        assert_eq!(alarm(600, 1000), Target::Wheel(Field::Minute, Row::Picked));
+        assert_eq!(alarm(0, 1200), Target::Wheel(Field::Hour, Row::Below));
+        assert_eq!(alarm(700, 1287), Target::Wheel(Field::Minute, Row::Below));
+    }
+
+    #[test]
+    fn a_tap_beside_the_picked_row_adds_and_beside_another_is_blank() {
+        let alarm = |x, y| target(PANEL, Screen::Alarm, x, y);
+        assert_eq!(alarm(701, 1000), Target::Add);
+        assert_eq!(alarm(1079, 909), Target::Add);
+        assert_eq!(alarm(800, 800), Target::Blank);
+        assert_eq!(alarm(800, 1200), Target::Blank);
+    }
+
+    #[test]
+    fn a_tap_on_a_list_row_picks_the_entry_or_its_cross() {
+        let alarm = |x, y| target(PANEL, Screen::Alarm, x, y);
+        assert_eq!(alarm(300, 1323), Target::Entry(0));
+        assert_eq!(alarm(300, 1506), Target::Entry(0));
+        assert_eq!(alarm(300, 1507), Target::Entry(1));
+        assert_eq!(alarm(700, 1800), Target::Entry(2));
+        assert_eq!(alarm(701, 1800), Target::Remove(2));
+        assert_eq!(alarm(1000, 2058), Target::Remove(3));
+    }
+
+    #[test]
+    fn a_tap_between_the_parts_of_the_sheet_is_blank() {
+        let alarm = |x, y| target(PANEL, Screen::Alarm, x, y);
+        assert_eq!(alarm(540, 300), Target::Blank);
+        assert_eq!(alarm(540, 600), Target::Blank);
+        assert_eq!(alarm(540, 1300), Target::Blank);
+        assert_eq!(alarm(540, 2059), Target::Blank);
+        assert_eq!(alarm(540, 2092), Target::Blank);
     }
 
     #[test]
@@ -667,8 +967,21 @@ mod tests {
     #[test]
     fn a_tap_above_the_bar_on_an_empty_screen_is_blank() {
         for screen in [Screen::Timer, Screen::Settings] {
-            assert_eq!(target(PANEL, screen, 400, 1600), Target::Blank);
-            assert_eq!(target(PANEL, screen, 509, 1100), Target::Blank);
+            assert_eq!(target(PANEL, screen, 400, 1000), Target::Blank);
+            assert_eq!(target(PANEL, screen, 300, 1400), Target::Blank);
         }
+    }
+
+    #[test]
+    fn a_wheel_steps_one_layout_unit_at_a_time() {
+        assert_eq!(pitch(PANEL), 46);
+        assert_eq!(pitch(SHEET), 4);
+        assert_eq!(
+            pitch(Size {
+                width: 1,
+                height: 1
+            }),
+            1
+        );
     }
 }

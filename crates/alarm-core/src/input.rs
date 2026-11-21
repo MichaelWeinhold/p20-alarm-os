@@ -8,5 +8,7 @@ pub enum Key {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum InputEvent {
     Touch { x: usize, y: usize },
+    Move { x: usize, y: usize },
+    Lift,
     Press(Key),
 }
