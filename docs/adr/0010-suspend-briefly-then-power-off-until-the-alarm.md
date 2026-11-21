@@ -1,6 +1,7 @@
 # 10. Suspend for two minutes after a use, then power off until the alarm
 
-- **Status:** Accepted; D2 amended for the cable by issue 52, and for a toggle by issue 83
+- **Status:** Accepted; D2 amended for the cable by issue 52, for a toggle by issue 83,
+  and for a timer by issue 81
 - **Date:** 2026-11-13
 - **Issue:** #12
 - **Supersedes:** ADR 0008, D1
@@ -47,6 +48,10 @@ once `alarmd` draws it. The two minutes are a default, changed by a setting.
 Off the cable, it stays suspended only **while an alarm rings or is snoozed, or is due
 within two minutes of the window's end**, since the phone would be switched on again at
 once (D3). The RTC wakes the suspend for it, and the window starts again after it.
+
+**A running timer holds the phone suspended as a snooze does**, with the RTC armed for
+the earlier of its end and the snooze's. A timer lives only in memory, and D3 arms the
+PMU for alarms alone, so a power-off would lose it. Amended by issue 81.
 
 **On the cable, the phone stays suspended** when the window ends, with the RTC armed for
 the next alarm, and ADR 0008, D3's charge stop keeps running. A power-off on the cable

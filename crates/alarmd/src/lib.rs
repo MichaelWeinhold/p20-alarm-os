@@ -9,7 +9,7 @@ use alarm_core::hardware::{
 use alarm_core::light::{LIT_SECONDS, Light};
 use alarm_core::ringer::{Ringer, show};
 use alarm_core::settings::{self, Choices, SetAlarm};
-use alarm_core::time::{TimeOfDay, UnixSeconds, UtcOffset, seconds_to_next_minute};
+use alarm_core::time::{Countdown, TimeOfDay, UnixSeconds, UtcOffset, seconds_to_next_minute};
 use alarm_core::vibration::Vibration;
 use alarm_core::window::{Answer, WINDOW_SECONDS, Window, power_on_at};
 use pid1::kmsg;
@@ -52,11 +52,19 @@ pub fn minute(
         Gauge::read(battery, ChargeLimit::DEFAULT)
     });
     let wait_seconds = match show(clock, offset, ringer, light, gauge, display) {
-        Ok(now) => light
-            .seconds_left(now)
-            .map_or(seconds_to_next_minute(now), |left| {
-                left.min(seconds_to_next_minute(now))
-            }),
+        Ok(now) => {
+            let timer = ringer.running_until().map(|ends| {
+                if light.lit() {
+                    WOKEN_SECONDS
+                } else {
+                    ends.0.saturating_sub(now.0).max(1).unsigned_abs()
+                }
+            });
+            [light.seconds_left(now), timer]
+                .into_iter()
+                .flatten()
+                .fold(seconds_to_next_minute(now), u64::min)
+        }
         Err(error) => {
             log.push(kmsg::failure("showing the time", &error));
             RETRY_SECONDS
@@ -138,7 +146,7 @@ fn suspended(
 ) -> Result<Rest, HardwareError> {
     let now = clock.now()?;
     sleep.window.dark(now);
-    let until = match sleep.window.answer(now, ringer.ring(), ringer.next()) {
+    let until = match sleep.window.answer(now, ringer.held(), ringer.next()) {
         Answer::Suspend(at) if at > now => Some(at),
         Answer::PowerOff => {
             let on_at = ringer.next().map(power_on_at);
@@ -255,6 +263,7 @@ pub fn choices(ringer: &Ringer, offset: UtcOffset, window_seconds: i64) -> Choic
                 armed: ringer.active_index() == Some(index) && ringer.armed(),
             })
             .collect(),
+        timers: ringer.timers().to_vec(),
     }
 }
 
@@ -303,6 +312,7 @@ pub fn restored(
         picked,
     );
     ringer.set_power_off(loaded.power_off);
+    ringer.set_timers(loaded.timers.clone());
     if let Some(armed) = armed {
         match clock.now() {
             Ok(now) => {
@@ -379,17 +389,25 @@ pub fn change(before: &Ringer, after: &Ringer) -> Option<String> {
             ringer.next(),
             ringer.ring(),
             ringer.power_off(),
+            ringer.timers().to_vec(),
+            ringer.running_until(),
         )
     };
     let clock = |time: TimeOfDay| format!("{:02}:{:02}", time.hour(), time.minute());
+    let length = |timer: Countdown| format!("{:02}:{:02}", timer.minutes(), timer.seconds());
     (state(before) != state(after)).then(|| {
         let alarms: Vec<String> = after.alarms().iter().map(|&time| clock(time)).collect();
+        let timers: Vec<String> = after.timers().iter().map(|&timer| length(timer)).collect();
         let active = after.active().map_or_else(|| "none".to_owned(), clock);
         let power = if after.power_off() { "on" } else { "off" };
+        let running = after
+            .running_until()
+            .map_or_else(|| "none".to_owned(), |ends| ends.0.to_string());
         kmsg::line(&format!(
-            "alarms [{}], active {active}, {:?}, power-off {power}",
+            "alarms [{}], active {active}, {:?}, power-off {power}, timers [{}], running until {running}",
             alarms.join(", "),
-            after.ring()
+            after.ring(),
+            timers.join(", ")
         ))
     })
 }
@@ -505,7 +523,7 @@ mod tests {
     fn ringing_at(clock: &FixedClock) -> Result<Ringer, Box<dyn std::error::Error>> {
         let mut ringer = ringer()?;
         let before = UnixSeconds(clock.now()?.0 - 60);
-        ringer.touched(Target::Entry(0), 0, before, UtcOffset::UTC);
+        ringer.touched(Target::Entry(0), Screen::Alarm, 0, before, UtcOffset::UTC);
         ringer.tick(clock.now()?, UtcOffset::UTC);
         Ok(ringer)
     }
@@ -662,9 +680,28 @@ mod tests {
         Ok(Ringer::new(TimeOfDay::new(ALARM_HOUR, ALARM_MINUTE)?))
     }
 
+    fn running_at(clock: &FixedClock, seconds: u8) -> Result<Ringer, Box<dyn std::error::Error>> {
+        let mut ringer = ringer()?;
+        ringer.set_timers(vec![Countdown::new(0, seconds)?]);
+        ringer.touched(
+            Target::Start,
+            Screen::Timer,
+            0,
+            clock.now()?,
+            UtcOffset::UTC,
+        );
+        Ok(ringer)
+    }
+
     fn armed_at(clock: &FixedClock) -> Result<Ringer, Box<dyn std::error::Error>> {
         let mut ringer = ringer()?;
-        ringer.touched(Target::Entry(0), 0, clock.now()?, UtcOffset::UTC);
+        ringer.touched(
+            Target::Entry(0),
+            Screen::Alarm,
+            0,
+            clock.now()?,
+            UtcOffset::UTC,
+        );
         Ok(ringer)
     }
 
@@ -687,6 +724,10 @@ mod tests {
             battery,
             screen: Screen::Alarm,
             power_off: true,
+            timers: Vec::new(),
+            countdown: Countdown::default(),
+            left: None,
+            rung: None,
         })
     }
 
@@ -825,7 +866,13 @@ mod tests {
         let mut display = FakeDisplay::default();
         let mut ringer = ringer()?;
         let before = at(6, 59, 0);
-        ringer.touched(Target::Entry(0), 0, before.now()?, UtcOffset::UTC);
+        ringer.touched(
+            Target::Entry(0),
+            Screen::Alarm,
+            0,
+            before.now()?,
+            UtcOffset::UTC,
+        );
         minute(
             &before,
             UtcOffset::UTC,
@@ -855,11 +902,17 @@ mod tests {
         let before = ringer()?;
         let mut after = before.clone();
         assert_eq!(change(&before, &after), None);
-        after.touched(Target::Entry(0), 0, at(6, 0, 0).now()?, UtcOffset::UTC);
+        after.touched(
+            Target::Entry(0),
+            Screen::Alarm,
+            0,
+            at(6, 0, 0).now()?,
+            UtcOffset::UTC,
+        );
         assert_eq!(
             change(&before, &after),
             Some(kmsg::line(
-                "alarms [07:00], active 07:00, Quiet, power-off on"
+                "alarms [07:00], active 07:00, Quiet, power-off on, timers [], running until none"
             ))
         );
         Ok(())
@@ -869,13 +922,76 @@ mod tests {
     fn a_turned_toggle_is_logged() -> Result<(), Box<dyn std::error::Error>> {
         let before = ringer()?;
         let mut after = before.clone();
-        after.touched(Target::PowerOff, 0, at(6, 0, 0).now()?, UtcOffset::UTC);
+        after.touched(
+            Target::PowerOff,
+            Screen::Alarm,
+            0,
+            at(6, 0, 0).now()?,
+            UtcOffset::UTC,
+        );
         assert_eq!(
             change(&before, &after),
             Some(kmsg::line(
-                "alarms [07:00], active none, Quiet, power-off off"
+                "alarms [07:00], active none, Quiet, power-off off, timers [], running until none"
             ))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_started_timer_is_logged_with_its_end() -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(6, 0, 0);
+        let before = ringer()?;
+        let started = running_at(&clock, 45)?;
+        assert_eq!(
+            change(&before, &started),
+            Some(kmsg::line(&format!(
+                "alarms [07:00], active none, Quiet, power-off on, timers [00:45], running until {}",
+                after(&clock, 45)?.0
+            )))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_running_timer_wakes_a_dark_loop_at_its_end_and_a_lit_one_each_second()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut battery = battery(55, ChargeStatus::Discharging);
+        let mut display = FakeDisplay::default();
+        let clock = at(19, 37, 30);
+        let mut ringer = running_at(&clock, 20)?;
+        let dark = minute(
+            &clock,
+            UtcOffset::UTC,
+            &mut battery,
+            &mut ringer,
+            &mut dark(),
+            &mut display,
+        );
+        assert_eq!(dark.wait_seconds, 20);
+        let lit = minute(
+            &clock,
+            UtcOffset::UTC,
+            &mut battery,
+            &mut ringer,
+            &mut lit(),
+            &mut display,
+        );
+        assert_eq!(lit.wait_seconds, WOKEN_SECONDS);
+        Ok(())
+    }
+
+    #[test]
+    fn a_running_timer_keeps_the_phone_on_past_the_window_and_the_rtc_armed_for_its_end()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(19, 37, 30);
+        let ringer = running_at(&clock, 50)?;
+        let mut resting = Resting::unplugged();
+        resting.sleep.window.dark(at(19, 30, 0).now()?);
+        resting.rest(&clock, &ringer, &dark());
+        assert_eq!(resting.offs(), Some([].as_slice()));
+        assert_eq!(resting.armed(), Some([ringer.running_until()].as_slice()));
+        assert_eq!(resting.suspends(), Some(1));
         Ok(())
     }
 
@@ -884,7 +1000,8 @@ mod tests {
         let before = ringer()?;
         let mut after = before.clone();
         after.touched(
-            Target::Wheel(Field::Hour, Row::Picked),
+            Target::Wheel(Field::Left, Row::Picked),
+            Screen::Alarm,
             500,
             at(6, 0, 0).now()?,
             UtcOffset::UTC,
@@ -903,27 +1020,47 @@ mod tests {
         let mut started = boot(&mut settings, &clock)?;
         let mut ringer = started.ringer.clone();
         for target in [
-            Target::Wheel(Field::Hour, Row::Above),
+            Target::Wheel(Field::Left, Row::Above),
             Target::Add,
-            Target::Wheel(Field::Hour, Row::Below),
-            Target::Wheel(Field::Hour, Row::Below),
+            Target::Wheel(Field::Left, Row::Below),
+            Target::Wheel(Field::Left, Row::Below),
             Target::Add,
         ] {
-            ringer.touched(target, 0, clock.now()?, berlin()?);
+            ringer.touched(target, Screen::Alarm, 0, clock.now()?, berlin()?);
             ringer.lifted();
         }
-        ringer.touched(Target::Entry(2), 0, clock.now()?, berlin()?);
+        ringer.touched(Target::Entry(2), Screen::Alarm, 0, clock.now()?, berlin()?);
         let current = choices(&ringer, berlin()?, WINDOW_SECONDS);
         assert_eq!(current.alarms.iter().filter(|set| set.armed).count(), 1);
         persisted(&mut settings, &mut started.saved, current);
 
         let rebooted = boot(&mut settings, &at(20, 0, 0))?;
         assert_eq!(rebooted.ringer.alarms(), ringer.alarms());
+        assert_eq!(rebooted.ringer.timers(), []);
         assert_eq!(rebooted.ringer.active(), ringer.active());
         assert_eq!(
             rebooted.ringer.next(),
             Some(Alarm::once(TimeOfDay::new(8, 0)?).next_after(at(20, 0, 0).now()?, berlin()?))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn every_saved_timer_is_restored_with_the_shortest_on_the_wheels()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(19, 37, 30);
+        let mut settings = Ok(FakeSettings::blank());
+        let mut started = boot(&mut settings, &clock)?;
+        let mut ringer = started.ringer.clone();
+        ringer.set_timers(vec![Countdown::new(12, 5)?, Countdown::new(3, 0)?]);
+        let current = choices(&ringer, berlin()?, WINDOW_SECONDS);
+        assert_eq!(current.timers, ringer.timers());
+        persisted(&mut settings, &mut started.saved, current);
+
+        let rebooted = boot(&mut settings, &at(20, 0, 0))?;
+        assert_eq!(rebooted.ringer.timers(), ringer.timers());
+        assert_eq!(rebooted.ringer.countdown(), Countdown::new(3, 0)?);
+        assert_eq!(rebooted.ringer.running_until(), None);
         Ok(())
     }
 
