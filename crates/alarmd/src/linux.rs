@@ -181,7 +181,7 @@ pub fn run() -> ! {
     let mut absent = Vec::new();
     let mut was_lit = false;
     loop {
-        let before = ringer;
+        let before = ringer.clone();
         let turn = minute(
             &SystemClock,
             offset,

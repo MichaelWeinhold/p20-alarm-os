@@ -23,6 +23,7 @@ const BTN_TOUCH: u16 = 0x14a;
 const ABS_MT_POSITION_X: u16 = 0x35;
 const ABS_MT_POSITION_Y: u16 = 0x36;
 const PRESSED: i32 = 1;
+const RELEASED: i32 = 0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Record {
@@ -68,11 +69,18 @@ fn key(code: u16) -> Option<Key> {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Decoder {
+struct Report {
     x: Option<usize>,
     y: Option<usize>,
     touched: bool,
+    lifted: bool,
     dropped: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Decoder {
+    report: Report,
+    held: bool,
 }
 
 impl Decoder {
@@ -85,27 +93,24 @@ impl Decoder {
             usize::try_from(record.value)
                 .map_err(|_| failed(device, format!("a position of {}", record.value)))
         };
+        let report = &mut self.report;
         match (record.kind, record.code) {
             (EV_SYN, SYN_DROPPED) => {
                 *self = Self {
-                    dropped: true,
-                    ..Self::default()
+                    report: Report {
+                        dropped: true,
+                        ..Report::default()
+                    },
+                    held: false,
                 };
             }
-            (EV_SYN, SYN_REPORT) => {
-                let frame = std::mem::take(self);
-                if frame.touched && !frame.dropped {
-                    return match (frame.x, frame.y) {
-                        (Some(x), Some(y)) => Ok(Some(InputEvent::Touch { x, y })),
-                        _ => Err(failed(device, "a touch without a position".to_owned())),
-                    };
-                }
-            }
-            _ if self.dropped => {}
+            (EV_SYN, SYN_REPORT) => return self.reported(device),
+            _ if report.dropped => {}
+            (EV_KEY, BTN_TOUCH) if record.value == RELEASED => report.lifted = true,
             (EV_KEY, _) if record.value != PRESSED => {}
-            (EV_ABS, ABS_MT_POSITION_X) => self.x = Some(self.x.map_or_else(position, Ok)?),
-            (EV_ABS, ABS_MT_POSITION_Y) => self.y = Some(self.y.map_or_else(position, Ok)?),
-            (EV_KEY, BTN_TOUCH) => self.touched = true,
+            (EV_ABS, ABS_MT_POSITION_X) => report.x = Some(report.x.map_or_else(position, Ok)?),
+            (EV_ABS, ABS_MT_POSITION_Y) => report.y = Some(report.y.map_or_else(position, Ok)?),
+            (EV_KEY, BTN_TOUCH) => report.touched = true,
             (EV_KEY, code) => return Ok(key(code).map(InputEvent::Press)),
             (EV_SYN | EV_ABS, _) => {}
             (kind, code) => {
@@ -117,6 +122,29 @@ impl Decoder {
         }
         Ok(None)
     }
+
+    fn reported(&mut self, device: &'static str) -> Result<Option<InputEvent>, HardwareError> {
+        let frame = std::mem::take(&mut self.report);
+        let held = self.held;
+        if frame.dropped {
+            return Ok(None);
+        }
+        self.held = (held || frame.touched) && !frame.lifted;
+        let at = match (frame.x, frame.y) {
+            (Some(x), Some(y)) => Some((x, y)),
+            (None, None) => None,
+            _ => return Err(failed(device, "a touch with half a position".to_owned())),
+        };
+        Ok(match (frame.touched, frame.lifted, at) {
+            (true, _, Some((x, y))) => Some(InputEvent::Touch { x, y }),
+            (true, _, None) => {
+                return Err(failed(device, "a touch without a position".to_owned()));
+            }
+            (_, true, _) if held || frame.touched => Some(InputEvent::Lift),
+            (false, false, Some((x, y))) if held => Some(InputEvent::Move { x, y }),
+            _ => None,
+        })
+    }
 }
 
 pub fn events(
@@ -124,9 +152,15 @@ pub fn events(
     bytes: &[u8],
     decoder: &mut Decoder,
 ) -> Result<Vec<InputEvent>, HardwareError> {
-    let mut events = Vec::new();
+    let mut events: Vec<InputEvent> = Vec::new();
     for record in records(device, bytes)? {
-        events.extend(decoder.feed(device, record)?);
+        if let Some(event) = decoder.feed(device, record)? {
+            if let (Some(InputEvent::Move { .. }), InputEvent::Move { .. }) = (events.last(), event)
+            {
+                events.pop();
+            }
+            events.push(event);
+        }
     }
     Ok(events)
 }
@@ -138,6 +172,7 @@ mod tests {
     const TAPS: &[u8] = include_bytes!("../testdata/taps");
     const VOLUME_KEYS: &[u8] = include_bytes!("../testdata/volume-keys");
     const POWER_KEY: &[u8] = include_bytes!("../testdata/power-key");
+    const SYN_MT_REPORT: u16 = 2;
 
     fn record(kind: u16, code: u16, value: i32) -> [u8; RECORD_SIZE] {
         let mut bytes = [0; RECORD_SIZE];
@@ -152,18 +187,134 @@ mod tests {
     }
 
     #[test]
-    fn four_recorded_taps_are_four_touches_where_they_landed() -> Result<(), HardwareError> {
+    fn four_recorded_taps_are_a_touch_where_each_landed_a_move_and_a_lift()
+    -> Result<(), HardwareError> {
         let events = events(TOUCH, TAPS, &mut Decoder::default())?;
+        let tapped = |x, y| {
+            [
+                InputEvent::Touch { x, y },
+                InputEvent::Move { x, y },
+                InputEvent::Lift,
+            ]
+        };
         assert_eq!(
             events,
             [
-                InputEvent::Touch { x: 509, y: 1100 },
-                InputEvent::Touch { x: 564, y: 1142 },
-                InputEvent::Touch { x: 645, y: 1209 },
-                InputEvent::Touch { x: 635, y: 1139 },
+                tapped(509, 1100),
+                tapped(564, 1142),
+                tapped(645, 1209),
+                tapped(635, 1139),
+            ]
+            .concat()
+        );
+        Ok(())
+    }
+
+    fn at(x: i32, y: i32) -> [[u8; RECORD_SIZE]; 4] {
+        [
+            record(EV_ABS, ABS_MT_POSITION_X, x),
+            record(EV_ABS, ABS_MT_POSITION_Y, y),
+            record(EV_SYN, SYN_MT_REPORT, 0),
+            record(EV_SYN, SYN_REPORT, 0),
+        ]
+    }
+
+    fn touched(x: i32, y: i32) -> Vec<[u8; RECORD_SIZE]> {
+        [&[record(EV_KEY, BTN_TOUCH, PRESSED)][..], &at(x, y)].concat()
+    }
+
+    fn released() -> [[u8; RECORD_SIZE]; 3] {
+        [
+            record(EV_SYN, SYN_MT_REPORT, 0),
+            record(EV_KEY, BTN_TOUCH, RELEASED),
+            record(EV_SYN, SYN_REPORT, 0),
+        ]
+    }
+
+    #[test]
+    fn a_held_finger_moves_to_its_last_position_and_lifts_once() -> Result<(), HardwareError> {
+        let bytes = joined(
+            &[
+                touched(10, 20),
+                at(10, 30).to_vec(),
+                at(10, 40).to_vec(),
+                released().to_vec(),
+                released().to_vec(),
+            ]
+            .concat(),
+        );
+        assert_eq!(
+            events(TOUCH, &bytes, &mut Decoder::default())?,
+            [
+                InputEvent::Touch { x: 10, y: 20 },
+                InputEvent::Move { x: 10, y: 40 },
+                InputEvent::Lift,
             ]
         );
         Ok(())
+    }
+
+    #[test]
+    fn a_hold_carries_over_from_one_read_to_the_next() -> Result<(), HardwareError> {
+        let mut decoder = Decoder::default();
+        let first = events(TOUCH, &joined(&touched(10, 20)), &mut decoder)?;
+        let second = events(TOUCH, &joined(&at(15, 25)), &mut decoder)?;
+        let third = events(TOUCH, &joined(&released()), &mut decoder)?;
+        assert_eq!(first, [InputEvent::Touch { x: 10, y: 20 }]);
+        assert_eq!(second, [InputEvent::Move { x: 15, y: 25 }]);
+        assert_eq!(third, [InputEvent::Lift]);
+        Ok(())
+    }
+
+    #[test]
+    fn a_touch_released_in_its_own_report_is_a_touch() -> Result<(), HardwareError> {
+        let bytes = joined(&[
+            record(EV_KEY, BTN_TOUCH, PRESSED),
+            record(EV_ABS, ABS_MT_POSITION_X, 10),
+            record(EV_ABS, ABS_MT_POSITION_Y, 20),
+            record(EV_KEY, BTN_TOUCH, RELEASED),
+            record(EV_SYN, SYN_REPORT, 0),
+            record(EV_ABS, ABS_MT_POSITION_X, 30),
+            record(EV_ABS, ABS_MT_POSITION_Y, 40),
+            record(EV_SYN, SYN_REPORT, 0),
+        ]);
+        assert_eq!(
+            events(TOUCH, &bytes, &mut Decoder::default())?,
+            [InputEvent::Touch { x: 10, y: 20 }]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_drop_while_held_ends_the_hold_without_a_lift() -> Result<(), HardwareError> {
+        let bytes = joined(
+            &[
+                touched(10, 20),
+                vec![record(EV_SYN, SYN_DROPPED, 0)],
+                at(10, 30).to_vec(),
+                at(10, 40).to_vec(),
+                released().to_vec(),
+            ]
+            .concat(),
+        );
+        assert_eq!(
+            events(TOUCH, &bytes, &mut Decoder::default())?,
+            [InputEvent::Touch { x: 10, y: 20 }]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_touch_with_half_a_position_is_refused() {
+        let bytes = joined(&[
+            record(EV_KEY, BTN_TOUCH, PRESSED),
+            record(EV_ABS, ABS_MT_POSITION_X, 10),
+            record(EV_SYN, SYN_REPORT, 0),
+        ]);
+        assert!(matches!(
+            events(TOUCH, &bytes, &mut Decoder::default()),
+            Err(HardwareError::Failed { device: TOUCH, .. })
+        ));
     }
 
     #[test]
