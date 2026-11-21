@@ -1823,3 +1823,52 @@ before: the time, the battery and the alarm digits, now with a bar along the bot
 tap on the bar's middle or right third opened the timer or settings screen, both empty
 apart from the bar, as issue 79 intends. The image was still up at 10:07:48 UTC, past the
 boot-fail monitor's ten minutes. It was left on the phone.
+
+## 2026-11-21 — alarm sounds on `system`, for issue 82
+
+Read from TWRP over `adb`. Nothing was written: `system` was mounted read-only on a
+directory of TWRP's ramdisk and unmounted after.
+
+**The ROM's alarm sounds are on `system`**, in `/system/media/audio/alarms`, 4064 KiB by
+`du` with its subdirectory. Probed on the host with `ffprobe` from a copy kept off the
+repository:
+
+| File | Bytes | Seconds | Rate, channels |
+|---|---|---|---|
+| `Argon.ogg` | 507549 | 19.39 | 44100, 2 |
+| `Carbon.ogg` | 99766 | 3.36 | 44100, 2 |
+| `CyanAlarm.ogg` | 103481 | 1.85 | 44100, 2 |
+| `Helium.ogg` | 63612 | 2.09 | 44100, 2 |
+| `Krypton.ogg` | 219662 | 7.18 | 44100, 2 |
+| `Neon.ogg` | 464721 | 16.00 | 44100, 2 |
+| `NuclearLaunch.ogg` | 65601 | 1.50 | 44100, 2 |
+| `Osmium.ogg` | 199313 | 6.32 | 44100, 2 |
+| `Oxygen.ogg` | 307299 | 10.73 | 44100, 2 |
+| `Platinum.ogg` | 933258 | 23.72 | 44100, 2 |
+| `Timer.ogg` | 96320 | 3.64 | 44100, 2 |
+
+All eleven are Vorbis; decoded to 16-bit PCM at their own rate they are 16896699 bytes.
+`media/audio/alarms` beneath them holds 15 more, 5898 to 180784 bytes, among them
+`Alarm_Beep_01.ogg` to `_03`, `Alarm_Buzzer.ogg` and older versions of the eleven, mono
+or stereo at 44.1 or 48 kHz; `ffprobe` refused the copy of `Krypton-old.ogg`.
+`ringtones` (111 files), `notifications` and `ui` beside it are 12420, 2236 and 444 KiB.
+
+**`system` has room**: `df` reads 3753456 KiB, 1881460 used and 1871996 free.
+**`userdata`** reads 51895076 KiB, 7032088 used and 44862988 free.
+
+**One ALSA card**, `/proc/asound/cards`:
+`0 [HI6250hi6555cCA]: HI6250_hi6555c_ - HI6250_hi6555c_CARD`. `/proc/asound/pcm`:
+
+```
+00-00: HI6210_hi6555c hi6555c-dai-0 :  : playback 1 : capture 1
+00-01: MODEM_hi6555c hi6555c-dai-1 :  : playback 1
+00-02: FM_hi6555c hi6555c-dai-2 :  : playback 1
+00-03: LPP_hi6555c hi6555c-dai-3 :  : playback 1
+00-04: hi3660_hi6403_pb_direct hi6555c-dai-4 :  : playback 1
+00-05: lowlatency_hi6555c hi6555c-dai-5 :  : playback 1 : capture 1
+00-06: mmap_hi6555c hi6555c-dai-6 :  : playback 1 : capture 1
+```
+
+`/dev/snd` holds `controlC0`, `hwC0D6`, a `pcmC0D<n>` node for each of these and `timer`.
+The formats a device accepts were not read: TWRP has no `tinyalsa`, and `pcm0p/info`
+shows no parameters while nothing has the stream open.
