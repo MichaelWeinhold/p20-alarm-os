@@ -2017,3 +2017,33 @@ Power dismissed it, and the panel still listed 07:00 and 15:10. From TWRP, seque
 held 07:00 unarmed and 15:10 armed, both every day, CRC good. `console-ramoops-0` was
 absent, the power-off having cleared the RAM it lives in. The image was left on the
 phone.
+
+## 2026-11-21 — the power-off toggle, for issue 83
+
+`alarmd` was built from `3edef46`, 527472 bytes, sha256
+`da4dc63c1fca18267514fb687b223c5c5edc4e7755e8042badaf6973ad5c867d`. From TWRP it was copied
+over `/init` on `system`, replacing issue 80's `a85fca97…11e4`. `init.rom` still hashed
+`e8e2768e…78ef`, `misc`'s command field read zero, and the RTC read 1795270900, the Mac's
+UTC to the second, before `adb reboot` at 14:21:44 UTC, with the battery full on the
+cable.
+
+Before it, `reserved4` held issue 80's version-1 records: sequence 15 in slot 1, with 07:00
+unarmed and 15:10 armed, both every day. The key reset into TWRP emptied pstore after each
+run, so nothing below comes from `alarmd`'s log; the readings are the operator's and the
+record's.
+
+**With the toggle off, the phone stayed suspended past the window.** The settings screen
+opened with the switch lit and its knob right, the toggle on as a version-1 record loads.
+The operator tapped it dim, pulled the cable and turned the panel off, and after at least
+seven minutes a press showed the time at once, with no boot. Slot 0 then held sequence 16
+in format version 2, payload `100e0000 78000000 00 02 07007f00 0f0a7f01`: the offset, the
+window, the toggle off, and both alarms as before, with the CRC good and the rest of the
+slot zero.
+
+**The toggle survived a reboot.** After `adb reboot` at 14:39:41 UTC the operator saw the
+switch still dim.
+
+**With the toggle on, the phone powered off.** The operator tapped the switch lit, pulled
+the cable and turned the panel off; a press at least four minutes later booted the phone,
+as only a power-on from off does. Slot 1 held sequence 17, version 2, with the toggle byte
+`01` and the alarms unchanged, CRC good. The image was left on the phone.
