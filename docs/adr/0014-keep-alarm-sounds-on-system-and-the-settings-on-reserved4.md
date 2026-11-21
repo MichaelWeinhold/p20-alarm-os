@@ -1,6 +1,6 @@
 # 14. Keep alarm sounds on `system` and the settings on `reserved4`
 
-- **Status:** Accepted
+- **Status:** Accepted; D2 amended by ADR 0015
 - **Date:** 2026-11-21
 - **Issue:** #82
 
@@ -48,6 +48,10 @@ are the only thing `alarmd` writes while it runs, so they stay where a power cut
 nothing (ADR 0011, D3).
 
 ### D2. Alarm sounds are files on `system`, read-only
+
+**Amended by ADR 0015, D3**: `alarmd` plays only WAV files converted on the host, so the
+ROM's Vorbis alarms are not used as they are. Converted copies sit beside them. The
+decision as accepted:
 
 A sound is a file on `system`, our root, which the kernel mounts read-only (ADR 0006, D4).
 `alarmd` opens it by path and never writes it. The ROM's sounds under

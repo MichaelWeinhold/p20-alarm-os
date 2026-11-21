@@ -1911,3 +1911,73 @@ attaches `Speaker` and makes it the default output; `primary out` is
 `AUDIO_FORMAT_PCM_16_BIT`, 48000 Hz, stereo, and `offload` takes MP3. `system` holds no
 `audio.primary.*.so`, no `mixer_paths*.xml`, no `tinyplay` or `tinymix`: they are on
 `vendor`, which is not backed up.
+
+## 2026-11-21 — the speaker from TWRP, our debug `/init` and the ROM, for issue 14
+
+Read off the phone in TWRP, under the debug `/init` built from `main` at issue 79, and
+under the ROM with `adb root`. Backed up first under `~/p20-backups/`, all read-only:
+`fw_hifi` (`mmcblk0p27`), `dts` (`mmcblk0p35`), `odm` (`mmcblk0p44`) and `vendor`
+(`mmcblk0p57`). The only writes were `system`'s `/init`, swapped by
+`docs/manual-steps/phone.md`'s steps and put back at the end, and `misc`, cleared. The
+player was a throwaway probe of raw ALSA and `hifi_misc` `ioctl`s, not committed.
+
+**The speaker is driven by the codec's own class-D.** In the device tree, `smartpakit`,
+`smartpa@4c` (TAS2560) and `tfa9895@34` are all `status = disabled`, and
+`dual_smartpa_support` is `false`; the charger node carries `pvdd-classd-supply`. Under
+the ROM the HAL logs `pa_num: 1`, `pa_type: 1`, and its `smartpa_coef_init` fails.
+
+**The HAL and its routing are on `vendor` and `odm`.** The HAL is
+`/vendor/lib64/hw/audio.primary.hisi.so`; the routes are
+`/odm/etc/audio/hissc/mixer_paths_anne.xml`. `controlC0` lists 321 controls, the same
+count in TWRP and under the ROM. The speaker's route is the path `media-speaker`, which
+includes `init`, `audio-play-nossc` and `speaker`: 15 controls on top of 257 top-level
+defaults, 272 in all. Setting them sets 271; `CLASSD_VOLTAGE_CONFIG` refuses `5200` with
+`EPERM` under every `/init`, and the speaker sounded without it. The last of the 15:
+
+```
+SMT_SIF_EN MIXER SIF_CLASSD_EN   1    SMT_MIXOUT_EAR_PU MIXER DACL   1
+CLASSD VIR_SWITCH CLASSD_EN      1    SMT_MIXOUT_EAR_PU MIXER DACR   1
+```
+
+**PCM device 0 takes only `S16_LE`, stereo**, with `period_size` 8 to 1920 frames and
+`buffer_size` 16 to 3840; 1024 × 4 fails `EINVAL`, 960 × 2 at 48000 Hz plays.
+
+**Played with the route set, by where it ran:**
+
+| Where | DSP init sent | Played | Heard |
+|---|---|---|---|
+| TWRP | none | 30 s in 240.11 s; `remote mb not ready` | no |
+| debug `/init` | none | 6 s in 48.05 s; `snd_pcm_print_timeout` every period | no |
+| debug `/init` | `SET_DEVICE` alone | 6 s in 48.03 s; the DSP's watchdog fires at the end | — |
+| the ROM, HAL running | the HAL's | 6 s in 6.04 s and 6.05 s | yes |
+| debug `/init` | the HAL's, replayed | 6 s in 6.03 s, 0 underruns | yes |
+
+TWRP's boot does not load the DSP's image; a normal boot logs `hifi img be loaded`, under
+the ROM and under our `/init` alike. A DSP that is loaded but sent nothing consumes a 20
+ms period in about 160 ms.
+
+**The HAL's DSP init**, recorded by `ptrace` on `vendor.huawei.hardware.audio@4.0-service`
+from its start, with `audioserver` stopped first: `audioserver`'s `onrestart` restarts the
+HAL. Twelve `ioctl`s on `/dev/hifi_misc`, in this order:
+
+| # | `ioctl` | Message | Payload |
+|---|---|---|---|
+| 0 | `0x40184171` sync | `PLAY_PAUSE_REQ`, `0xdd53` | 8 bytes, 8 back |
+| 1 | `0xc0184175` `WRITE_PARAMS` | the parameter block, cleared | 309608 zero bytes |
+| 2 | `0xc0184175` `WRITE_PARAMS` | the parameter block, filled | 309608 bytes, 54844 non-zero |
+| 3 | `0xc0184175` `WRITE_PARAMS` | the same, sealed | `aa55aa55` over the first 4, 4 more at the end |
+| 4 | `0xc00c4170` async | `0xdd9c`, cvaa mono | `0` |
+| 5–6 | `0x4018417c` | USB audio queries | 12 bytes, 300 back |
+| 7 | `0xc00c4170` async | `SET_DEVICE`, `0xdd96` | device `2`, the speaker; mask `0` |
+| 8–9 | `0xc00c4170` async | `SET_PARA`, `0xdf08` | 16 bytes: `08df0700 01000000 04000000 04000080` |
+| 10–11 | `0xc00c4170` async | `SET_SOURCE`, `0xdd95` | `0` |
+
+An async argument is `{ptr_lo, ptr_hi, len}`; a sync one and `WRITE_PARAMS` add
+`{out_lo, out_hi, out_len}`. A message is a `u16` id, two bytes of padding and `u32`
+values. The HAL builds the parameter block from `odm`'s
+`/odm/etc/audio/{dts,mbdrc,modem,sws}/*_anne_normal.xml`, logged as `ap_param_init`,
+`clear_hifi_nv` and `copy_algo_param_to_hifi`.
+
+**Replayed under the debug `/init`**, all but 5–6, every `ioctl` returned 0 and the kernel
+logged the same messages as under the ROM. The route set after it, the clip played in real
+time and was heard through the speaker. The draw while it plays was not read.

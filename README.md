@@ -35,7 +35,7 @@ documentation, starting from the vendor kernel rather than from nothing.
 | Alarm sounds | **Decided.** Files on `system`, read-only, the ROM's own used as they are; the settings stay on `reserved4`, with room to spare — [ADR 0014](docs/adr/0014-keep-alarm-sounds-on-system-and-the-settings-on-reserved4.md), issue 82. |
 | Low-battery light | **Decided.** The LED blinks red at its lowest current while suspended at or below 20 % off the cable; the power model does not change for it — [ADR 0013](docs/adr/0013-blink-the-led-red-while-suspended-on-a-low-battery.md), issue 64. |
 | Vibration | **Built and on the phone.** A 1 s pulse every 2 s while the alarm rings, stopped at once by a snooze or a dismissal, issue 13. |
-| Speaker | Parked. |
+| Speaker | **Decided and proven.** The codec's class-D, after `alarmd` replays the HAL's DSP init recorded under the ROM; sounds are WAV files converted on the host — [ADR 0015](docs/adr/0015-ring-through-the-speaker-after-replaying-the-hals-dsp-init.md), issue 14. |
 
 ## How it works
 

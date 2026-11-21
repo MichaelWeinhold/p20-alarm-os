@@ -98,7 +98,9 @@ settings toggle for powering off (83).
 **Done when:** its five children are closed, an alarm set on the phone survives a reboot,
 and a timer wakes a suspended phone when it ends.
 
-## Parked
+## Research before the speaker
 
-- **Speaker audio without Android** — the Kirin DSP, its firmware and mixer routing.
-  Labelled `future`; picked up once P6 is in daily use.
+- **Speaker audio without Android.** **Decided** — in ADR 0015: the codec's class-D,
+  routed by the HAL's `media-speaker` controls, after `alarmd` replays the HAL's DSP init
+  recorded under the ROM. Sounds are WAV files converted on the host. Its two follow-ups
+  are a recorder with its host scripts, and the `speaker` adapter.
