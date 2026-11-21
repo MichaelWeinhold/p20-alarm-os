@@ -2151,3 +2151,41 @@ the panel at 13.66 s and it went off at 44.02 s. With the phone lying untouched,
 of Power at 128.44 s lit it at 129.20 s, and it went off at 159.54 s, 30.3 s later with no
 key between; the operator timed about 30 s. `init` still hashed `1c15b182…499b`, and the
 image was left on the phone after `adb reboot` at 21:23:01 UTC.
+
+## 2026-11-21 — an alarm sound on `system`, for issue 87
+
+From TWRP 3.7.0 over `adb`, with `scripts/alarm_sound.py` from `e805df4`. `ffmpeg` 9.0.2
+converted `sounds/ringtone.mp3` to `out/sounds/ringtone.wav`: 5760044 bytes, a bare
+44-byte header and 5760000 bytes of 16-bit 48 kHz stereo PCM, sha256
+`cb3a132041de70b4b09cf058c99f7b1169ca5aaa17239fefc9b90564c58d8836`.
+
+**The ROM's alarms before**, by `sha256sum` on a read-only mount of `mmcblk0p52`, their
+sizes as in issue 82's reading:
+
+| File | sha256 |
+|---|---|
+| `Argon.ogg` | `7f4cab5b…6846` |
+| `Carbon.ogg` | `ce04cf92…6b96` |
+| `CyanAlarm.ogg` | `8f8e7477…fd90` |
+| `Helium.ogg` | `45d0fe39…08f6` |
+| `Krypton.ogg` | `762ba856…6faf` |
+| `Neon.ogg` | `9354b5dc…c721` |
+| `NuclearLaunch.ogg` | `d0befea3…5898` |
+| `Osmium.ogg` | `2c050bd2…0fdd` |
+| `Oxygen.ogg` | `2a698c8e…b8b1` |
+| `Platinum.ogg` | `c2050379…6b86` |
+| `Timer.ogg` | `7f440c55…86ac` |
+
+**The first run pushed it**: `/mnt/sys/system/media/audio/alarms/ringtone.wav: 5760044
+bytes, sha256 cb3a1320…8836`, and `11 files beside them unchanged`.
+
+**The second run wrote nothing**: it printed `already there`, 5760044 bytes and the same
+sha256, and the same 11 unchanged.
+
+**A different sound under the same name was refused**: a 1 s 880 Hz tone as
+`ringtone.flac`, converted to 192044 bytes, exited 1 with `is already there … nothing
+written`, and `system` was unmounted after.
+
+**The ROM's alarms after**, read the same way, hashed as before, all eleven. `ringtone.wav`
+reads 5760044 bytes, mode 644, with the host's sha256, and no `.part` file is left. `df`
+reads 3753456 KiB, 1888036 used and 1865420 free.
