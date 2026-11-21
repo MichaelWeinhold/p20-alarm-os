@@ -2120,3 +2120,34 @@ booted the phone, and the timer screen listed 01:00 and 05:00, with 01:00 on the
 
 **The saved timers survived a reboot.** After `adb reboot` from TWRP at 18:36:33 UTC the
 operator saw 01:00 and 05:00 still listed. The image was left on the phone.
+
+## 2026-11-21 — how long the panel stays lit, for issue 97
+
+`alarmd` was built from `45cf3cb`, 535696 bytes, sha256
+`1c15b1828e90908bf6858c69f7d2d60a97c56288ba91dddbcad09d82f0a4499b`. From TWRP it was copied
+over `/init` on `system`, replacing issue 81's `c459b465…472f`. `init.rom` still hashed
+`e8e2768e…78ef`, `misc`'s first 32 bytes read zero, and the RTC matched the Mac's UTC
+before `adb reboot` at 20:53:40 UTC.
+
+Before it, `reserved4` held issue 81's sequence 19 in slot 1, version 3. `alarmd` holds no
+serial shell, so the readings are the operator's, the record's, and `alarmd`'s lines in
+`console-ramoops-0`, garbled in places, from the boot before each key reset into TWRP.
+
+**A version-3 record loads lit for 10 s, and each choice times the panel.** The operator
+reset by the keys once more, and pstore holds the boot from about 20:59:25 UTC. The
+settings row stepped through every choice and wrapped to 10 s, more than once. With 10 s
+set the panel went off 10.4 s after the last change, and with 120 s about 123 s after it,
+with no key between. The lit time is saved in version 4: slot 0 held sequence 20 ending
+`7800`, 120 s, and slot 1 sequence 21 ending `1e00`, 30 s, after the timers.
+
+**The 30 s survived a reboot.** After `adb reboot` at 21:13:00 UTC the boot logged
+`settings loaded` and no change, and the operator saw `00:30` on the settings screen. A
+press of Power lit the panel at 43.4 s and it went off at 84.82 s, 41 s, with no key
+between; a touch restarts the time and is logged only when it changes something, and no
+cause was read.
+
+**A press keeps the panel lit for 30 s.** After `adb reboot` at 21:17:22 UTC the boot lit
+the panel at 13.66 s and it went off at 44.02 s. With the phone lying untouched, a press
+of Power at 128.44 s lit it at 129.20 s, and it went off at 159.54 s, 30.3 s later with no
+key between; the operator timed about 30 s. `init` still hashed `1c15b182…499b`, and the
+image was left on the phone after `adb reboot` at 21:23:01 UTC.
