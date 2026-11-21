@@ -71,9 +71,9 @@ It turns the panel off with `FBIOBLANK` on that descriptor, never by closing it.
 | `schedule` | `arm_next`: read the clock, pick the earliest alarm, arm or disarm the RTC |
 | `settings` | `Choices` and the record that holds them: two 4 KiB slots, each framed by magic, version, length, sequence and CRC-32; `load` takes the newest valid slot, `save` writes the other one — ADR 0011 |
 | `battery` | `ChargeLimit`, `BatteryReading`, `stop_at_limit`, and the `Gauge`: a `Level` of low at the 20 % mark, full from the limit, middle between, and the capacity when it was read — ADR 0008, D3 |
-| `face` | `Frame`, `Face` and `render`: the time in seven-segment digits, the battery in the top-right corner as one to three bars and a percentage, red when low, the alarm below, amber while ringing; `target` maps a tap to the alarm digit it steps |
-| `ringer` | `Ringer`: one daily alarm, armed or not, quiet, ringing or snoozed for 9 minutes, and the instant it next rings; `show` and `listen` drive it and the `Light` from the clock and `Input` |
-| `light` | `Light`: the panel lit for 10 s by a press, kept lit by a touch or a ringing alarm, off at a press or the timeout — ADR 0008, D2; the ringer hears input only while it is lit |
+| `face` | `Frame`, `Face`, `Screen` and `render`: a bar along the bottom with a bell, an hourglass and a gear for the alarm, timer and settings screens, the open one lit; the alarm screen adds the time in seven-segment digits, the battery in the top-right corner as one to three bars and a percentage, red when low, and the alarm below; a ringing alarm fills the panel amber with no bar; `target` maps a tap to a tab by thirds of the bar, to the alarm digit it steps, or to nothing on an empty screen |
+| `ringer` | `Ringer`: one daily alarm, armed or not, quiet, ringing or snoozed for 9 minutes, and the instant it next rings; `show` draws the open screen, and `listen` sends a tab tap to the `Light` and any other tap or press to the `Ringer` |
+| `light` | `Light`: the panel lit for 10 s by a press, kept lit by a touch or a ringing alarm, off at a press or the timeout — ADR 0008, D2; the ringer hears input only while it is lit; the open `Screen`, back to the alarm screen when the panel goes off or an alarm rings |
 | `vibration` | `Vibration`: a 1 s pulse every 2 s while the alarm rings, stopped at once by a snooze or a dismissal; a vibrator that fails is left alone until the next ring |
 
 The panel is the legacy framebuffer, `/dev/fb0` under our `devtmpfs`, with no DRM (ADR

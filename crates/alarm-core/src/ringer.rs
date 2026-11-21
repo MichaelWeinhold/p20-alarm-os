@@ -1,6 +1,6 @@
 use crate::alarm::{Alarm, Weekdays};
 use crate::battery::Gauge;
-use crate::face::{Face, Size, Step, Target, render, target};
+use crate::face::{Face, Screen, Size, Step, Target, render, target};
 use crate::hardware::{Clock, Display, HardwareError, Input};
 use crate::input::{InputEvent, Key};
 use crate::light::Light;
@@ -90,22 +90,17 @@ impl Ringer {
         }
     }
 
-    pub fn heard(&mut self, event: InputEvent, size: Size, now: UnixSeconds, offset: UtcOffset) {
-        match (self.ring, event) {
-            (Ring::Ringing, InputEvent::Press(Key::VolumeUp | Key::VolumeDown)) => {
+    pub fn pressed(&mut self, key: Key, now: UnixSeconds) {
+        match (self.ring, key) {
+            (Ring::Ringing, Key::VolumeUp | Key::VolumeDown) => {
                 self.ring = Ring::Snoozed(UnixSeconds(start_of_minute(now).0 + SNOOZE_SECONDS));
             }
-            (Ring::Ringing | Ring::Snoozed(_), InputEvent::Press(Key::Power)) => {
-                self.ring = Ring::Quiet;
-            }
-            (Ring::Quiet | Ring::Snoozed(_), InputEvent::Touch { x, y }) => {
-                self.touched(target(size, x, y), now, offset);
-            }
+            (Ring::Ringing | Ring::Snoozed(_), Key::Power) => self.ring = Ring::Quiet,
             _ => {}
         }
     }
 
-    fn touched(&mut self, target: Target, now: UnixSeconds, offset: UtcOffset) {
+    pub fn touched(&mut self, target: Target, now: UnixSeconds, offset: UtcOffset) {
         match target {
             Target::Hour(step) => self.alarm = self.alarm.stepped_hour(delta(step)),
             Target::Minute(step) => self.alarm = self.alarm.stepped_minute(delta(step)),
@@ -115,6 +110,7 @@ impl Ringer {
                 return;
             }
             Target::Elsewhere => self.next = Some(self.after(now, offset)),
+            Target::Tab(_) | Target::Blank => return,
         }
         if self.armed() {
             self.next = Some(self.after(now, offset));
@@ -122,13 +118,20 @@ impl Ringer {
     }
 
     #[must_use]
-    pub fn face(&self, now: UnixSeconds, offset: UtcOffset, battery: Gauge) -> Face {
+    pub fn face(
+        &self,
+        now: UnixSeconds,
+        offset: UtcOffset,
+        battery: Gauge,
+        screen: Screen,
+    ) -> Face {
         Face {
             time: TimeOfDay::at(now, offset),
             alarm: self.alarm,
             armed: self.armed(),
             ringing: self.ring == Ring::Ringing,
             battery,
+            screen,
         }
     }
 }
@@ -146,7 +149,8 @@ pub fn show(
     light.tick(now, ringer.ring());
     display.light(light.lit())?;
     if light.lit() {
-        let frame = render(display.size(), &ringer.face(now, offset, battery));
+        let face = ringer.face(now, offset, battery, light.screen());
+        let frame = render(display.size(), &face);
         display.show(&frame)?;
     }
     Ok(now)
@@ -167,7 +171,16 @@ pub fn listen(
     let now = clock.now()?;
     let ring = ringer.ring();
     if light.lit() {
-        ringer.heard(event, size, now, offset);
+        match event {
+            InputEvent::Press(key) => ringer.pressed(key, now),
+            InputEvent::Touch { x, y } if ring != Ring::Ringing => {
+                match target(size, light.screen(), x, y) {
+                    Target::Tab(screen) => light.open(screen),
+                    touched => ringer.touched(touched, now, offset),
+                }
+            }
+            InputEvent::Touch { .. } => {}
+        }
     }
     light.heard(event, ring, now);
     Ok(Some(event))
@@ -192,6 +205,9 @@ mod tests {
     const MINUTE_UP: InputEvent = InputEvent::Touch { x: 700, y: 1600 };
     const MINUTE_DOWN: InputEvent = InputEvent::Touch { x: 700, y: 1700 };
     const ELSEWHERE: InputEvent = InputEvent::Touch { x: 509, y: 1100 };
+    const ALARM_TAB: InputEvent = InputEvent::Touch { x: 180, y: 2200 };
+    const TIMER_TAB: InputEvent = InputEvent::Touch { x: 540, y: 2200 };
+    const SETTINGS_TAB: InputEvent = InputEvent::Touch { x: 900, y: 2200 };
     const SNOOZE: InputEvent = InputEvent::Press(Key::VolumeDown);
     const DISMISS: InputEvent = InputEvent::Press(Key::Power);
 
@@ -264,8 +280,16 @@ mod tests {
         clock: &FakeClock,
         ringer: &mut Ringer,
     ) -> Result<(), HardwareError> {
-        let mut light = always();
-        while listen(input, 60, clock, UtcOffset::UTC, PANEL, ringer, &mut light)?.is_some() {}
+        drain_lit(input, clock, ringer, &mut always())
+    }
+
+    fn drain_lit(
+        input: &mut FakeInput,
+        clock: &FakeClock,
+        ringer: &mut Ringer,
+        light: &mut Light,
+    ) -> Result<(), HardwareError> {
+        while listen(input, 60, clock, UtcOffset::UTC, PANEL, ringer, light)?.is_some() {}
         Ok(())
     }
 
@@ -329,7 +353,7 @@ mod tests {
         assert_eq!(ringer.ring(), Ring::Ringing);
         assert!(
             ringer
-                .face(clock.now()?, UtcOffset::UTC, Gauge::UNREAD)
+                .face(clock.now()?, UtcOffset::UTC, Gauge::UNREAD, Screen::Alarm)
                 .ringing
         );
 
@@ -526,7 +550,7 @@ mod tests {
         assert_eq!(display.shown.len(), 1);
         assert!(
             ringer
-                .face(clock.now()?, UtcOffset::UTC, Gauge::UNREAD)
+                .face(clock.now()?, UtcOffset::UTC, Gauge::UNREAD, Screen::Alarm)
                 .ringing
         );
         Ok(())
@@ -617,6 +641,95 @@ mod tests {
         )?;
         assert_eq!(display.lit, [false]);
         assert_eq!(display.shown, Vec::<Frame>::new());
+        Ok(())
+    }
+
+    #[test]
+    fn a_tab_opens_its_screen_and_leaves_the_alarm_as_it_was()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut ringer = ringer(7, 0)?;
+        let mut light = always();
+        drain_lit(
+            &mut FakeInput::with(&[TIMER_TAB, SETTINGS_TAB]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        assert_eq!(light.screen(), Screen::Settings);
+        assert_eq!(ringer, Ringer::new(TimeOfDay::new(7, 0)?));
+        drain_lit(
+            &mut FakeInput::with(&[ALARM_TAB, ELSEWHERE, TIMER_TAB, ALARM_TAB]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        assert_eq!(light.screen(), Screen::Alarm);
+        assert!(ringer.armed());
+        assert_eq!(ringer.alarm(), TimeOfDay::new(7, 0)?);
+        Ok(())
+    }
+
+    #[test]
+    fn a_tap_on_an_empty_screen_changes_nothing() -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut ringer = ringer(7, 0)?;
+        drain(&mut FakeInput::with(&[ELSEWHERE]), &clock, &mut ringer)?;
+        let armed = ringer;
+        for tab in [TIMER_TAB, SETTINGS_TAB] {
+            let mut light = always();
+            drain_lit(
+                &mut FakeInput::with(&[tab, ELSEWHERE, HOUR_UP, MINUTE_DOWN]),
+                &clock,
+                &mut ringer,
+                &mut light,
+            )?;
+            assert_eq!(ringer, armed);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_open_screen_is_drawn_until_the_alarm_rings_over_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut ringer = ringer(7, 0)?;
+        drain(&mut FakeInput::with(&[ELSEWHERE]), &clock, &mut ringer)?;
+        let mut light = always();
+        drain_lit(
+            &mut FakeInput::with(&[TIMER_TAB]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        let mut display = FakeDisplay::default();
+        show(
+            &clock,
+            UtcOffset::UTC,
+            &mut ringer,
+            &mut light,
+            Gauge::UNREAD,
+            &mut display,
+        )?;
+        let timer = ringer.face(clock.now()?, UtcOffset::UTC, Gauge::UNREAD, Screen::Timer);
+        assert_eq!(display.shown, [render(PANEL, &timer)]);
+        clock.pass(60);
+        show(
+            &clock,
+            UtcOffset::UTC,
+            &mut ringer,
+            &mut light,
+            Gauge::UNREAD,
+            &mut display,
+        )?;
+        assert_eq!(light.screen(), Screen::Alarm);
+        assert_eq!(
+            display.shown.last(),
+            Some(&render(
+                PANEL,
+                &ringer.face(clock.now()?, UtcOffset::UTC, Gauge::UNREAD, Screen::Alarm)
+            ))
+        );
         Ok(())
     }
 }

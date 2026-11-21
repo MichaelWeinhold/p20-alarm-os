@@ -87,11 +87,13 @@ stop it at once.
 
 ## P7 — Settings and a timer
 
-Issue 31. A settings screen for the alarms, the clock and the UTC offset, and a countdown
-timer armed through the RTC like an alarm.
+Issue 31, split into children. A navigation bar with an alarm, a timer and a settings
+tab (79), an alarm screen with a slider and a list of saved alarms (80), a countdown timer
+armed through the RTC like an alarm (81), storage once alarm sounds are kept (82), and a
+settings toggle for powering off (83).
 
-**Done when:** an alarm and the clock set on the phone survive a reboot, and a timer wakes
-a suspended phone when it ends.
+**Done when:** its five children are closed, an alarm set on the phone survives a reboot,
+and a timer wakes a suspended phone when it ends.
 
 ## Parked
 
