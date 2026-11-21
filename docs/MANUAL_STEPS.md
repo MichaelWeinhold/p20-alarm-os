@@ -23,3 +23,4 @@ and a new row. A reference to another file's heading is a relative link.
 | 2 | [before-every-promotion-to-production.md](manual-steps/before-every-promotion-to-production.md) | The checklist that repeats on every promotion |
 | 3 | [phone.md](manual-steps/phone.md) | The ROM and kernel on the phone, its partitions, the stock image's backup, fastboot, the flash and the rollback |
 | 4 | [modem.md](manual-steps/modem.md) | Booting the modem with its radio off from the debug shell |
+| 5 | [audio.md](manual-steps/audio.md) | The HAL's DSP init and the speaker route, recorded and pushed to `system` |
