@@ -1872,3 +1872,42 @@ or stereo at 44.1 or 48 kHz; `ffprobe` refused the copy of `Krypton-old.ogg`.
 `/dev/snd` holds `controlC0`, `hwC0D6`, a `pcmC0D<n>` node for each of these and `timer`.
 The formats a device accepts were not read: TWRP has no `tinyalsa`, and `pcm0p/info`
 shows no parameters while nothing has the stream open.
+
+## 2026-11-21 — audio in the stock `kernel` and `system`, for issue 14
+
+Read on the host from the backups under `~/p20-backups/`; the phone was not touched.
+
+**The kernel carries its config.** `kernel-mmcblk0p31-stock.img` is an Android boot image
+with a gzip'd `Image`, `Linux version 4.9.319-Abdelhay-KSU`, and `IKCFG_ST` inside it. The
+audio it builds in, with nothing as a module:
+
+```
+CONFIG_SND_SOC=y                 CONFIG_SND_HI6250_HI6555C=y
+CONFIG_SND_SOC_CODEC_HI6555C=y   CONFIG_SND_SOC_CODEC_HISSC=y
+CONFIG_HIFI_IPC=y                CONFIG_HIFI_IPC_6250=y
+CONFIG_HIFI_MAILBOX=y            CONFIG_HIFI_VIR_DAI=y
+CONFIG_HIFI_DSP_ONE_TRACK=y      CONFIG_HISI_HIFI_BB=y
+CONFIG_HUAWEI_SMARTPAKIT_AUDIO=y CONFIG_SND_SOC_TAS2560=y
+CONFIG_TAS2560_I2C=y             CONFIG_TAS2560_MISC=y
+CONFIG_TFA9895=y                 CONFIG_SND_USB_AUDIO=y
+```
+
+**The HiFi DSP's firmware is not loaded by Linux.** The kernel's strings name `fw_hifi`,
+`hifi.img` and `hifi_check_img_loaded`, and load it only on a reset: `reload hifi by
+secos`. The suspend lines above count `hifi:s-2, r-2` under the ROM and `hifi:s-0, r-0`
+under our `/init`, which shows no DSP activity but not whether it is loaded.
+
+**The codec has a class-D amplifier of its own**: `CLASSD_EN`, `CLASSD VIR_SWITCH` and
+`CLASSD_VOLTAGE_CONFIG` are among its control names, beside `DACL MIXER`, `DACL PGA`,
+`EP SWITCH` and `EAR OUT`. `smartpakit`'s strings ask the device tree for `chip_vendor`,
+`chip_model`, `pa_num`, `hw_reset` and `rw_sequence`, and take `SMARTPA_SPK_POWER_ON`,
+`_UNMUTE` and `_SET_SAMPLERATE` as `ioctl`s. The kernel also names
+`HI6250_HI6555c_AK4376_CARD`. Which amplifier feeds the speaker is in the device tree,
+which is not backed up.
+
+**`system` is /e/OS 0.23**, `lineage_anne-userdebug 9 PQ3A.190801.002`, read with
+`debugfs` from `system-mmcblk0p52-stock.img`. `/system/etc/audio_policy_configuration.xml`
+attaches `Speaker` and makes it the default output; `primary out` is
+`AUDIO_FORMAT_PCM_16_BIT`, 48000 Hz, stereo, and `offload` takes MP3. `system` holds no
+`audio.primary.*.so`, no `mixer_paths*.xml`, no `tinyplay` or `tinymix`: they are on
+`vendor`, which is not backed up.

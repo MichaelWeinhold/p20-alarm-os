@@ -18,6 +18,14 @@ firmware/
 dumps/
 out/
 
+# Sounds — the operator's own and copies of the ROM's, kept under sounds/ for the host
+# tooling. Neither is ours to redistribute.
+sounds/
+*.mp3
+*.ogg
+*.wav
+*.flac
+
 # A session's own worktree, which lives inside the repository.
 .claude/worktrees/
 
