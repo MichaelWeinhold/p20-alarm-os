@@ -373,8 +373,8 @@ pub fn change(before: &Ringer, after: &Ringer) -> Option<String> {
 mod tests {
     use alarm_core::battery::{BatteryReading, ChargeStatus, Health, Percent};
     use alarm_core::boot::Boot;
-    use alarm_core::face::{Face, Frame, RINGING, Size, WARNING, render};
-    use alarm_core::input::{InputEvent, Key};
+    use alarm_core::face::{Face, Frame, RINGING, Screen, Size, Target, WARNING, render};
+    use alarm_core::input::Key;
     use alarm_core::ringer::Ring;
     use alarm_core::settings::{RECORD_BYTES, SLOT_BYTES, Slot};
     use alarm_core::time::TimeError;
@@ -384,7 +384,7 @@ mod tests {
 
     const SIZE: Size = Size {
         width: 100,
-        height: 112,
+        height: 140,
     };
 
     struct FixedClock(Result<UnixSeconds, HardwareError>);
@@ -478,12 +478,7 @@ mod tests {
     fn ringing_at(clock: &FixedClock) -> Result<Ringer, Box<dyn std::error::Error>> {
         let mut ringer = ringer()?;
         let before = UnixSeconds(clock.now()?.0 - 60);
-        ringer.heard(
-            InputEvent::Touch { x: 0, y: 0 },
-            SIZE,
-            before,
-            UtcOffset::UTC,
-        );
+        ringer.touched(Target::Elsewhere, before, UtcOffset::UTC);
         ringer.tick(clock.now()?, UtcOffset::UTC);
         Ok(ringer)
     }
@@ -642,12 +637,7 @@ mod tests {
 
     fn armed_at(clock: &FixedClock) -> Result<Ringer, Box<dyn std::error::Error>> {
         let mut ringer = ringer()?;
-        ringer.heard(
-            InputEvent::Touch { x: 0, y: 0 },
-            SIZE,
-            clock.now()?,
-            UtcOffset::UTC,
-        );
+        ringer.touched(Target::Elsewhere, clock.now()?, UtcOffset::UTC);
         Ok(ringer)
     }
 
@@ -666,6 +656,7 @@ mod tests {
             armed: false,
             ringing: false,
             battery,
+            screen: Screen::Alarm,
         })
     }
 
@@ -804,12 +795,7 @@ mod tests {
         let mut display = FakeDisplay::default();
         let mut ringer = ringer()?;
         let before = at(6, 59, 0);
-        ringer.heard(
-            InputEvent::Touch { x: 0, y: 0 },
-            SIZE,
-            before.now()?,
-            UtcOffset::UTC,
-        );
+        ringer.touched(Target::Elsewhere, before.now()?, UtcOffset::UTC);
         minute(
             &before,
             UtcOffset::UTC,
@@ -839,12 +825,7 @@ mod tests {
         let before = ringer()?;
         let mut after = before;
         assert_eq!(change(&before, &after), None);
-        after.heard(
-            InputEvent::Touch { x: 0, y: 0 },
-            SIZE,
-            at(6, 0, 0).now()?,
-            UtcOffset::UTC,
-        );
+        after.touched(Target::Elsewhere, at(6, 0, 0).now()?, UtcOffset::UTC);
         assert_eq!(
             change(&before, &after),
             Some(kmsg::line("alarm 07:00 armed, Quiet"))
@@ -1511,12 +1492,7 @@ mod tests {
                 wait_seconds: PERIOD_SECONDS.unsigned_abs(),
             }
         );
-        ringer.heard(
-            InputEvent::Press(Key::Power),
-            SIZE,
-            clock.now()?,
-            UtcOffset::UTC,
-        );
+        ringer.pressed(Key::Power, clock.now()?);
         let step = pulse(&clock, &ringer, &mut buzz, 10);
         assert_eq!(step.wait_seconds, 10);
         let vibrator = buzz.vibrator.as_ref().map_err(Clone::clone)?;

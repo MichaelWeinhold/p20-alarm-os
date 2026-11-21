@@ -1,3 +1,4 @@
+use crate::face::Screen;
 use crate::input::{InputEvent, Key};
 use crate::ringer::Ring;
 use crate::time::UnixSeconds;
@@ -8,6 +9,7 @@ pub const LIT_SECONDS: i64 = 10;
 pub struct Light {
     seconds: i64,
     until: Option<UnixSeconds>,
+    screen: Screen,
 }
 
 impl Light {
@@ -16,6 +18,7 @@ impl Light {
         Self {
             seconds,
             until: None,
+            screen: Screen::Alarm,
         }
     }
 
@@ -32,6 +35,15 @@ impl Light {
     }
 
     #[must_use]
+    pub fn screen(&self) -> Screen {
+        self.screen
+    }
+
+    pub fn open(&mut self, screen: Screen) {
+        self.screen = screen;
+    }
+
+    #[must_use]
     pub fn seconds_left(&self, now: UnixSeconds) -> Option<u64> {
         self.until
             .map(|until| until.0.saturating_sub(now.0).max(1).unsigned_abs())
@@ -40,17 +52,23 @@ impl Light {
     pub fn tick(&mut self, now: UnixSeconds, ring: Ring) {
         if ring == Ring::Ringing {
             self.relit(now);
+            self.screen = Screen::Alarm;
         } else if self.until.is_some_and(|until| now >= until) {
-            self.until = None;
+            self.darken();
         }
     }
 
     pub fn heard(&mut self, event: InputEvent, ring: Ring, now: UnixSeconds) {
         match (self.lit(), event, ring) {
-            (true, InputEvent::Press(Key::Power), Ring::Quiet) => self.until = None,
+            (true, InputEvent::Press(Key::Power), Ring::Quiet) => self.darken(),
             (true, _, _) | (false, InputEvent::Press(Key::Power), _) => self.relit(now),
             (false, _, _) => {}
         }
+    }
+
+    fn darken(&mut self) {
+        self.until = None;
+        self.screen = Screen::Alarm;
     }
 
     fn relit(&mut self, now: UnixSeconds) {
@@ -146,6 +164,31 @@ mod tests {
         assert_eq!(light.seconds_left(at(5)), Some(10));
         light.heard(POWER, Ring::Snoozed(at(300)), at(6));
         assert_eq!(light.seconds_left(at(6)), Some(10));
+    }
+
+    #[test]
+    fn a_panel_that_goes_dark_or_rings_comes_back_on_the_alarm_screen() {
+        let mut light = Light::lit_at(START, LIT_SECONDS);
+        light.open(Screen::Timer);
+        light.tick(at(10), Ring::Quiet);
+        light.heard(POWER, Ring::Quiet, at(11));
+        assert_eq!(light.screen(), Screen::Alarm);
+        light.open(Screen::Settings);
+        light.heard(POWER, Ring::Quiet, at(12));
+        light.heard(POWER, Ring::Quiet, at(13));
+        assert_eq!(light.screen(), Screen::Alarm);
+        light.open(Screen::Timer);
+        light.tick(at(14), Ring::Ringing);
+        assert_eq!(light.screen(), Screen::Alarm);
+    }
+
+    #[test]
+    fn an_open_screen_stays_open_while_the_panel_is_lit() {
+        let mut light = Light::lit_at(START, LIT_SECONDS);
+        light.open(Screen::Settings);
+        light.heard(TOUCH, Ring::Quiet, at(8));
+        light.tick(at(17), Ring::Quiet);
+        assert_eq!(light.screen(), Screen::Settings);
     }
 
     #[test]

@@ -1808,3 +1808,18 @@ once.
 
 From TWRP, the RTC was set back to the Mac's UTC at 21:55:23, `wakealarm` disarmed, and
 the phone rebooted into `alarmd` `d4ddf76d…6e7a` at 21:55:30.
+
+## 2026-11-21 — the navigation bar, for issue 79
+
+`alarmd` was built from `b87d3ad`, 511984 bytes, sha256
+`bcd39a5ee9f84bd730125b3986219b4d212add613ed2ce555d333bfade60bf6d`. From TWRP it was copied
+over `/init` on `system`, replacing `alarmd` `d4ddf76d…6e7a`. `init.rom` still hashed
+`e8e2768e…78ef`, `init.alarmd` was left at `3d555c02…e94f`, and `misc`'s command field
+read zero. The RTC read 1795254832, which was the Mac's UTC, before `adb reboot` at
+09:53:56 UTC.
+
+**The bar is drawn and each tab opens its screen.** The operator saw the alarm screen as
+before: the time, the battery and the alarm digits, now with a bar along the bottom. A
+tap on the bar's middle or right third opened the timer or settings screen, both empty
+apart from the bar, as issue 79 intends. The image was still up at 10:07:48 UTC, past the
+boot-fail monitor's ten minutes. It was left on the phone.

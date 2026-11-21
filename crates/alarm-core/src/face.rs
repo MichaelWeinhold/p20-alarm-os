@@ -16,6 +16,42 @@ const SYMBOL_UNITS: usize = 13;
 const SYMBOL_GAP_UNITS: usize = 2;
 const PERCENT_UNITS: usize = 4;
 const FIGURES: usize = 3;
+const TAB_UNITS: usize = 9;
+const TAB_MARGIN_UNITS: usize = 4;
+
+const BELL: [&str; TAB_UNITS] = [
+    "....#....",
+    "...###...",
+    "..#####..",
+    "..#####..",
+    "..#####..",
+    ".#######.",
+    "#########",
+    ".........",
+    "...###...",
+];
+const HOURGLASS: [&str; TAB_UNITS] = [
+    "#########",
+    ".#######.",
+    "..#####..",
+    "...###...",
+    "....#....",
+    "...###...",
+    "..#####..",
+    ".#######.",
+    "#########",
+];
+const GEAR: [&str; TAB_UNITS] = [
+    "...###...",
+    ".#.###.#.",
+    ".#######.",
+    "####.####",
+    "###...###",
+    "####.####",
+    ".#######.",
+    ".#.###.#.",
+    "...###...",
+];
 
 const SEGMENTS: [u8; 10] = [
     0b011_1111, 0b000_0110, 0b101_1011, 0b100_1111, 0b110_0110, 0b110_1101, 0b111_1101, 0b000_0111,
@@ -32,12 +68,32 @@ pub struct Size {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Screen {
+    Alarm,
+    Timer,
+    Settings,
+}
+
+impl Screen {
+    pub const ALL: [Self; 3] = [Self::Alarm, Self::Timer, Self::Settings];
+
+    fn symbol(self) -> [&'static str; TAB_UNITS] {
+        match self {
+            Self::Alarm => BELL,
+            Self::Timer => HOURGLASS,
+            Self::Settings => GEAR,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Face {
     pub time: TimeOfDay,
     pub alarm: TimeOfDay,
     pub armed: bool,
     pub ringing: bool,
     pub battery: Gauge,
+    pub screen: Screen,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -51,6 +107,8 @@ pub enum Target {
     Hour(Step),
     Minute(Step),
     Elsewhere,
+    Tab(Screen),
+    Blank,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -98,6 +156,8 @@ struct Layout {
     symbol: (usize, usize),
     alarm_unit: usize,
     alarm: (usize, usize),
+    tab_unit: usize,
+    bar_top: usize,
 }
 
 fn layout(size: Size) -> Option<Layout> {
@@ -108,14 +168,17 @@ fn layout(size: Size) -> Option<Layout> {
         (FIGURES * (DIGIT_UNITS + 1) + PERCENT_UNITS + SYMBOL_GAP_UNITS + SYMBOL_UNITS)
             * status_unit
             + unit;
+    let tab_unit = alarm_unit / 2;
+    let bar_height = (TAB_UNITS + 2 * TAB_MARGIN_UNITS) * tab_unit;
     let height = DIGIT_HEIGHT_UNITS * unit;
-    if alarm_unit == 0 || height > size.height {
+    if tab_unit == 0 || height > size.height || bar_height > size.height {
         return None;
     }
     let top = (size.height - height) / 2;
     let mark_top = top + height + MARK_GAP_UNITS * unit;
     let alarm_top = mark_top + (MARK_HEIGHT_UNITS + MARK_GAP_UNITS) * unit;
-    if alarm_top + DIGIT_HEIGHT_UNITS * alarm_unit > size.height
+    let bar_top = size.height - bar_height;
+    if alarm_top + DIGIT_HEIGHT_UNITS * alarm_unit > bar_top
         || status_width > size.width
         || unit + DIGIT_HEIGHT_UNITS * status_unit > top
     {
@@ -128,6 +191,8 @@ fn layout(size: Size) -> Option<Layout> {
         symbol: (size.width - unit - SYMBOL_UNITS * status_unit, unit),
         alarm_unit,
         alarm: ((size.width - UNITS_ACROSS * alarm_unit) / 2, alarm_top),
+        tab_unit,
+        bar_top,
     })
 }
 
@@ -229,6 +294,39 @@ fn battery_symbol(
     }
 }
 
+fn symbol(
+    frame: &mut Frame,
+    (x, y): (usize, usize),
+    unit: usize,
+    rows: [&str; TAB_UNITS],
+    colour: Colour,
+) {
+    for (row, line) in rows.into_iter().enumerate() {
+        for (column, cell) in line.bytes().enumerate() {
+            if cell == b'#' {
+                frame.fill(x + column * unit, y + row * unit, unit, unit, colour);
+            }
+        }
+    }
+}
+
+fn bar(frame: &mut Frame, layout: &Layout, current: Screen) {
+    let width = frame.size().width;
+    let across = TAB_UNITS * layout.tab_unit;
+    let top = layout.bar_top + TAB_MARGIN_UNITS * layout.tab_unit;
+    for (index, screen) in Screen::ALL.into_iter().enumerate() {
+        let centre = width * (2 * index + 1) / (2 * Screen::ALL.len());
+        let colour = if screen == current { FOREGROUND } else { DIM };
+        symbol(
+            frame,
+            (centre.saturating_sub(across / 2), top),
+            layout.tab_unit,
+            screen.symbol(),
+            colour,
+        );
+    }
+}
+
 #[must_use]
 pub fn render(size: Size, face: &Face) -> Frame {
     let background = if face.ringing { RINGING } else { BACKGROUND };
@@ -236,34 +334,54 @@ pub fn render(size: Size, face: &Face) -> Frame {
     let Some(layout) = layout(size) else {
         return frame;
     };
-    let digits = if face.ringing { BACKGROUND } else { FOREGROUND };
-    time(&mut frame, layout.clock, layout.unit, face.time, digits);
-    let status = if face.battery.level == Level::Low {
-        WARNING
-    } else {
-        digits
-    };
-    battery_symbol(
-        &mut frame,
-        layout.symbol,
-        layout.status_unit,
-        face.battery,
-        status,
-    );
-    let alarm = if face.armed { digits } else { DIM };
-    time(
-        &mut frame,
-        layout.alarm,
-        layout.alarm_unit,
-        face.alarm,
-        alarm,
-    );
+    if face.ringing || face.screen == Screen::Alarm {
+        let digits = if face.ringing { BACKGROUND } else { FOREGROUND };
+        time(&mut frame, layout.clock, layout.unit, face.time, digits);
+        let status = if face.battery.level == Level::Low {
+            WARNING
+        } else {
+            digits
+        };
+        battery_symbol(
+            &mut frame,
+            layout.symbol,
+            layout.status_unit,
+            face.battery,
+            status,
+        );
+        let alarm = if face.armed { digits } else { DIM };
+        time(
+            &mut frame,
+            layout.alarm,
+            layout.alarm_unit,
+            face.alarm,
+            alarm,
+        );
+    }
+    if !face.ringing {
+        bar(&mut frame, &layout, face.screen);
+    }
     frame
 }
 
 #[must_use]
-pub fn target(size: Size, x: usize, y: usize) -> Target {
-    let Some(layout) = layout(size) else {
+pub fn target(size: Size, screen: Screen, x: usize, y: usize) -> Target {
+    let layout = layout(size);
+    if let Some(layout) = layout
+        && y >= layout.bar_top
+    {
+        return Target::Tab(if x < size.width / 3 {
+            Screen::Alarm
+        } else if x < size.width * 2 / 3 {
+            Screen::Timer
+        } else {
+            Screen::Settings
+        });
+    }
+    if screen != Screen::Alarm {
+        return Target::Blank;
+    }
+    let Some(layout) = layout else {
         return Target::Elsewhere;
     };
     let height = DIGIT_HEIGHT_UNITS * layout.alarm_unit;
@@ -292,7 +410,7 @@ mod tests {
 
     const SMALL: Size = Size {
         width: 100,
-        height: 112,
+        height: 140,
     };
     const PANEL: Size = Size {
         width: 1080,
@@ -333,6 +451,7 @@ mod tests {
             armed,
             ringing,
             battery,
+            screen: Screen::Alarm,
         })
     }
 
@@ -369,6 +488,53 @@ mod tests {
         assert_eq!(
             picture(&frame),
             include_str!("../testdata/face-1937-unread.txt")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn the_timer_screen_shows_only_the_bar_with_its_tab_marked() -> Outcome {
+        let timer = Face {
+            screen: Screen::Timer,
+            ..face(true, false, charged(80)?)?
+        };
+        let frame = render(SMALL, &timer);
+        assert_eq!(picture(&frame), include_str!("../testdata/face-timer.txt"));
+        Ok(())
+    }
+
+    #[test]
+    fn each_screen_marks_its_own_tab_and_only_the_alarm_screen_shows_the_time() -> Outcome {
+        let mut seen = Vec::new();
+        for screen in Screen::ALL {
+            let face = Face {
+                screen,
+                ..face(true, false, charged(80)?)?
+            };
+            let frame = render(PANEL, &face);
+            let marked: Vec<_> = lit(&frame)
+                .into_iter()
+                .filter(|&(_, y, colour)| y > PANEL.height * 9 / 10 && colour == FOREGROUND)
+                .map(|(x, _, _)| x * Screen::ALL.len() / PANEL.width)
+                .collect();
+            assert_ne!(marked, []);
+            assert!(marked.iter().all(|&third| marked[0] == third));
+            assert!(!seen.contains(&marked[0]));
+            seen.push(marked[0]);
+            assert_eq!(
+                frame.row(PANEL.height / 2).contains(&FOREGROUND),
+                screen == Screen::Alarm
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_ringing_alarm_takes_the_whole_panel_with_no_bar() -> Outcome {
+        let frame = render(PANEL, &face(true, true, charged(64)?)?);
+        assert!(
+            (PANEL.height * 9 / 10..PANEL.height)
+                .all(|y| frame.row(y).iter().all(|&colour| colour == RINGING))
         );
         Ok(())
     }
@@ -420,8 +586,16 @@ mod tests {
             assert_eq!(frame.size(), PANEL);
             assert!((0..PANEL.height).all(|y| frame.row(y).len() == PANEL.width));
             let corner = |x: usize, y: usize| x > PANEL.width / 2 && y < PANEL.height / 10;
+            let (bar, above): (Vec<_>, Vec<_>) = lit(&frame)
+                .into_iter()
+                .partition(|&(_, y, _)| y > PANEL.height * 9 / 10);
             let (status, rest): (Vec<_>, Vec<_>) =
-                lit(&frame).into_iter().partition(|&(x, y, _)| corner(x, y));
+                above.into_iter().partition(|&(x, y, _)| corner(x, y));
+            assert!(
+                bar.iter()
+                    .all(|&(_, y, lit)| y < PANEL.height - 40 && (lit == FOREGROUND || lit == DIM))
+            );
+            assert!(bar.iter().any(|&(_, _, lit)| lit == DIM));
             assert_ne!(status, []);
             assert!(status.iter().all(|&(_, _, lit)| lit == colour));
             assert!(
@@ -454,23 +628,47 @@ mod tests {
         };
         let frame = render(short, &face(true, false, Gauge::UNREAD)?);
         assert_eq!(frame, Frame::filled(short, BACKGROUND));
-        assert_eq!(target(short, 10, 10), Target::Elsewhere);
+        assert_eq!(target(short, Screen::Alarm, 10, 10), Target::Elsewhere);
+        assert_eq!(target(short, Screen::Timer, 10, 10), Target::Blank);
         Ok(())
     }
 
     #[test]
     fn a_tap_on_the_alarm_steps_the_half_it_lands_on() {
-        assert_eq!(target(PANEL, 400, 1600), Target::Hour(Step::Up));
-        assert_eq!(target(PANEL, 400, 1700), Target::Hour(Step::Down));
-        assert_eq!(target(PANEL, 700, 1510), Target::Minute(Step::Up));
-        assert_eq!(target(PANEL, 1079, 1810), Target::Minute(Step::Down));
+        let alarm = |x, y| target(PANEL, Screen::Alarm, x, y);
+        assert_eq!(alarm(400, 1600), Target::Hour(Step::Up));
+        assert_eq!(alarm(400, 1700), Target::Hour(Step::Down));
+        assert_eq!(alarm(700, 1510), Target::Minute(Step::Up));
+        assert_eq!(alarm(1079, 1810), Target::Minute(Step::Down));
     }
 
     #[test]
-    fn a_tap_away_from_the_alarm_is_elsewhere() {
-        assert_eq!(target(PANEL, 509, 1100), Target::Elsewhere);
-        assert_eq!(target(PANEL, 400, 1490), Target::Elsewhere);
-        assert_eq!(target(PANEL, 700, 1820), Target::Elsewhere);
-        assert_eq!(target(PANEL, 540, 2279), Target::Elsewhere);
+    fn a_tap_away_from_the_alarm_and_the_bar_is_elsewhere() {
+        let alarm = |x, y| target(PANEL, Screen::Alarm, x, y);
+        assert_eq!(alarm(509, 1100), Target::Elsewhere);
+        assert_eq!(alarm(400, 1490), Target::Elsewhere);
+        assert_eq!(alarm(700, 1820), Target::Elsewhere);
+        assert_eq!(alarm(540, 2000), Target::Elsewhere);
+    }
+
+    #[test]
+    fn a_tap_on_the_bar_picks_the_tab_in_its_third_on_every_screen() {
+        for screen in Screen::ALL {
+            let tap = |x, y| target(PANEL, screen, x, y);
+            assert_eq!(tap(0, 2279), Target::Tab(Screen::Alarm));
+            assert_eq!(tap(359, 2100), Target::Tab(Screen::Alarm));
+            assert_eq!(tap(360, 2200), Target::Tab(Screen::Timer));
+            assert_eq!(tap(719, 2279), Target::Tab(Screen::Timer));
+            assert_eq!(tap(720, 2100), Target::Tab(Screen::Settings));
+            assert_eq!(tap(1079, 2279), Target::Tab(Screen::Settings));
+        }
+    }
+
+    #[test]
+    fn a_tap_above_the_bar_on_an_empty_screen_is_blank() {
+        for screen in [Screen::Timer, Screen::Settings] {
+            assert_eq!(target(PANEL, screen, 400, 1600), Target::Blank);
+            assert_eq!(target(PANEL, screen, 509, 1100), Target::Blank);
+        }
     }
 }
