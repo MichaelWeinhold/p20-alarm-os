@@ -671,6 +671,7 @@ mod tests {
             time: TimeOfDay::new(hour, minute)?,
             alarms: vec![TimeOfDay::new(ALARM_HOUR, ALARM_MINUTE)?],
             active: None,
+            marked: None,
             picked: TimeOfDay::new(ALARM_HOUR, ALARM_MINUTE)?,
             ringing: false,
             battery,

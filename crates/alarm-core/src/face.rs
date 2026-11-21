@@ -103,6 +103,7 @@ pub struct Face {
     pub time: TimeOfDay,
     pub alarms: Vec<TimeOfDay>,
     pub active: Option<usize>,
+    pub marked: Option<usize>,
     pub picked: TimeOfDay,
     pub ringing: bool,
     pub battery: Gauge,
@@ -525,7 +526,12 @@ fn alarm_screen(frame: &mut Frame, layout: &Layout, sheet: Sheet, face: &Face) {
             DIM
         };
         time(frame, (sheet.left, top), unit, Some(alarm), colour);
-        cross(frame, (sheet.side, top), unit, DIM);
+        let mark = if face.marked == Some(index) {
+            WARNING
+        } else {
+            DIM
+        };
+        cross(frame, (sheet.side, top), unit, mark);
     }
 }
 
@@ -704,6 +710,7 @@ mod tests {
             time: TimeOfDay::new(19, 37)?,
             alarms: vec![TimeOfDay::new(6, 45)?, TimeOfDay::new(7, 30)?],
             active,
+            marked: None,
             picked: TimeOfDay::new(7, 15)?,
             ringing,
             battery,
@@ -746,6 +753,34 @@ mod tests {
             picture(&frame),
             include_str!("../testdata/face-sheet-empty.txt")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_marked_cross_alone_turns_red() -> Outcome {
+        let plain = render(SHEET, &face(Some(0), false, charged(80)?)?);
+        let marked = render(
+            SHEET,
+            &Face {
+                marked: Some(1),
+                ..face(Some(0), false, charged(80)?)?
+            },
+        );
+        let layout = layout(SHEET).ok_or("no layout")?;
+        let sheet = sheet(SHEET, &layout).ok_or("no sheet")?;
+        let across = SIDE_UNITS * sheet.unit;
+        let top = sheet.list_row(1);
+        for y in 0..SHEET.height {
+            for (x, (&before, &after)) in plain.row(y).iter().zip(marked.row(y)).enumerate() {
+                let inside = (sheet.side..sheet.side + across).contains(&x)
+                    && (top..top + across).contains(&y);
+                if inside && before == DIM {
+                    assert_eq!(after, WARNING);
+                } else {
+                    assert_eq!(after, before);
+                }
+            }
+        }
         Ok(())
     }
 

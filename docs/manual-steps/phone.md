@@ -193,9 +193,9 @@ The shell is root: ADR 0005, D4's hard-brick list holds for every `dd` sent to i
 the keys. Never push a file named `recovery`, which asks for TWRP the same way.
 
 **`alarmd`**, `crates/alarmd`, the clock: the local time each minute, the charge held at
-80 %, a bar of alarm, timer and settings tabs. A drag on the hour or minute wheel sets a
-time, `+` saves it, a tap on a saved alarm makes it the active one or disarms it, and its
-cross removes it. Ringing turns the panel amber and pulses the vibrator; a volume key
+80 %, a bar of alarm, timer and settings tabs. A drag on a wheel sets a time, `+` saves
+it, a tap on a saved alarm makes it active or disarms it, a second tap on its cross, red
+after the first, removes it. Ringing turns it amber, pulses the vibrator; a volume key
 snoozes 9 minutes, Power dismisses. Try it from the debug shell first, pushed to `/mnt`,
 then swap it in as above; with the debug `/init` already on `system`, replace `init` alone
 and leave `init.rom`. → `docs/device-history/phone.md`, issues 10, 13, 79 and 80.

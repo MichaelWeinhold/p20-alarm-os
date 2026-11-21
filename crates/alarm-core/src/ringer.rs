@@ -32,6 +32,7 @@ pub struct Ringer {
     ring: Ring,
     picked: TimeOfDay,
     grab: Option<Grab>,
+    marked: Option<usize>,
 }
 
 fn stepped(time: TimeOfDay, field: Field, steps: i64) -> TimeOfDay {
@@ -68,6 +69,7 @@ impl Ringer {
             ring: Ring::Quiet,
             picked,
             grab: None,
+            marked: None,
         }
     }
 
@@ -158,6 +160,9 @@ impl Ringer {
         {
             self.ring = Ring::Ringing;
         }
+        if self.ring == Ring::Ringing {
+            self.marked = None;
+        }
     }
 
     pub fn pressed(&mut self, key: Key, now: UnixSeconds) {
@@ -170,7 +175,13 @@ impl Ringer {
         }
     }
 
+    pub fn darkened(&mut self) {
+        self.grab = None;
+        self.marked = None;
+    }
+
     pub fn touched(&mut self, target: Target, y: usize, now: UnixSeconds, offset: UtcOffset) {
+        let marked = self.marked.take();
         self.grab = None;
         match target {
             Target::Wheel(field, row) => {
@@ -185,8 +196,9 @@ impl Ringer {
             Target::Add => self.add(),
             Target::Entry(index) if self.active == Some(index) => self.disarm(),
             Target::Entry(index) => self.activate(index, now, offset),
-            Target::Remove(index) => self.remove(index),
-            Target::Tab(_) | Target::Blank => {}
+            Target::Remove(index) if marked == Some(index) => self.remove(index),
+            Target::Remove(index) if index < self.alarms.len() => self.marked = Some(index),
+            Target::Remove(_) | Target::Tab(_) | Target::Blank => {}
         }
     }
 
@@ -225,6 +237,7 @@ impl Ringer {
             time: TimeOfDay::at(now, offset),
             alarms: self.alarms.clone(),
             active: self.active,
+            marked: self.marked,
             picked: self.picked,
             ringing: self.ring == Ring::Ringing,
             battery,
@@ -244,6 +257,9 @@ pub fn show(
     let now = clock.now()?;
     ringer.tick(now, offset);
     light.tick(now, ringer.ring());
+    if !light.lit() {
+        ringer.darkened();
+    }
     display.light(light.lit())?;
     if light.lit() {
         let face = ringer.face(now, offset, battery, light.screen());
@@ -309,6 +325,8 @@ mod tests {
     const FIRST: [InputEvent; 2] = tap(300, 1400);
     const SECOND: [InputEvent; 2] = tap(300, 1600);
     const REMOVE_FIRST: [InputEvent; 2] = tap(900, 1400);
+    const REMOVE_SECOND: [InputEvent; 2] = tap(900, 1600);
+    const BLANK: [InputEvent; 2] = tap(540, 400);
     const ALARM_TAB: [InputEvent; 2] = tap(180, 2200);
     const TIMER_TAB: [InputEvent; 2] = tap(540, 2200);
     const SETTINGS_TAB: [InputEvent; 2] = tap(900, 2200);
@@ -986,23 +1004,95 @@ mod tests {
         let clock = FakeClock::at(5, 0, 0);
         let mut ringer = Ringer::listed(times(&[(6, 0), (7, 0), (8, 0)])?, TimeOfDay::new(6, 0)?);
         drain(
-            &mut FakeInput::with(&[&SECOND, &REMOVE_FIRST]),
+            &mut FakeInput::with(&[&SECOND, &REMOVE_FIRST, &REMOVE_FIRST]),
             &clock,
             &mut ringer,
         )?;
         assert_eq!(ringer.alarms(), times(&[(7, 0), (8, 0)])?);
         assert_eq!(ringer.active(), Some(TimeOfDay::new(7, 0)?));
         assert!(ringer.armed());
-        drain(&mut FakeInput::with(&[&REMOVE_FIRST]), &clock, &mut ringer)?;
-        assert_eq!(ringer.alarms(), times(&[(8, 0)])?);
-        assert_eq!(ringer.active(), None);
-        assert!(!ringer.armed());
         drain(
-            &mut FakeInput::with(&[&tap(900, 1600)]),
+            &mut FakeInput::with(&[&REMOVE_FIRST, &REMOVE_FIRST]),
             &clock,
             &mut ringer,
         )?;
         assert_eq!(ringer.alarms(), times(&[(8, 0)])?);
+        assert_eq!(ringer.active(), None);
+        assert!(!ringer.armed());
+        drain(
+            &mut FakeInput::with(&[&REMOVE_SECOND, &REMOVE_SECOND]),
+            &clock,
+            &mut ringer,
+        )?;
+        assert_eq!(ringer.alarms(), times(&[(8, 0)])?);
+        Ok(())
+    }
+
+    #[test]
+    fn a_first_tap_on_a_cross_only_marks_it_and_any_other_touch_clears_the_mark()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(5, 0, 0);
+        let mut ringer = Ringer::listed(times(&[(6, 0), (7, 0)])?, TimeOfDay::new(6, 0)?);
+        drain(&mut FakeInput::with(&[&REMOVE_FIRST]), &clock, &mut ringer)?;
+        assert_eq!(ringer.alarms(), times(&[(6, 0), (7, 0)])?);
+        let face = ringer.face(clock.now()?, UtcOffset::UTC, Gauge::UNREAD, Screen::Alarm);
+        assert_eq!(face.marked, Some(0));
+        for other in [&BLANK, &REMOVE_SECOND, &HOUR_ABOVE] {
+            drain(
+                &mut FakeInput::with(&[&BLANK, &REMOVE_FIRST, other, &REMOVE_FIRST]),
+                &clock,
+                &mut ringer,
+            )?;
+            assert_eq!(ringer.alarms(), times(&[(6, 0), (7, 0)])?);
+            drain(&mut FakeInput::with(&[&BLANK]), &clock, &mut ringer)?;
+        }
+        let face = ringer.face(clock.now()?, UtcOffset::UTC, Gauge::UNREAD, Screen::Alarm);
+        assert_eq!(face.marked, None);
+        Ok(())
+    }
+
+    #[test]
+    fn the_panel_going_off_or_the_alarm_ringing_clears_the_mark()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut ringer = Ringer::listed(times(&[(7, 0), (8, 0)])?, TimeOfDay::new(7, 0)?);
+        let mut light = Light::lit_at(clock.now()?, LIT_SECONDS);
+        drain_lit(
+            &mut FakeInput::with(&[&REMOVE_FIRST]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        clock.pass(LIT_SECONDS);
+        let mut display = FakeDisplay::default();
+        show(
+            &clock,
+            UtcOffset::UTC,
+            &mut ringer,
+            &mut light,
+            Gauge::UNREAD,
+            &mut display,
+        )?;
+        assert_eq!(display.lit, [false]);
+        let mut light = always();
+        drain_lit(
+            &mut FakeInput::with(&[&REMOVE_FIRST]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        assert_eq!(ringer.alarms(), times(&[(7, 0), (8, 0)])?);
+        drain_lit(
+            &mut FakeInput::with(&[&FIRST, &REMOVE_SECOND]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        clock.pass(60);
+        ringer.tick(clock.now()?, UtcOffset::UTC);
+        assert_eq!(ringer.ring(), Ring::Ringing);
+        let face = ringer.face(clock.now()?, UtcOffset::UTC, Gauge::UNREAD, Screen::Alarm);
+        assert_eq!(face.marked, None);
         Ok(())
     }
 }
