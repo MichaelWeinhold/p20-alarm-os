@@ -10,4 +10,5 @@ pub mod schedule;
 pub mod settings;
 pub mod time;
 pub mod vibration;
+pub mod warning;
 pub mod window;
