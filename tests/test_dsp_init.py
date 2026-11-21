@@ -11,6 +11,8 @@ from dsp_init import (
     RECORDER,
     RECORDING,
     SEQUENCE,
+    SET_PARA,
+    SET_SOURCE,
     SYNC,
     USB,
     WRITE_PARAMS,
@@ -27,17 +29,20 @@ def entry(request: int, body: bytes, reply: int = 0) -> bytes:
     return struct.pack("<III", request, len(body), reply) + body
 
 
+IDS = {0: 0xDD53, 4: 0xDD9C, 7: 0xDD96, 8: SET_PARA, 9: SET_PARA, 10: SET_SOURCE, 11: SET_SOURCE}
+
+
 def body(request: int, index: int) -> bytes:
     if request == WRITE_PARAMS:
         return bytes([index]) * PARAMETERS
     if request == USB:
         return b"usb!" * 4
-    return struct.pack("<HHI", 0xDD53 + index, 0, index)
+    return struct.pack("<HHI", IDS.get(index, 0xDD00), 0, index)
 
 
-def recording(requests: tuple[int, ...] = SEQUENCE) -> bytes:
+def recording(requests: tuple[int, ...] = SEQUENCE, order: tuple[int, ...] = ()) -> bytes:
     return b"".join(
-        entry(request, body(request, index), 8 if request == SYNC else 0)
+        entry(request, body(request, order[index] if order else index), 8 if request == SYNC else 0)
         for index, request in enumerate(requests)
     )
 
@@ -107,6 +112,16 @@ def test_a_sequence_that_differs_in_number_or_kind_is_refused(
         init(recording(requests))
 
 
+def test_the_racing_set_para_and_set_source_are_written_set_para_first() -> None:
+    interleaved = recording(order=(0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 9, 11))
+    assert init(interleaved) == init(recording())
+
+
+def test_a_racing_tail_of_other_messages_is_refused() -> None:
+    with pytest.raises(InitError, match="not two SET_PARA and two SET_SOURCE"):
+        init(recording(order=(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 7)))
+
+
 def test_a_parameter_block_of_another_size_is_refused() -> None:
     entries = messages(recording())
     short = entry(WRITE_PARAMS, b"\x00" * (PARAMETERS - 4))
@@ -130,7 +145,10 @@ def test_two_recordings_that_agree_write_the_init(tmp_path: Path) -> None:
     starts = [line for line in phone.shells() if str(RECORDING) in line]
     assert len(starts) == 2
     assert all(
-        line.index(str(RECORDER)) < line.index("start vendor.audio-hal-2-0") for line in starts
+        line.index(str(RECORDER))
+        < line.index("start vendor.audio-hal-2-0")
+        < line.index("start audioserver")
+        for line in starts
     )
     assert phone.shells()[-1] == "start vendor.audio-hal-2-0; start audioserver"
 
@@ -162,7 +180,9 @@ def test_recordings_that_disagree_write_nothing(
     code = main(["dsp_init.py", "--out", str(out), "--from", str(first), str(second)])
     assert code == 1
     assert not out.exists()
-    assert "different init files" in capsys.readouterr().err
+    said = capsys.readouterr().err
+    assert "recordings 0 and 1 differ in message 9, c00c4170" in said
+    assert "8 and 8 bytes, first apart at byte 7" in said
 
 
 def test_the_audio_services_come_back_when_a_recording_fails(tmp_path: Path) -> None:
@@ -184,3 +204,14 @@ def test_a_phone_in_twrp_is_refused_before_anything_is_pushed(
     assert code == 1
     assert phone.calls == [("get-state",)]
     assert "in recovery, not device" in capsys.readouterr().err
+
+
+def test_the_raw_recordings_are_kept_where_asked(tmp_path: Path) -> None:
+    recorder = tmp_path / "dsp-recorder"
+    recorder.write_bytes(b"\x7fELF")
+    keep = tmp_path / "kept"
+    phone = Phone([recording(), recording()])
+    argv = ["dsp_init.py", "--recorder", str(recorder), "--out", str(tmp_path / "x")]
+    assert main([*argv, "--keep", str(keep)], phone) == 0
+    assert sorted(path.name for path in keep.iterdir()) == ["hifi-0.rec", "hifi-1.rec"]
+    assert (keep / "hifi-1.rec").read_bytes() == recording()

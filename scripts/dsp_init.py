@@ -32,6 +32,11 @@ SEQUENCE: Final = (
 KEPT: Final = (0, 1, 2, 3, 4, 7, 8, 9, 10, 11)
 KINDS: Final = {ASYNC: 0, SYNC: 1, WRITE_PARAMS: 2}
 PARAMETERS: Final = 309608
+SET_PARA: Final = 0xDF08
+SET_SOURCE: Final = 0xDD95
+RACING: Final = 8
+RACED: Final = (SET_PARA, SET_PARA, SET_SOURCE, SET_SOURCE)
+MESSAGE_ID: Final = struct.Struct("<H")
 ENTRY: Final = struct.Struct("<III")
 FRAME: Final = struct.Struct("<BII")
 HAL: Final = "vendor.audio-hal-2-0"
@@ -81,7 +86,20 @@ def kept(found: Sequence[Message]) -> list[Message]:
     for index, message in enumerate(found):
         if message.request == WRITE_PARAMS and len(message.body) != PARAMETERS:
             raise InitError(f"WRITE_PARAMS {index} is {len(message.body)} bytes, not {PARAMETERS}")
-    return [found[index] for index in KEPT]
+    racing = found[RACING:]
+    ids = sorted(identity(message) for message in racing)
+    if ids != sorted(RACED):
+        named = " ".join(f"{each:04x}" for each in ids)
+        raise InitError(f"messages {RACING} on are {named}; not two SET_PARA and two SET_SOURCE")
+    ordered = [*found[:RACING], *sorted(racing, key=lambda message: identity(message) != SET_PARA)]
+    return [ordered[index] for index in KEPT]
+
+
+def identity(message: Message) -> int:
+    if len(message.body) < MESSAGE_ID.size:
+        raise InitError(f"a {len(message.body)}-byte message has no id")
+    found: int = MESSAGE_ID.unpack_from(message.body)[0]
+    return found
 
 
 def framed(chosen: Sequence[Message]) -> bytes:
@@ -109,13 +127,13 @@ def recorded(adb: Adb, local: Path) -> bytes:
     shell(
         adb,
         f"rm -f {RECORDING}; {RECORDER} {PROGRAM} {RECORDING} {len(SEQUENCE)} {SECONDS} & "
-        f"start {HAL}; wait $!",
+        f"start {HAL}; start {AUDIOSERVER}; wait $!",
     )
     asked(adb, "pull", str(RECORDING), str(local))
     return local.read_bytes()
 
 
-def recordings(adb: Adb, recorder: Path, count: int) -> list[bytes]:
+def recordings(adb: Adb, recorder: Path, count: int, keep: Path | None) -> list[bytes]:
     if not recorder.is_file():
         raise InitError(f"{recorder} is missing: build it with cargo build --release --target")
     state(adb, "device")
@@ -125,16 +143,29 @@ def recordings(adb: Adb, recorder: Path, count: int) -> list[bytes]:
     shell(adb, f"chmod 755 {RECORDER}")
     try:
         with tempfile.TemporaryDirectory() as scratch:
-            return [recorded(adb, Path(scratch) / f"hifi-{index}.rec") for index in range(count)]
+            into = keep or Path(scratch)
+            into.mkdir(parents=True, exist_ok=True)
+            return [recorded(adb, into / f"hifi-{index}.rec") for index in range(count)]
     finally:
         shell(adb, f"start {HAL}; start {AUDIOSERVER}")
 
 
-def same(inits: Sequence[bytes]) -> bytes:
-    if len(set(inits)) != 1:
-        sizes = ", ".join(str(len(each)) for each in inits)
-        raise InitError(f"{len(inits)} recordings give different init files, {sizes} bytes")
-    return inits[0]
+def same(chosen: Sequence[Sequence[Message]]) -> bytes:
+    first = chosen[0]
+    for number, other in enumerate(chosen[1:], start=1):
+        for index, (one, two) in zip(KEPT, zip(first, other, strict=True), strict=True):
+            if one == two:
+                continue
+            at = next(
+                (k for k, (a, b) in enumerate(zip(one.body, two.body, strict=False)) if a != b),
+                min(len(one.body), len(two.body)),
+            )
+            raise InitError(
+                f"recordings 0 and {number} differ in message {index}, {one.request:08x}: "
+                f"reply {one.reply} and {two.reply}, {len(one.body)} and {len(two.body)} "
+                f"bytes, first apart at byte {at}"
+            )
+    return framed(first)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -142,6 +173,7 @@ def parser() -> argparse.ArgumentParser:
     found.add_argument("--recorder", type=Path, default=BUILT)
     found.add_argument("--out", type=Path, default=OUT)
     found.add_argument("--from", dest="recordings", type=Path, nargs="+")
+    found.add_argument("--keep", type=Path)
     return found
 
 
@@ -149,12 +181,13 @@ def main(argv: list[str], adb: Adb | None = None) -> int:
     options = parser().parse_args(argv[1:])
     out: Path = options.out
     sources: list[Path] | None = options.recordings
+    keep: Path | None = options.keep
     try:
         if sources is None:
-            raw = recordings(adb or adb_runner(), options.recorder, RECORDINGS)
+            raw = recordings(adb or adb_runner(), options.recorder, RECORDINGS, keep)
         else:
             raw = [source.read_bytes() for source in sources]
-        result = same([init(each) for each in raw])
+        result = same([kept(messages(each)) for each in raw])
     except (InitError, PushError, OSError) as error:
         print(error, file=sys.stderr)
         return 1

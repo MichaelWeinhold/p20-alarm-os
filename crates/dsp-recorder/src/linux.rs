@@ -3,6 +3,9 @@ use std::ffi::{c_int, c_long, c_void};
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::os::unix::fs::FileExt;
+use std::process;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -20,10 +23,8 @@ const PTRACE_O_TRACECLONE: usize = 8;
 const NT_PRSTATUS: usize = 1;
 const EPERM: i32 = 1;
 const ESRCH: i32 = 3;
-const WNOHANG: c_int = 1;
 const WALL: c_int = 0x4000_0000;
 const POLL: Duration = Duration::from_micros(200);
-const IDLE: Duration = Duration::from_millis(1);
 
 unsafe extern "C" {
     fn ptrace(request: c_int, ...) -> c_long;
@@ -65,14 +66,23 @@ fn registers(tid: c_int) -> io::Result<[u64; REGISTERS]> {
     Ok(registers)
 }
 
-fn waited() -> io::Result<Option<(c_int, i32)>> {
+fn waited() -> io::Result<(c_int, i32)> {
     let mut status: c_int = 0;
-    let tid = unsafe { waitpid(-1, &raw mut status, WALL | WNOHANG) };
-    match tid {
-        0 => Ok(None),
-        tid if tid < 0 => Err(io::Error::last_os_error()),
-        tid => Ok(Some((tid, status))),
+    let tid = unsafe { waitpid(-1, &raw mut status, WALL) };
+    if tid < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok((tid, status))
     }
+}
+
+fn watched(deadline: Instant, count: usize, recorded: Arc<AtomicUsize>) {
+    thread::spawn(move || {
+        thread::sleep(deadline.saturating_duration_since(Instant::now()));
+        let recorded = recorded.load(Ordering::SeqCst);
+        eprintln!("dsp-recorder: {recorded} of {count} ioctls recorded in time");
+        process::exit(1);
+    });
 }
 
 fn memory(tid: c_int, at: u64, length: usize) -> io::Result<Vec<u8>> {
@@ -156,19 +166,12 @@ pub fn record(options: &Options) -> io::Result<usize> {
     let deadline = Instant::now() + options.within;
     let mut recording = File::create(&options.recording)?;
     let pid = started(&options.program, deadline)?;
+    let shared = Arc::new(AtomicUsize::new(0));
+    watched(deadline, options.count, Arc::clone(&shared));
     attached(pid)?;
     let mut recorded = 0;
     while recorded < options.count {
-        if Instant::now() >= deadline {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                format!("{recorded} of {} ioctls recorded", options.count),
-            ));
-        }
-        let Some((tid, status)) = waited()? else {
-            thread::sleep(IDLE);
-            continue;
-        };
+        let (tid, status) = waited()?;
         match stop(status) {
             Stop::Gone if tid == pid => {
                 return Err(io::Error::other(format!(
@@ -180,6 +183,7 @@ pub fn record(options: &Options) -> io::Result<usize> {
                 if let Some(entry) = hifi_entry(tid)? {
                     recording.write_all(&entry)?;
                     recorded += 1;
+                    shared.store(recorded, Ordering::SeqCst);
                 }
                 resumed(tid, 0)?;
             }
