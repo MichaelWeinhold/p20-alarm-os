@@ -19,6 +19,8 @@ phone, and publishing something that should not be.
   dumps. They carry vendor code that is not ours to redistribute, and a dump can carry the
   IMEI, serial numbers or personal data. `.gitignore` lists them, and `checks / secrets`
   fails the build if one is tracked.
+- **Sounds** — the operator's own and copies of the ROM's. They are not ours to
+  redistribute; they live under the ignored `sounds/` at the repository's root.
 - **Secrets** — none are needed; `.env` and key files are ignored anyway.
 - **Personal identity in commits** — commits are authored with the GitHub noreply address.
 
