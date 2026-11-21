@@ -84,6 +84,9 @@ stop it at once.
 - **Where settings persist across a reboot.** **Decided** — in ADR 0011: a raw record of
   two checksummed slots on `reserved4`, a partition the ROM never used, with `system`
   left read-only. The storage adapter is its follow-up, and unblocks ADR 0010's power-off.
+- **Where alarm sounds are kept.** **Decided** — in ADR 0014: as files on `system`,
+  read-only, where the ROM's alarm sounds already are. The settings stay on `reserved4`,
+  and their two follow-ups wait for the speaker.
 
 ## P7 — Settings and a timer
 
