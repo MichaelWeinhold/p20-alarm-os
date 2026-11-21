@@ -1981,3 +1981,39 @@ values. The HAL builds the parameter block from `odm`'s
 **Replayed under the debug `/init`**, all but 5–6, every `ioctl` returned 0 and the kernel
 logged the same messages as under the ROM. The route set after it, the clip played in real
 time and was heard through the speaker. The draw while it plays was not read.
+
+## 2026-11-21 — the alarm list, for issue 80
+
+`alarmd` holds no serial shell, so every reading here was taken from TWRP: the settings
+record off `reserved4`, decoded by slot and sequence, and `alarmd`'s lines in
+`/sys/fs/pstore/console-ramoops-0`, which holds the boot before TWRP and is garbled in
+places.
+
+**The first build** was `23e16ed`, 526896 bytes, sha256
+`0642d0672ab584bac3fdcd00896eefaa4d0e467e7990074c6518970044bc2fb9`, copied over `/init` on
+`system` at about 11:39 UTC, replacing issue 79's `bcd39a5e…bf6d`. The operator added two
+alarms from the slider, removed one and made the other active, and the record at
+sequence 12 held what the panel showed. **A stray touch then emptied the list**: pstore
+showed both alarms removed at 11:45:54 UTC, about 3 s after a key press lit the panel,
+while the phone was being gripped for TWRP with a thumb on the crosses at the right
+edge, and sequence 13 was saved with no alarms. This is why a cross now removes only on a
+second tap.
+
+**The second build** was `ba17a76`, 527008 bytes, sha256
+`a85fca970ae7322ab98c0fa34bff7d5831468d4238bdc089bf2c6e2bb3c011e4`, copied over `/init` at
+13:41 UTC. `init.rom` still hashed `e8e2768e…78ef`, `misc` read zero, and the RTC read the
+Mac's UTC to the second before `adb reboot` at 13:41:59 UTC.
+
+**The list survives a reboot.** The operator added two alarms, saw a first tap turn a
+cross red and a tap elsewhere clear it, removed one with two taps and made the other
+active. pstore read `alarms [07:00], active none`, then `alarms [07:00], active 07:00`
+and `settings saved`; sequence 14 held 07:00, every day, armed, with the CRC good. After
+`adb reboot` the operator saw 07:00 still listed and lit.
+
+**The list survives a power-off, and the active alarm rings.** The operator added 15:10
+local and made it active, pulled the cable and turned the panel off. The phone powered
+itself off, came back up on the RTC, and rang and vibrated at 15:10 local, 14:10 UTC;
+Power dismissed it, and the panel still listed 07:00 and 15:10. From TWRP, sequence 15
+held 07:00 unarmed and 15:10 armed, both every day, CRC good. `console-ramoops-0` was
+absent, the power-off having cleared the RAM it lives in. The image was left on the
+phone.
