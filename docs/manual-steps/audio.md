@@ -52,8 +52,13 @@ they match the table above.
 
 ## Alarm sounds
 
-**State.** `/system/media/audio/alarms` holds the ROM's eleven Vorbis alarms; `alarmd`
-plays only the `.wav` files beside them. → ADR 0014, D2 and D3; ADR 0015, D3.
+**State.** `/system/media/audio/alarms` holds the ROM's eleven Vorbis alarms and the
+operator's test sound beside them; `alarmd` plays only the `.wav` files. → ADR 0014, D2
+and D3; ADR 0015, D3.
+
+| File | Bytes | sha256 |
+|---|---|---|
+| `ringtone.wav` | 5760044 | `cb3a132041de70b4b09cf058c99f7b1169ca5aaa17239fefc9b90564c58d8836` |
 
 **Reproduce.** From TWRP, on the Mac:
 
