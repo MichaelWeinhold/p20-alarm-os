@@ -1,7 +1,7 @@
 # 11. Keep the settings in a raw record on `reserved4`
 
-- **Status:** Accepted; D2's format raised to version 2 by issue 83, and to version 3
-  by issue 81
+- **Status:** Accepted; D2's format raised to version 2 by issue 83, to version 3 by
+  issue 81, and to version 4 by issue 97
 - **Date:** 2026-11-13
 - **Issue:** #30
 
@@ -53,7 +53,7 @@ slot is little-endian:
 | Offset | Bytes | Field |
 |---|---|---|
 | 0 | 8 | magic, `P20ALRM\0` |
-| 8 | 4 | format version, `3` |
+| 8 | 4 | format version, `4` |
 | 12 | 4 | payload length, at most 4068 |
 | 16 | 8 | sequence number |
 | 24 | n | payload |
@@ -72,11 +72,14 @@ part of the format version, and a change to it raises the version.
 | 10 | 4 n | each alarm: hour, minute, weekdays, and `1` armed or `0` not |
 | 10 + 4 n | 1 | the number of saved timers, m; absent before version 3 |
 | 11 + 4 n | 2 m | each timer: minutes `0` to `99` and seconds `0` to `59`, never both `0` |
+| 11 + 4 n + 2 m | 2 | how long a press lights the panel, in seconds: `10`, `30`, `60`, `120` or `300`; absent before version 4 |
 
 A version-1 slot still loads, with the toggle on, and the next save writes the current
 version. Version 1 is the same payload without the toggle byte. Amended by issue 83.
 A version-2 slot loads with no saved timers; version 2 is the payload without the timer
 count and entries. A running timer is not kept. Amended by issue 81.
+A version-3 slot loads lit for 10 s; version 3 is the payload without the lit time.
+Amended by issue 97.
 
 Encoding, decoding and choosing a slot live in `alarm-core`, tested on the host with
 fakes (architecture rule 1). The adapter only reads and writes the 8192 bytes. The CRC is

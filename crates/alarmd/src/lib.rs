@@ -6,7 +6,7 @@ use alarm_core::hardware::{
     Battery, BootReason, Clock, Display, HardwareError, Modem, PowerOff, Settings, Suspend,
     Vibrator, WakeAlarm,
 };
-use alarm_core::light::{LIT_SECONDS, Light};
+use alarm_core::light::Light;
 use alarm_core::ringer::{Ringer, show};
 use alarm_core::settings::{self, Choices, SetAlarm};
 use alarm_core::time::{Countdown, TimeOfDay, UnixSeconds, UtcOffset, seconds_to_next_minute};
@@ -218,7 +218,11 @@ pub struct Booted {
     pub log: Vec<String>,
 }
 
-pub fn booted(boot: &Result<impl BootReason, HardwareError>, clock: &impl Clock) -> Booted {
+pub fn booted(
+    boot: &Result<impl BootReason, HardwareError>,
+    clock: &impl Clock,
+    lit_seconds: i64,
+) -> Booted {
     let mut log = Vec::new();
     let lit = match boot
         .as_ref()
@@ -235,11 +239,11 @@ pub fn booted(boot: &Result<impl BootReason, HardwareError>, clock: &impl Clock)
         }
     };
     let light = match clock.now() {
-        Ok(now) if lit => Light::lit_at(now, LIT_SECONDS),
-        Ok(_) => Light::dark(LIT_SECONDS),
+        Ok(now) if lit => Light::lit_at(now, lit_seconds),
+        Ok(_) => Light::dark(lit_seconds),
         Err(error) => {
             log.push(kmsg::failure("reading the clock", &error));
-            Light::dark(LIT_SECONDS)
+            Light::dark(lit_seconds)
         }
     };
     Booted { light, log }
@@ -264,6 +268,7 @@ pub fn choices(ringer: &Ringer, offset: UtcOffset, window_seconds: i64) -> Choic
             })
             .collect(),
         timers: ringer.timers().to_vec(),
+        lit_seconds: ringer.lit_seconds(),
     }
 }
 
@@ -312,6 +317,7 @@ pub fn restored(
         picked,
     );
     ringer.set_power_off(loaded.power_off);
+    ringer.set_lit_seconds(loaded.lit_seconds);
     ringer.set_timers(loaded.timers.clone());
     if let Some(armed) = armed {
         match clock.now() {
@@ -389,6 +395,7 @@ pub fn change(before: &Ringer, after: &Ringer) -> Option<String> {
             ringer.next(),
             ringer.ring(),
             ringer.power_off(),
+            ringer.lit_seconds(),
             ringer.timers().to_vec(),
             ringer.running_until(),
         )
@@ -404,9 +411,10 @@ pub fn change(before: &Ringer, after: &Ringer) -> Option<String> {
             .running_until()
             .map_or_else(|| "none".to_owned(), |ends| ends.0.to_string());
         kmsg::line(&format!(
-            "alarms [{}], active {active}, {:?}, power-off {power}, timers [{}], running until {running}",
+            "alarms [{}], active {active}, {:?}, power-off {power}, lit {} s, timers [{}], running until {running}",
             alarms.join(", "),
             after.ring(),
+            after.lit_seconds(),
             timers.join(", ")
         ))
     })
@@ -420,6 +428,7 @@ mod tests {
         Face, Field, Frame, RINGING, Row, Screen, Size, Target, WARNING, render,
     };
     use alarm_core::input::Key;
+    use alarm_core::light::LIT_SECONDS;
     use alarm_core::ringer::Ring;
     use alarm_core::settings::{RECORD_BYTES, SLOT_BYTES, Slot};
     use alarm_core::time::TimeError;
@@ -724,6 +733,7 @@ mod tests {
             battery,
             screen: Screen::Alarm,
             power_off: true,
+            lit_seconds: LIT_SECONDS,
             timers: Vec::new(),
             countdown: Countdown::default(),
             left: None,
@@ -912,7 +922,7 @@ mod tests {
         assert_eq!(
             change(&before, &after),
             Some(kmsg::line(
-                "alarms [07:00], active 07:00, Quiet, power-off on, timers [], running until none"
+                "alarms [07:00], active 07:00, Quiet, power-off on, lit 10 s, timers [], running until none"
             ))
         );
         Ok(())
@@ -932,7 +942,7 @@ mod tests {
         assert_eq!(
             change(&before, &after),
             Some(kmsg::line(
-                "alarms [07:00], active none, Quiet, power-off off, timers [], running until none"
+                "alarms [07:00], active none, Quiet, power-off off, lit 10 s, timers [], running until none"
             ))
         );
         Ok(())
@@ -946,7 +956,7 @@ mod tests {
         assert_eq!(
             change(&before, &started),
             Some(kmsg::line(&format!(
-                "alarms [07:00], active none, Quiet, power-off on, timers [00:45], running until {}",
+                "alarms [07:00], active none, Quiet, power-off on, lit 10 s, timers [00:45], running until {}",
                 after(&clock, 45)?.0
             )))
         );
@@ -1440,7 +1450,7 @@ mod tests {
 
     #[test]
     fn a_boot_by_the_alarm_starts_dark() {
-        let booted = booted(&Ok(FakeBoot(Ok(Boot::Alarm))), &at(6, 58, 13));
+        let booted = booted(&Ok(FakeBoot(Ok(Boot::Alarm))), &at(6, 58, 13), LIT_SECONDS);
         assert_eq!(booted.light, Light::dark(LIT_SECONDS));
         assert_eq!(booted.log, [kmsg::line("booted by Alarm")]);
     }
@@ -1449,9 +1459,18 @@ mod tests {
     fn any_other_boot_shows_the_time() -> Result<(), Box<dyn std::error::Error>> {
         let clock = at(19, 37, 30);
         for boot in [Boot::Press, Boot::Charger, Boot::Other] {
-            let booted = booted(&Ok(FakeBoot(Ok(boot))), &clock);
+            let booted = booted(&Ok(FakeBoot(Ok(boot))), &clock, LIT_SECONDS);
             assert_eq!(booted.light, Light::lit_at(clock.now()?, LIT_SECONDS));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn the_boot_lights_the_panel_for_the_restored_lit_time()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(19, 37, 30);
+        let booted = booted(&Ok(FakeBoot(Ok(Boot::Press))), &clock, 120);
+        assert_eq!(booted.light.seconds_left(clock.now()?), Some(120));
         Ok(())
     }
 
@@ -1460,8 +1479,8 @@ mod tests {
     {
         let clock = at(19, 37, 30);
         let error = HardwareError::Absent("proc/cmdline");
-        let from_adapter = booted(&Ok(FakeBoot(Err(error.clone()))), &clock);
-        let unopened = booted(&Err::<FakeBoot, _>(error.clone()), &clock);
+        let from_adapter = booted(&Ok(FakeBoot(Err(error.clone()))), &clock, LIT_SECONDS);
+        let unopened = booted(&Err::<FakeBoot, _>(error.clone()), &clock, LIT_SECONDS);
         for booted in [from_adapter, unopened] {
             assert_eq!(booted.light, Light::lit_at(clock.now()?, LIT_SECONDS));
             assert_eq!(
@@ -1477,6 +1496,7 @@ mod tests {
         let booted = booted(
             &Ok(FakeBoot(Ok(Boot::Press))),
             &FixedClock(Err(HardwareError::Absent("realtime clock"))),
+            LIT_SECONDS,
         );
         assert_eq!(booted.light, Light::dark(LIT_SECONDS));
         assert_eq!(booted.log.len(), 2);
@@ -1543,6 +1563,8 @@ mod tests {
         assert_eq!(started.saved.window_seconds, WINDOW_SECONDS);
         assert!(started.saved.power_off);
         assert!(started.ringer.power_off());
+        assert_eq!(started.saved.lit_seconds, LIT_SECONDS);
+        assert_eq!(started.ringer.lit_seconds(), LIT_SECONDS);
         assert_eq!(started.log, [kmsg::line("settings never saved")]);
         let current = choices(&started.ringer, berlin()?, WINDOW_SECONDS);
         assert_eq!(persisted(&mut settings, &mut started.saved, current), None);
@@ -1597,6 +1619,38 @@ mod tests {
         assert!(!rebooted.ringer.power_off());
         assert!(!rebooted.saved.power_off);
         assert!(rebooted.ringer.armed());
+        Ok(())
+    }
+
+    #[test]
+    fn a_stepped_lit_time_is_logged_saved_and_survives_a_reboot()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(19, 37, 30);
+        let mut settings = Ok(FakeSettings::blank());
+        let mut started = boot(&mut settings, &clock)?;
+        let mut ringer = started.ringer.clone();
+        ringer.touched(
+            Target::LitTime,
+            Screen::Settings,
+            0,
+            clock.now()?,
+            UtcOffset::UTC,
+        );
+        assert_eq!(
+            change(&started.ringer, &ringer),
+            Some(kmsg::line(
+                "alarms [07:00], active none, Quiet, power-off on, lit 30 s, timers [], running until none"
+            ))
+        );
+        let current = choices(&ringer, berlin()?, WINDOW_SECONDS);
+        assert_eq!(current.lit_seconds, 30);
+        assert_eq!(
+            persisted(&mut settings, &mut started.saved, current),
+            Some(kmsg::line("settings saved"))
+        );
+        let rebooted = boot(&mut settings, &at(20, 0, 0))?;
+        assert_eq!(rebooted.ringer.lit_seconds(), 30);
+        assert_eq!(rebooted.saved.lit_seconds, 30);
         Ok(())
     }
 

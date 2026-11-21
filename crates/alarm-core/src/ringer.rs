@@ -5,7 +5,7 @@ use crate::face::{
 };
 use crate::hardware::{Clock, Display, HardwareError, Input};
 use crate::input::{InputEvent, Key};
-use crate::light::Light;
+use crate::light::{LIT_SECONDS, Light, next_lit_seconds};
 use crate::time::{Countdown, TimeOfDay, UnixSeconds, UtcOffset, start_of_minute};
 
 pub const SNOOZE_SECONDS: i64 = 9 * 60;
@@ -48,6 +48,7 @@ pub struct Ringer {
     grab: Option<Grab>,
     marked: Option<usize>,
     power_off: bool,
+    lit_seconds: i64,
     timers: Vec<Countdown>,
     countdown: Countdown,
     running: Option<Run>,
@@ -99,6 +100,7 @@ impl Ringer {
             grab: None,
             marked: None,
             power_off: true,
+            lit_seconds: LIT_SECONDS,
             timers: Vec::new(),
             countdown: Countdown::default(),
             running: None,
@@ -159,6 +161,15 @@ impl Ringer {
 
     pub fn set_power_off(&mut self, power_off: bool) {
         self.power_off = power_off;
+    }
+
+    #[must_use]
+    pub fn lit_seconds(&self) -> i64 {
+        self.lit_seconds
+    }
+
+    pub fn set_lit_seconds(&mut self, lit_seconds: i64) {
+        self.lit_seconds = lit_seconds;
     }
 
     #[must_use]
@@ -349,6 +360,7 @@ impl Ringer {
             Target::Remove(index) if marked == Some(index) => self.remove(index),
             Target::Remove(index) if index < self.alarms.len() => self.marked = Some(index),
             Target::PowerOff => self.power_off = !self.power_off,
+            Target::LitTime => self.lit_seconds = next_lit_seconds(self.lit_seconds),
             Target::Remove(_) | Target::Tab(_) | Target::Blank => {}
         }
     }
@@ -395,6 +407,7 @@ impl Ringer {
             battery,
             screen,
             power_off: self.power_off,
+            lit_seconds: self.lit_seconds,
             timers: self.timers.clone(),
             countdown: self.countdown,
             left: self
@@ -457,6 +470,7 @@ pub fn listen(
             InputEvent::Lift => ringer.lifted(),
         }
     }
+    light.set_seconds(ringer.lit_seconds());
     light.heard(event, ring, now);
     Ok(Some(event))
 }
@@ -468,7 +482,6 @@ mod tests {
 
     use super::*;
     use crate::face::Frame;
-    use crate::light::LIT_SECONDS;
     use crate::time::TimeError;
 
     const PANEL: Size = Size {
@@ -487,6 +500,7 @@ mod tests {
     const REMOVE_SECOND: [InputEvent; 2] = tap(900, 1600);
     const BLANK: [InputEvent; 2] = tap(540, 400);
     const POWER_OFF: [InputEvent; 2] = tap(540, 800);
+    const LIT_TIME: [InputEvent; 2] = tap(540, 1000);
     const ALARM_TAB: [InputEvent; 2] = tap(180, 2200);
     const TIMER_TAB: [InputEvent; 2] = tap(540, 2200);
     const SETTINGS_TAB: [InputEvent; 2] = tap(900, 2200);
@@ -1237,7 +1251,67 @@ mod tests {
     }
 
     #[test]
-    fn a_tap_off_the_toggle_on_the_settings_screen_changes_nothing()
+    fn a_tap_on_the_lit_time_steps_it_through_the_choices_and_round()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut ringer = ringer(7, 0)?;
+        drain(&mut FakeInput::with(&[&FIRST]), &clock, &mut ringer)?;
+        assert_eq!(ringer.lit_seconds(), LIT_SECONDS);
+        let armed = ringer.clone();
+        let mut light = always();
+        drain_lit(
+            &mut FakeInput::with(&[&SETTINGS_TAB]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        let mut seen = Vec::new();
+        for _ in 0..5 {
+            drain_lit(
+                &mut FakeInput::with(&[&LIT_TIME]),
+                &clock,
+                &mut ringer,
+                &mut light,
+            )?;
+            seen.push(ringer.lit_seconds());
+        }
+        assert_eq!(seen, [30, 60, 120, 300, 10]);
+        assert_eq!(ringer, armed);
+        Ok(())
+    }
+
+    #[test]
+    fn the_panel_stays_lit_for_the_lit_time_from_the_tap_that_sets_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut ringer = ringer(7, 0)?;
+        let mut light = Light::lit_at(clock.now()?, LIT_SECONDS);
+        drain_lit(
+            &mut FakeInput::with(&[&SETTINGS_TAB, &LIT_TIME]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        assert_eq!(ringer.lit_seconds(), 30);
+        assert_eq!(light.seconds_left(clock.now()?), Some(30));
+        clock.pass(29);
+        light.tick(clock.now()?, ringer.ring());
+        assert!(light.lit());
+        clock.pass(1);
+        light.tick(clock.now()?, ringer.ring());
+        assert!(!light.lit());
+        drain_lit(
+            &mut FakeInput::with(&[&DISMISS]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        assert_eq!(light.seconds_left(clock.now()?), Some(30));
+        Ok(())
+    }
+
+    #[test]
+    fn a_tap_off_the_rows_on_the_settings_screen_changes_nothing()
     -> Result<(), Box<dyn std::error::Error>> {
         let clock = FakeClock::at(6, 59, 0);
         let mut ringer = ringer(7, 0)?;
@@ -1245,7 +1319,7 @@ mod tests {
         let armed = ringer.clone();
         let mut light = always();
         drain_lit(
-            &mut FakeInput::with(&[&SETTINGS_TAB, &FIRST, &HOUR_BELOW, &MINUTE_BELOW, &ADD]),
+            &mut FakeInput::with(&[&SETTINGS_TAB, &FIRST, &HOUR_BELOW, &MINUTE_BELOW, &BLANK]),
             &clock,
             &mut ringer,
             &mut light,
@@ -1256,20 +1330,17 @@ mod tests {
     }
 
     #[test]
-    fn the_face_carries_the_toggle() -> Result<(), Box<dyn std::error::Error>> {
+    fn the_face_carries_the_toggle_and_the_lit_time() -> Result<(), Box<dyn std::error::Error>> {
         let mut ringer = ringer(7, 0)?;
         let now = FakeClock::at(6, 59, 0).now()?;
-        assert!(
-            ringer
-                .face(now, UtcOffset::UTC, Gauge::UNREAD, Screen::Settings)
-                .power_off
-        );
+        let face = ringer.face(now, UtcOffset::UTC, Gauge::UNREAD, Screen::Settings);
+        assert!(face.power_off);
+        assert_eq!(face.lit_seconds, LIT_SECONDS);
         ringer.set_power_off(false);
-        assert!(
-            !ringer
-                .face(now, UtcOffset::UTC, Gauge::UNREAD, Screen::Settings)
-                .power_off
-        );
+        ringer.set_lit_seconds(120);
+        let face = ringer.face(now, UtcOffset::UTC, Gauge::UNREAD, Screen::Settings);
+        assert!(!face.power_off);
+        assert_eq!(face.lit_seconds, 120);
         Ok(())
     }
 

@@ -71,6 +71,11 @@ const GEAR: [&str; TAB_UNITS] = [
 const POWER: [&str; DIGIT_HEIGHT_UNITS] = [
     "...#...", ".#.#.#.", "#..#..#", "#..#..#", "#.....#", "#.....#", ".#####.",
 ];
+const SUN: [&str; DIGIT_HEIGHT_UNITS] = [
+    "#..#..#", ".#...#.", "..###..", "#.###.#", "..###..", ".#...#.", "#..#..#",
+];
+const POWER_OFF_ROW: usize = 0;
+const LIT_ROW: usize = 1;
 
 const SEGMENTS: [u8; 10] = [
     0b011_1111, 0b000_0110, 0b101_1011, 0b100_1111, 0b110_0110, 0b110_1101, 0b111_1101, 0b000_0111,
@@ -116,6 +121,7 @@ pub struct Face {
     pub battery: Gauge,
     pub screen: Screen,
     pub power_off: bool,
+    pub lit_seconds: i64,
     pub timers: Vec<Countdown>,
     pub countdown: Countdown,
     pub left: Option<Countdown>,
@@ -181,6 +187,7 @@ pub enum Target {
     Remove(usize),
     Start,
     PowerOff,
+    LitTime,
     Tab(Screen),
     Blank,
 }
@@ -290,8 +297,8 @@ impl Sheet {
         self.list_top + index * ROW_UNITS * self.unit
     }
 
-    fn setting_row(self) -> usize {
-        self.wheel_top
+    fn setting_row(self, index: usize) -> usize {
+        self.wheel_top + index * ROW_UNITS * self.unit
     }
 
     fn band(self, top: usize, y: usize) -> bool {
@@ -566,14 +573,23 @@ fn switch(frame: &mut Frame, (x, y): (usize, usize), unit: usize, on: bool) {
 
 fn settings_screen(frame: &mut Frame, sheet: Sheet, face: &Face) {
     let unit = sheet.unit;
-    let top = sheet.setting_row();
-    symbol(frame, (sheet.left, top), unit, &POWER, FOREGROUND);
     let right = sheet.side + SIDE_UNITS * unit;
+    let top = sheet.setting_row(POWER_OFF_ROW);
+    symbol(frame, (sheet.left, top), unit, &POWER, FOREGROUND);
     switch(
         frame,
         (right - SWITCH_UNITS * unit, top),
         unit,
         face.power_off,
+    );
+    let top = sheet.setting_row(LIT_ROW);
+    symbol(frame, (sheet.left, top), unit, &SUN, FOREGROUND);
+    figures(
+        frame,
+        (right - UNITS_ACROSS * unit, top),
+        unit,
+        Some(of_countdown(Countdown::of(face.lit_seconds))),
+        FOREGROUND,
     );
 }
 
@@ -793,7 +809,12 @@ pub fn target(size: Size, screen: Screen, x: usize, y: usize) -> Target {
     match (screen, sheet(size, &layout)) {
         (Screen::Timer, Some(sheet)) if sheet.band(sheet.active.1, y) => Target::Start,
         (Screen::Alarm | Screen::Timer, Some(sheet)) => sheet_target(sheet, x, y),
-        (Screen::Settings, Some(sheet)) if sheet.band(sheet.setting_row(), y) => Target::PowerOff,
+        (Screen::Settings, Some(sheet)) if sheet.band(sheet.setting_row(POWER_OFF_ROW), y) => {
+            Target::PowerOff
+        }
+        (Screen::Settings, Some(sheet)) if sheet.band(sheet.setting_row(LIT_ROW), y) => {
+            Target::LitTime
+        }
         _ => Target::Blank,
     }
 }
@@ -856,6 +877,7 @@ mod tests {
             battery,
             screen: Screen::Alarm,
             power_off: true,
+            lit_seconds: 10,
             timers: Vec::new(),
             countdown: Countdown::default(),
             left: None,
@@ -1015,14 +1037,19 @@ mod tests {
     }
 
     #[test]
-    fn the_settings_screen_shows_the_power_off_toggle_as_recorded() -> Outcome {
-        for (power_off, recorded) in [
-            (true, include_str!("../testdata/face-settings.txt")),
-            (false, include_str!("../testdata/face-settings-stays.txt")),
+    fn the_settings_screen_shows_the_power_off_toggle_and_the_lit_time_as_recorded() -> Outcome {
+        for (power_off, lit_seconds, recorded) in [
+            (true, 10, include_str!("../testdata/face-settings.txt")),
+            (
+                false,
+                300,
+                include_str!("../testdata/face-settings-stays.txt"),
+            ),
         ] {
             let settings = Face {
                 screen: Screen::Settings,
                 power_off,
+                lit_seconds,
                 ..face(Some(0), false, charged(80)?)?
             };
             assert_eq!(picture(&render(SHEET, &settings)), recorded);
@@ -1031,13 +1058,16 @@ mod tests {
     }
 
     #[test]
-    fn a_tap_across_the_toggle_row_is_the_power_off_and_elsewhere_blank() {
+    fn a_tap_across_a_settings_row_is_its_setting_and_elsewhere_blank() {
         let settings = |x, y| target(PANEL, Screen::Settings, x, y);
         assert_eq!(settings(0, 725), Target::PowerOff);
         assert_eq!(settings(540, 800), Target::PowerOff);
         assert_eq!(settings(1079, 908), Target::PowerOff);
+        assert_eq!(settings(0, 909), Target::LitTime);
+        assert_eq!(settings(540, 1000), Target::LitTime);
+        assert_eq!(settings(1079, 1092), Target::LitTime);
         assert_eq!(settings(540, 724), Target::Blank);
-        assert_eq!(settings(540, 909), Target::Blank);
+        assert_eq!(settings(540, 1093), Target::Blank);
         assert_eq!(settings(540, 1400), Target::Blank);
         assert_eq!(target(SMALL, Screen::Settings, 50, 20), Target::Blank);
     }
@@ -1061,7 +1091,9 @@ mod tests {
             assert!(!seen.contains(&marked[0]));
             seen.push(marked[0]);
             assert_eq!(
-                frame.row(1000).contains(&FOREGROUND),
+                lit(&frame)
+                    .iter()
+                    .any(|&(_, y, colour)| y < PANEL.height * 9 / 10 && colour == DIM),
                 screen != Screen::Settings
             );
         }

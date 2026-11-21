@@ -3,7 +3,16 @@ use crate::input::{InputEvent, Key};
 use crate::ringer::Ring;
 use crate::time::UnixSeconds;
 
-pub const LIT_SECONDS: i64 = 10;
+pub const LIT_CHOICES: [i64; 5] = [10, 30, 60, 120, 300];
+pub const LIT_SECONDS: i64 = LIT_CHOICES[0];
+
+#[must_use]
+pub fn next_lit_seconds(seconds: i64) -> i64 {
+    LIT_CHOICES
+        .into_iter()
+        .find(|&choice| choice > seconds)
+        .unwrap_or(LIT_SECONDS)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Light {
@@ -41,6 +50,10 @@ impl Light {
 
     pub fn open(&mut self, screen: Screen) {
         self.screen = screen;
+    }
+
+    pub fn set_seconds(&mut self, seconds: i64) {
+        self.seconds = seconds;
     }
 
     #[must_use]
@@ -198,5 +211,29 @@ mod tests {
         assert!(light.lit());
         light.tick(at(30), Ring::Quiet);
         assert!(!light.lit());
+    }
+
+    #[test]
+    fn a_new_setting_lasts_from_the_next_relight() {
+        let mut light = Light::lit_at(START, LIT_SECONDS);
+        light.set_seconds(60);
+        light.tick(at(10), Ring::Quiet);
+        assert!(!light.lit());
+        light.heard(POWER, Ring::Quiet, at(20));
+        light.tick(at(79), Ring::Quiet);
+        assert!(light.lit());
+        light.tick(at(80), Ring::Quiet);
+        assert!(!light.lit());
+    }
+
+    #[test]
+    fn the_choices_step_up_and_wrap_round_to_the_default() {
+        let mut seen = vec![LIT_SECONDS];
+        for _ in LIT_CHOICES {
+            seen.push(next_lit_seconds(seen[seen.len() - 1]));
+        }
+        assert_eq!(seen, [10, 30, 60, 120, 300, 10]);
+        assert_eq!(next_lit_seconds(45), 60);
+        assert_eq!(next_lit_seconds(i64::MAX), LIT_SECONDS);
     }
 }
