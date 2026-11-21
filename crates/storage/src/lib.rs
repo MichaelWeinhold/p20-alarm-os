@@ -164,6 +164,7 @@ mod tests {
         Ok(Choices {
             offset: UtcOffset::from_seconds(3_600)?,
             window_seconds: 120,
+            power_off: true,
             alarms: vec![SetAlarm {
                 alarm: Alarm {
                     time: TimeOfDay::new(6, minute)?,

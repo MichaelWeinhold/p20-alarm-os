@@ -142,7 +142,7 @@ fn suspended(
         Answer::Suspend(at) if at > now => Some(at),
         Answer::PowerOff => {
             let on_at = ringer.next().map(power_on_at);
-            if powered_off(on_at, cable_in, &mut sleep.power, log) {
+            if ringer.power_off() && powered_off(on_at, cable_in, &mut sleep.power, log) {
                 return Ok(Rest::PoweredOff(on_at));
             }
             ringer.next()
@@ -242,6 +242,7 @@ pub fn choices(ringer: &Ringer, offset: UtcOffset, window_seconds: i64) -> Choic
     Choices {
         offset,
         window_seconds,
+        power_off: ringer.power_off(),
         alarms: ringer
             .alarms()
             .iter()
@@ -301,6 +302,7 @@ pub fn restored(
         loaded.alarms.iter().map(|set| set.alarm.time).collect(),
         picked,
     );
+    ringer.set_power_off(loaded.power_off);
     if let Some(armed) = armed {
         match clock.now() {
             Ok(now) => {
@@ -371,13 +373,21 @@ impl<S: Suspend> Suspend for AfterModem<S> {
 
 #[must_use]
 pub fn change(before: &Ringer, after: &Ringer) -> Option<String> {
-    let state = |ringer: &Ringer| (ringer.alarms().to_vec(), ringer.next(), ringer.ring());
+    let state = |ringer: &Ringer| {
+        (
+            ringer.alarms().to_vec(),
+            ringer.next(),
+            ringer.ring(),
+            ringer.power_off(),
+        )
+    };
     let clock = |time: TimeOfDay| format!("{:02}:{:02}", time.hour(), time.minute());
     (state(before) != state(after)).then(|| {
         let alarms: Vec<String> = after.alarms().iter().map(|&time| clock(time)).collect();
         let active = after.active().map_or_else(|| "none".to_owned(), clock);
+        let power = if after.power_off() { "on" } else { "off" };
         kmsg::line(&format!(
-            "alarms [{}], active {active}, {:?}",
+            "alarms [{}], active {active}, {:?}, power-off {power}",
             alarms.join(", "),
             after.ring()
         ))
@@ -676,6 +686,7 @@ mod tests {
             ringing: false,
             battery,
             screen: Screen::Alarm,
+            power_off: true,
         })
     }
 
@@ -847,7 +858,23 @@ mod tests {
         after.touched(Target::Entry(0), 0, at(6, 0, 0).now()?, UtcOffset::UTC);
         assert_eq!(
             change(&before, &after),
-            Some(kmsg::line("alarms [07:00], active 07:00, Quiet"))
+            Some(kmsg::line(
+                "alarms [07:00], active 07:00, Quiet, power-off on"
+            ))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_turned_toggle_is_logged() -> Result<(), Box<dyn std::error::Error>> {
+        let before = ringer()?;
+        let mut after = before.clone();
+        after.touched(Target::PowerOff, 0, at(6, 0, 0).now()?, UtcOffset::UTC);
+        assert_eq!(
+            change(&before, &after),
+            Some(kmsg::line(
+                "alarms [07:00], active none, Quiet, power-off off"
+            ))
         );
         Ok(())
     }
@@ -1002,6 +1029,66 @@ mod tests {
         resting.rest(&clock, &ringer, &dark());
         assert_eq!(ringer.next(), Some(at(31, 0, 0).now()?));
         assert_eq!(resting.armed(), Some([ringer.next()].as_slice()));
+        assert_eq!(resting.suspends(), Some(1));
+        Ok(())
+    }
+
+    #[test]
+    fn with_the_toggle_off_the_window_end_stays_suspended_for_the_next_alarm()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(19, 37, 30);
+        let mut ringer = armed_at(&clock)?;
+        ringer.set_power_off(false);
+        let mut resting = Resting::unplugged();
+        resting.sleep.window.dark(at(19, 35, 0).now()?);
+        let step = resting.rest(&clock, &ringer, &dark());
+        let next = at(31, 0, 0).now()?;
+        assert_eq!(
+            step.log,
+            [kmsg::line(&format!(
+                "resumed from a suspend armed for {}",
+                next.0
+            ))]
+        );
+        assert_eq!(resting.offs(), Some([].as_slice()));
+        assert_eq!(resting.armed(), Some([Some(next)].as_slice()));
+        assert_eq!(resting.suspends(), Some(1));
+        Ok(())
+    }
+
+    #[test]
+    fn with_the_toggle_off_and_no_alarm_it_stays_suspended_with_the_rtc_disarmed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(19, 37, 30);
+        let mut ringer = ringer()?;
+        ringer.set_power_off(false);
+        let mut resting = Resting::unplugged();
+        resting.sleep.window.dark(at(19, 35, 0).now()?);
+        let step = resting.rest(&clock, &ringer, &dark());
+        assert_eq!(
+            step.log,
+            [kmsg::line("resumed from a suspend with the RTC disarmed")]
+        );
+        assert_eq!(resting.offs(), Some([].as_slice()));
+        assert_eq!(resting.armed(), Some([None].as_slice()));
+        assert_eq!(resting.suspends(), Some(1));
+        Ok(())
+    }
+
+    #[test]
+    fn with_the_toggle_off_an_unread_cable_is_not_a_failure()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(19, 37, 30);
+        let mut ringer = ringer()?;
+        ringer.set_power_off(false);
+        let mut resting = Resting::unplugged();
+        resting.cable_in = Err(HardwareError::Absent("Battery"));
+        resting.sleep.window.dark(at(19, 35, 0).now()?);
+        let step = resting.rest(&clock, &ringer, &dark());
+        assert_eq!(
+            step.log,
+            [kmsg::line("resumed from a suspend with the RTC disarmed")]
+        );
         assert_eq!(resting.suspends(), Some(1));
         Ok(())
     }
@@ -1317,6 +1404,8 @@ mod tests {
         assert_eq!(started.ringer, ringer()?);
         assert_eq!(started.saved.offset, berlin()?);
         assert_eq!(started.saved.window_seconds, WINDOW_SECONDS);
+        assert!(started.saved.power_off);
+        assert!(started.ringer.power_off());
         assert_eq!(started.log, [kmsg::line("settings never saved")]);
         let current = choices(&started.ringer, berlin()?, WINDOW_SECONDS);
         assert_eq!(persisted(&mut settings, &mut started.saved, current), None);
@@ -1343,6 +1432,7 @@ mod tests {
         let rebooted = boot(&mut settings, &later)?;
         assert_eq!(rebooted.log, [kmsg::line("settings loaded")]);
         assert!(rebooted.ringer.armed());
+        assert!(rebooted.ringer.power_off());
         assert_eq!(
             rebooted.ringer.next(),
             Some(
@@ -1350,6 +1440,26 @@ mod tests {
                     .next_after(later.now()?, berlin()?)
             )
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_turned_toggle_is_saved_and_survives_a_reboot() -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(19, 37, 30);
+        let mut settings = Ok(FakeSettings::blank());
+        let mut started = boot(&mut settings, &clock)?;
+        let mut ringer = armed_at(&clock)?;
+        ringer.set_power_off(false);
+        let current = choices(&ringer, berlin()?, WINDOW_SECONDS);
+        assert!(!current.power_off);
+        assert_eq!(
+            persisted(&mut settings, &mut started.saved, current),
+            Some(kmsg::line("settings saved"))
+        );
+        let rebooted = boot(&mut settings, &at(20, 0, 0))?;
+        assert!(!rebooted.ringer.power_off());
+        assert!(!rebooted.saved.power_off);
+        assert!(rebooted.ringer.armed());
         Ok(())
     }
 

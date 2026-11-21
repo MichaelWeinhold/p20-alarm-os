@@ -28,6 +28,8 @@ const DASH: u8 = 0b100_0000;
 const STROKE_PARTS: usize = 3;
 const ARROW_UNITS: usize = 2;
 const ARROW_GAP_UNITS: usize = 2;
+const SWITCH_UNITS: usize = 13;
+const KNOB_UNITS: usize = 3;
 
 pub const SAVED_ALARMS: usize = 4;
 
@@ -63,6 +65,10 @@ const GEAR: [&str; TAB_UNITS] = [
     ".#######.",
     ".#.###.#.",
     "...###...",
+];
+
+const POWER: [&str; DIGIT_HEIGHT_UNITS] = [
+    "...#...", ".#.#.#.", "#..#..#", "#..#..#", "#.....#", "#.....#", ".#####.",
 ];
 
 const SEGMENTS: [u8; 10] = [
@@ -108,6 +114,7 @@ pub struct Face {
     pub ringing: bool,
     pub battery: Gauge,
     pub screen: Screen,
+    pub power_off: bool,
 }
 
 impl Face {
@@ -161,6 +168,7 @@ pub enum Target {
     Add,
     Entry(usize),
     Remove(usize),
+    PowerOff,
     Tab(Screen),
     Blank,
 }
@@ -268,6 +276,10 @@ impl Sheet {
 
     fn list_row(self, index: usize) -> usize {
         self.list_top + index * ROW_UNITS * self.unit
+    }
+
+    fn setting_row(self) -> usize {
+        self.wheel_top
     }
 
     fn band(self, top: usize, y: usize) -> bool {
@@ -456,14 +468,8 @@ fn battery_symbol(
     }
 }
 
-fn symbol(
-    frame: &mut Frame,
-    (x, y): (usize, usize),
-    unit: usize,
-    rows: [&str; TAB_UNITS],
-    colour: Colour,
-) {
-    for (row, line) in rows.into_iter().enumerate() {
+fn symbol(frame: &mut Frame, (x, y): (usize, usize), unit: usize, rows: &[&str], colour: Colour) {
+    for (row, line) in rows.iter().enumerate() {
         for (column, cell) in line.bytes().enumerate() {
             if cell == b'#' {
                 frame.fill(x + column * unit, y + row * unit, unit, unit, colour);
@@ -493,6 +499,38 @@ fn arrow(frame: &mut Frame, (centre, y): (usize, usize), unit: usize, up: bool, 
     let down = ARROW_UNITS * unit;
     slanted(frame, (left, y), (half, down), unit, up, colour);
     slanted(frame, (centre, y), (half, down), unit, !up, colour);
+}
+
+fn switch(frame: &mut Frame, (x, y): (usize, usize), unit: usize, on: bool) {
+    let colour = if on { FOREGROUND } else { DIM };
+    let thick = stroke(unit);
+    let width = SWITCH_UNITS * unit;
+    let height = DIGIT_HEIGHT_UNITS * unit;
+    frame.fill(x, y, width, thick, colour);
+    frame.fill(x, y + height - thick, width, thick, colour);
+    frame.fill(x, y, thick, height, colour);
+    frame.fill(x + width - thick, y, thick, height, colour);
+    let knob = if on { SWITCH_UNITS - 2 - KNOB_UNITS } else { 2 };
+    frame.fill(
+        x + knob * unit,
+        y + 2 * unit,
+        KNOB_UNITS * unit,
+        KNOB_UNITS * unit,
+        colour,
+    );
+}
+
+fn settings_screen(frame: &mut Frame, sheet: Sheet, face: &Face) {
+    let unit = sheet.unit;
+    let top = sheet.setting_row();
+    symbol(frame, (sheet.left, top), unit, &POWER, FOREGROUND);
+    let right = sheet.side + SIDE_UNITS * unit;
+    switch(
+        frame,
+        (right - SWITCH_UNITS * unit, top),
+        unit,
+        face.power_off,
+    );
 }
 
 fn wheels(frame: &mut Frame, sheet: Sheet, picked: TimeOfDay) {
@@ -546,7 +584,7 @@ fn bar(frame: &mut Frame, layout: &Layout, current: Screen) {
             frame,
             (centre.saturating_sub(across / 2), top),
             layout.tab_unit,
-            screen.symbol(),
+            &screen.symbol(),
             colour,
         );
     }
@@ -560,8 +598,8 @@ pub fn render(size: Size, face: &Face) -> Frame {
         return frame;
     };
     let digits = if face.ringing { BACKGROUND } else { FOREGROUND };
-    let sheet = sheet(size, &layout).filter(|_| face.screen == Screen::Alarm);
-    if face.ringing || sheet.is_some() {
+    let sheet = sheet(size, &layout);
+    if face.ringing || (sheet.is_some() && face.screen == Screen::Alarm) {
         let status = if face.battery.level == Level::Low {
             WARNING
         } else {
@@ -592,8 +630,10 @@ pub fn render(size: Size, face: &Face) -> Frame {
         );
         return frame;
     }
-    if let Some(sheet) = sheet {
-        alarm_screen(&mut frame, &layout, sheet, face);
+    match (face.screen, sheet) {
+        (Screen::Alarm, Some(sheet)) => alarm_screen(&mut frame, &layout, sheet, face),
+        (Screen::Settings, Some(sheet)) => settings_screen(&mut frame, sheet, face),
+        _ => {}
     }
     bar(&mut frame, &layout, face.screen);
     frame
@@ -652,8 +692,9 @@ pub fn target(size: Size, screen: Screen, x: usize, y: usize) -> Target {
             Screen::Settings
         });
     }
-    match sheet(size, &layout) {
-        Some(sheet) if screen == Screen::Alarm => sheet_target(sheet, x, y),
+    match (screen, sheet(size, &layout)) {
+        (Screen::Alarm, Some(sheet)) => sheet_target(sheet, x, y),
+        (Screen::Settings, Some(sheet)) if sheet.band(sheet.setting_row(), y) => Target::PowerOff,
         _ => Target::Blank,
     }
 }
@@ -715,6 +756,7 @@ mod tests {
             ringing,
             battery,
             screen: Screen::Alarm,
+            power_off: true,
         })
     }
 
@@ -803,6 +845,34 @@ mod tests {
         let frame = render(SMALL, &timer);
         assert_eq!(picture(&frame), include_str!("../testdata/face-timer.txt"));
         Ok(())
+    }
+
+    #[test]
+    fn the_settings_screen_shows_the_power_off_toggle_as_recorded() -> Outcome {
+        for (power_off, recorded) in [
+            (true, include_str!("../testdata/face-settings.txt")),
+            (false, include_str!("../testdata/face-settings-stays.txt")),
+        ] {
+            let settings = Face {
+                screen: Screen::Settings,
+                power_off,
+                ..face(Some(0), false, charged(80)?)?
+            };
+            assert_eq!(picture(&render(SHEET, &settings)), recorded);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_tap_across_the_toggle_row_is_the_power_off_and_elsewhere_blank() {
+        let settings = |x, y| target(PANEL, Screen::Settings, x, y);
+        assert_eq!(settings(0, 725), Target::PowerOff);
+        assert_eq!(settings(540, 800), Target::PowerOff);
+        assert_eq!(settings(1079, 908), Target::PowerOff);
+        assert_eq!(settings(540, 724), Target::Blank);
+        assert_eq!(settings(540, 909), Target::Blank);
+        assert_eq!(settings(540, 1400), Target::Blank);
+        assert_eq!(target(SMALL, Screen::Settings, 50, 20), Target::Blank);
     }
 
     #[test]
@@ -1033,9 +1103,8 @@ mod tests {
 
     #[test]
     fn a_tap_above_the_bar_on_an_empty_screen_is_blank() {
-        for screen in [Screen::Timer, Screen::Settings] {
-            assert_eq!(target(PANEL, screen, 400, 1000), Target::Blank);
-            assert_eq!(target(PANEL, screen, 300, 1400), Target::Blank);
+        for (x, y) in [(400, 800), (400, 1000), (300, 1400)] {
+            assert_eq!(target(PANEL, Screen::Timer, x, y), Target::Blank);
         }
     }
 

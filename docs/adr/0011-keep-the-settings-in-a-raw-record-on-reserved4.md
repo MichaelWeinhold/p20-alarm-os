@@ -1,6 +1,6 @@
 # 11. Keep the settings in a raw record on `reserved4`
 
-- **Status:** Accepted
+- **Status:** Accepted; D2's format raised to version 2 by issue 83
 - **Date:** 2026-11-13
 - **Issue:** #30
 
@@ -52,7 +52,7 @@ slot is little-endian:
 | Offset | Bytes | Field |
 |---|---|---|
 | 0 | 8 | magic, `P20ALRM\0` |
-| 8 | 4 | format version, `1` |
+| 8 | 4 | format version, `2` |
 | 12 | 4 | payload length, at most 4068 |
 | 16 | 8 | sequence number |
 | 24 | n | payload |
@@ -60,7 +60,18 @@ slot is little-endian:
 
 The rest of the slot is zero. The payload is the settings, encoded in fixed-width
 little-endian fields: the alarms, the `UtcOffset` and ADR 0010, D2's window. Its layout is
-part of format version 1, and a change to it raises the version.
+part of the format version, and a change to it raises the version.
+
+| Payload offset | Bytes | Field |
+|---|---|---|
+| 0 | 4 | `UtcOffset` in seconds, signed |
+| 4 | 4 | the window in seconds |
+| 8 | 1 | ADR 0010, D2's power-off toggle, `1` on and `0` off; absent in version 1 |
+| 9 | 1 | the number of alarms, n |
+| 10 | 4 n | each alarm: hour, minute, weekdays, and `1` armed or `0` not |
+
+A version-1 slot still loads, with the toggle on, and the next save writes version 2.
+Version 1 is the same payload without the toggle byte. Amended by issue 83.
 
 Encoding, decoding and choosing a slot live in `alarm-core`, tested on the host with
 fakes (architecture rule 1). The adapter only reads and writes the 8192 bytes. The CRC is

@@ -33,6 +33,7 @@ pub struct Ringer {
     picked: TimeOfDay,
     grab: Option<Grab>,
     marked: Option<usize>,
+    power_off: bool,
 }
 
 fn stepped(time: TimeOfDay, field: Field, steps: i64) -> TimeOfDay {
@@ -70,6 +71,7 @@ impl Ringer {
             picked,
             grab: None,
             marked: None,
+            power_off: true,
         }
     }
 
@@ -92,6 +94,15 @@ impl Ringer {
     #[must_use]
     pub fn picked(&self) -> TimeOfDay {
         self.picked
+    }
+
+    #[must_use]
+    pub fn power_off(&self) -> bool {
+        self.power_off
+    }
+
+    pub fn set_power_off(&mut self, power_off: bool) {
+        self.power_off = power_off;
     }
 
     #[must_use]
@@ -198,6 +209,7 @@ impl Ringer {
             Target::Entry(index) => self.activate(index, now, offset),
             Target::Remove(index) if marked == Some(index) => self.remove(index),
             Target::Remove(index) if index < self.alarms.len() => self.marked = Some(index),
+            Target::PowerOff => self.power_off = !self.power_off,
             Target::Remove(_) | Target::Tab(_) | Target::Blank => {}
         }
     }
@@ -242,6 +254,7 @@ impl Ringer {
             ringing: self.ring == Ring::Ringing,
             battery,
             screen,
+            power_off: self.power_off,
         }
     }
 }
@@ -327,6 +340,7 @@ mod tests {
     const REMOVE_FIRST: [InputEvent; 2] = tap(900, 1400);
     const REMOVE_SECOND: [InputEvent; 2] = tap(900, 1600);
     const BLANK: [InputEvent; 2] = tap(540, 400);
+    const POWER_OFF: [InputEvent; 2] = tap(540, 800);
     const ALARM_TAB: [InputEvent; 2] = tap(180, 2200);
     const TIMER_TAB: [InputEvent; 2] = tap(540, 2200);
     const SETTINGS_TAB: [InputEvent; 2] = tap(900, 2200);
@@ -826,16 +840,79 @@ mod tests {
         let mut ringer = ringer(7, 0)?;
         drain(&mut FakeInput::with(&[&FIRST]), &clock, &mut ringer)?;
         let armed = ringer.clone();
-        for tab in [TIMER_TAB, SETTINGS_TAB] {
-            let mut light = always();
-            drain_lit(
-                &mut FakeInput::with(&[&tab, &FIRST, &HOUR_ABOVE, &MINUTE_BELOW, &ADD]),
-                &clock,
-                &mut ringer,
-                &mut light,
-            )?;
-            assert_eq!(ringer, armed);
-        }
+        let mut light = always();
+        drain_lit(
+            &mut FakeInput::with(&[&TIMER_TAB, &FIRST, &HOUR_ABOVE, &MINUTE_BELOW, &ADD]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        assert_eq!(ringer, armed);
+        Ok(())
+    }
+
+    #[test]
+    fn a_tap_on_the_toggle_turns_the_power_off_off_and_on_again()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut ringer = ringer(7, 0)?;
+        drain(&mut FakeInput::with(&[&FIRST]), &clock, &mut ringer)?;
+        assert!(ringer.power_off());
+        let armed = ringer.clone();
+        let mut light = always();
+        drain_lit(
+            &mut FakeInput::with(&[&SETTINGS_TAB, &POWER_OFF]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        assert!(!ringer.power_off());
+        assert_eq!(ringer.alarms(), armed.alarms());
+        assert_eq!(ringer.next(), armed.next());
+        drain_lit(
+            &mut FakeInput::with(&[&POWER_OFF]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        assert_eq!(ringer, armed);
+        Ok(())
+    }
+
+    #[test]
+    fn a_tap_off_the_toggle_on_the_settings_screen_changes_nothing()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut ringer = ringer(7, 0)?;
+        drain(&mut FakeInput::with(&[&FIRST]), &clock, &mut ringer)?;
+        let armed = ringer.clone();
+        let mut light = always();
+        drain_lit(
+            &mut FakeInput::with(&[&SETTINGS_TAB, &FIRST, &HOUR_BELOW, &MINUTE_BELOW, &ADD]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        assert_eq!(light.screen(), Screen::Settings);
+        assert_eq!(ringer, armed);
+        Ok(())
+    }
+
+    #[test]
+    fn the_face_carries_the_toggle() -> Result<(), Box<dyn std::error::Error>> {
+        let mut ringer = ringer(7, 0)?;
+        let now = FakeClock::at(6, 59, 0).now()?;
+        assert!(
+            ringer
+                .face(now, UtcOffset::UTC, Gauge::UNREAD, Screen::Settings)
+                .power_off
+        );
+        ringer.set_power_off(false);
+        assert!(
+            !ringer
+                .face(now, UtcOffset::UTC, Gauge::UNREAD, Screen::Settings)
+                .power_off
+        );
         Ok(())
     }
 

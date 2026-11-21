@@ -1,6 +1,6 @@
 # 10. Suspend for two minutes after a use, then power off until the alarm
 
-- **Status:** Accepted; D2 amended for the cable by issue 52
+- **Status:** Accepted; D2 amended for the cable by issue 52, and for a toggle by issue 83
 - **Date:** 2026-11-13
 - **Issue:** #12
 - **Supersedes:** ADR 0008, D1
@@ -53,6 +53,10 @@ the next alarm, and ADR 0008, D3's charge stop keeps running. A power-off on the
 boots our `/init` again within about 75 s, as `BR_POWEROFF_CHARGE` (issue 53), so it
 would boot again after every window. `alarmd` reads the cable from the battery's
 `status`, and stays suspended when it cannot read it.
+
+**With the settings screen's power-off toggle off, it stays suspended** when the window
+ends, as on the cable, with the RTC armed for the next alarm. The toggle is on by default
+and kept in the record (ADR 0011, D2). Amended by issue 83.
 
 ### D3. A power-on alarm is armed before every power-off
 
