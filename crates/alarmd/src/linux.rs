@@ -8,10 +8,12 @@ use alarm_core::light::Light;
 use alarm_core::ringer::listen;
 use alarm_core::time::{TimeOfDay, UtcOffset};
 use alarm_core::vibration::Vibration;
+use alarm_core::warning::Warning;
 use alarm_core::window::Window;
 use battery::SysfsBattery;
 use clock::SystemClock;
 use framebuffer::linux::Panel;
+use indicator::RedLed;
 use input::linux::{Answer, EvdevInput, FirmwareLoader};
 use modem::linux::Balong;
 use pid1::kmsg;
@@ -23,9 +25,9 @@ use suspend::{SysfsSuspend, SysfsWakeAlarm};
 use vibrator::LedVibrator;
 
 use crate::{
-    ALARM_HOUR, ALARM_MINUTE, AfterModem, BRIGHTNESS, Booted, Buzz, LOCAL_OFFSET_SECONDS, Restored,
-    Sleep, booted, cable_in, change, choices, minute, modem_booted, persisted, pulse, rest,
-    restored,
+    ALARM_HOUR, ALARM_MINUTE, AfterModem, BRIGHTNESS, Booted, Buzz, LOCAL_OFFSET_SECONDS, Lamp,
+    Restored, Sleep, booted, cable_in, change, choices, minute, modem_booted, persisted, pulse,
+    rest, restored, warned,
 };
 
 const FIRMWARE_POLL: Duration = Duration::from_millis(250);
@@ -140,6 +142,17 @@ fn buzzing(log: &mut Option<File>) -> Buzz<LedVibrator> {
     }
 }
 
+fn warning(log: &mut Option<File>) -> Lamp<RedLed> {
+    let indicator = RedLed::open();
+    if let Err(error) = &indicator {
+        logged(log, &kmsg::failure("opening the indicator", error));
+    }
+    Lamp {
+        warning: Warning::unset(),
+        indicator,
+    }
+}
+
 pub fn run() -> ! {
     let mut log = started().ok();
     let (
@@ -177,6 +190,7 @@ pub fn run() -> ! {
         power: PoweroffAlarm::open(),
     };
     let mut buzz = buzzing(&mut log);
+    let mut lamp = warning(&mut log);
     let mut input = EvdevInput::open();
     let mut absent = Vec::new();
     let mut was_lit = false;
@@ -199,8 +213,9 @@ pub fn run() -> ! {
                 logged(&mut log, &line);
             }
         }
+        let lit = warned(&battery, &mut lamp);
         let pulsed = pulse(&SystemClock, &ringer, &mut buzz, turn.wait_seconds);
-        for line in turn.log.iter().chain(&pulsed.log) {
+        for line in turn.log.iter().chain(&lit).chain(&pulsed.log) {
             logged(&mut log, line);
         }
         let rested = rest(
