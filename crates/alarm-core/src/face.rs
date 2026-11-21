@@ -1,5 +1,5 @@
 use crate::battery::{Gauge, Level};
-use crate::time::TimeOfDay;
+use crate::time::{Countdown, TimeOfDay};
 
 pub const BACKGROUND: Colour = Colour(0x00_0000);
 pub const FOREGROUND: Colour = Colour(0xff_ffff);
@@ -32,6 +32,7 @@ const SWITCH_UNITS: usize = 13;
 const KNOB_UNITS: usize = 3;
 
 pub const SAVED_ALARMS: usize = 4;
+pub const SAVED_TIMERS: usize = 4;
 
 const BELL: [&str; TAB_UNITS] = [
     "....#....",
@@ -115,6 +116,10 @@ pub struct Face {
     pub battery: Gauge,
     pub screen: Screen,
     pub power_off: bool,
+    pub timers: Vec<Countdown>,
+    pub countdown: Countdown,
+    pub left: Option<Countdown>,
+    pub rung: Option<Countdown>,
 }
 
 impl Face {
@@ -126,12 +131,18 @@ impl Face {
     fn addable(&self) -> bool {
         self.alarms.len() < SAVED_ALARMS && !self.alarms.contains(&self.picked)
     }
+
+    fn timer_addable(&self) -> bool {
+        self.timers.len() < SAVED_TIMERS
+            && !self.countdown.is_zero()
+            && !self.timers.contains(&self.countdown)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Field {
-    Hour,
-    Minute,
+    Left,
+    Right,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -168,6 +179,7 @@ pub enum Target {
     Add,
     Entry(usize),
     Remove(usize),
+    Start,
     PowerOff,
     Tab(Screen),
     Blank,
@@ -378,11 +390,29 @@ fn colon(frame: &mut Frame, (x, y): (usize, usize), unit: usize, colour: Colour)
     frame.fill(x + inset, y + 4 * unit + inset, thick, thick, colour);
 }
 
+fn of_day(time: TimeOfDay) -> (u8, u8) {
+    (time.hour(), time.minute())
+}
+
+fn of_countdown(countdown: Countdown) -> (u8, u8) {
+    (countdown.minutes(), countdown.seconds())
+}
+
 fn time(
+    frame: &mut Frame,
+    at: (usize, usize),
+    unit: usize,
+    value: Option<TimeOfDay>,
+    colour: Colour,
+) {
+    figures(frame, at, unit, value.map(of_day), colour);
+}
+
+fn figures(
     frame: &mut Frame,
     (x, y): (usize, usize),
     unit: usize,
-    value: Option<TimeOfDay>,
+    value: Option<(u8, u8)>,
     colour: Colour,
 ) {
     colon(frame, (x + COLON_UNITS * unit, y), unit, colour);
@@ -397,14 +427,8 @@ fn time(
         }
         return;
     };
-    pair(frame, (x, y), unit, value.hour(), colour);
-    pair(
-        frame,
-        (x + MINUTE_UNITS * unit, y),
-        unit,
-        value.minute(),
-        colour,
-    );
+    pair(frame, (x, y), unit, value.0, colour);
+    pair(frame, (x + MINUTE_UNITS * unit, y), unit, value.1, colour);
 }
 
 fn percent_sign(frame: &mut Frame, x: usize, y: usize, unit: usize, colour: Colour) {
@@ -501,6 +525,26 @@ fn arrow(frame: &mut Frame, (centre, y): (usize, usize), unit: usize, up: bool, 
     slanted(frame, (centre, y), (half, down), unit, !up, colour);
 }
 
+fn play(frame: &mut Frame, (x, y): (usize, usize), unit: usize, colour: Colour) {
+    let across = SIDE_UNITS * unit;
+    let half = across / 2;
+    for row in 0..across {
+        let reach = half.saturating_sub(row.abs_diff(half));
+        frame.fill(
+            x + unit,
+            y + row,
+            reach * (across - unit) / half.max(1),
+            1,
+            colour,
+        );
+    }
+}
+
+fn stop(frame: &mut Frame, (x, y): (usize, usize), unit: usize, colour: Colour) {
+    let across = (SIDE_UNITS - 2) * unit;
+    frame.fill(x + unit, y + unit, across, across, colour);
+}
+
 fn switch(frame: &mut Frame, (x, y): (usize, usize), unit: usize, on: bool) {
     let colour = if on { FOREGROUND } else { DIM };
     let thick = stroke(unit);
@@ -533,10 +577,10 @@ fn settings_screen(frame: &mut Frame, sheet: Sheet, face: &Face) {
     );
 }
 
-fn wheels(frame: &mut Frame, sheet: Sheet, picked: TimeOfDay) {
+fn wheels(frame: &mut Frame, sheet: Sheet, picked: (u8, u8)) {
     let unit = sheet.unit;
     let y = sheet.wheel_row(Row::Picked);
-    time(frame, (sheet.left, y), unit, Some(picked), FOREGROUND);
+    figures(frame, (sheet.left, y), unit, Some(picked), FOREGROUND);
     let above = y - (ARROW_UNITS + ARROW_GAP_UNITS) * unit;
     let below = y + (DIGIT_HEIGHT_UNITS + ARROW_GAP_UNITS) * unit;
     let middle = (2 * DIGIT_UNITS + 1) * unit / 2;
@@ -547,30 +591,85 @@ fn wheels(frame: &mut Frame, sheet: Sheet, picked: TimeOfDay) {
     }
 }
 
-fn alarm_screen(frame: &mut Frame, layout: &Layout, sheet: Sheet, face: &Face) {
+fn shade(on: bool) -> Colour {
+    if on { FOREGROUND } else { DIM }
+}
+
+fn slider(
+    frame: &mut Frame,
+    sheet: Sheet,
+    picked: (u8, u8),
+    addable: bool,
+    entries: &[((u8, u8), bool)],
+    marked: Option<usize>,
+) {
     let unit = sheet.unit;
-    time(frame, sheet.clock, layout.unit, Some(face.time), FOREGROUND);
-    let active = face.active_alarm();
-    let colour = if active.is_some() { FOREGROUND } else { DIM };
-    time(frame, sheet.active, unit, active, colour);
-    wheels(frame, sheet, face.picked);
-    let add = if face.addable() { FOREGROUND } else { DIM };
-    plus(frame, (sheet.side, sheet.wheel_row(Row::Picked)), unit, add);
-    for (index, &alarm) in face.alarms.iter().take(SAVED_ALARMS).enumerate() {
+    wheels(frame, sheet, picked);
+    plus(
+        frame,
+        (sheet.side, sheet.wheel_row(Row::Picked)),
+        unit,
+        shade(addable),
+    );
+    for (index, &(entry, on)) in entries.iter().take(SAVED_ALARMS).enumerate() {
         let top = sheet.list_row(index);
-        let colour = if face.active == Some(index) {
-            FOREGROUND
-        } else {
-            DIM
-        };
-        time(frame, (sheet.left, top), unit, Some(alarm), colour);
-        let mark = if face.marked == Some(index) {
-            WARNING
-        } else {
-            DIM
-        };
+        figures(frame, (sheet.left, top), unit, Some(entry), shade(on));
+        let mark = if marked == Some(index) { WARNING } else { DIM };
         cross(frame, (sheet.side, top), unit, mark);
     }
+}
+
+fn alarm_screen(frame: &mut Frame, layout: &Layout, sheet: Sheet, face: &Face) {
+    time(frame, sheet.clock, layout.unit, Some(face.time), FOREGROUND);
+    let active = face.active_alarm();
+    time(
+        frame,
+        sheet.active,
+        sheet.unit,
+        active,
+        shade(active.is_some()),
+    );
+    let entries: Vec<_> = face
+        .alarms
+        .iter()
+        .enumerate()
+        .map(|(index, &alarm)| (of_day(alarm), face.active == Some(index)))
+        .collect();
+    slider(
+        frame,
+        sheet,
+        of_day(face.picked),
+        face.addable(),
+        &entries,
+        face.marked,
+    );
+}
+
+fn timer_screen(frame: &mut Frame, layout: &Layout, sheet: Sheet, face: &Face) {
+    let unit = sheet.unit;
+    time(frame, sheet.clock, layout.unit, Some(face.time), FOREGROUND);
+    let readout = (sheet.left, sheet.active.1);
+    let control = (sheet.side, sheet.active.1);
+    let left = face.left.map(of_countdown);
+    figures(frame, readout, unit, left, shade(left.is_some()));
+    if left.is_some() {
+        stop(frame, control, unit, FOREGROUND);
+    } else {
+        play(frame, control, unit, shade(!face.countdown.is_zero()));
+    }
+    let entries: Vec<_> = face
+        .timers
+        .iter()
+        .map(|&timer| (of_countdown(timer), timer == face.countdown))
+        .collect();
+    slider(
+        frame,
+        sheet,
+        of_countdown(face.countdown),
+        face.timer_addable(),
+        &entries,
+        face.marked,
+    );
 }
 
 fn bar(frame: &mut Frame, layout: &Layout, current: Screen) {
@@ -599,7 +698,7 @@ pub fn render(size: Size, face: &Face) -> Frame {
     };
     let digits = if face.ringing { BACKGROUND } else { FOREGROUND };
     let sheet = sheet(size, &layout);
-    if face.ringing || (sheet.is_some() && face.screen == Screen::Alarm) {
+    if face.ringing || (sheet.is_some() && face.screen != Screen::Settings) {
         let status = if face.battery.level == Level::Low {
             WARNING
         } else {
@@ -621,17 +720,16 @@ pub fn render(size: Size, face: &Face) -> Frame {
             Some(face.time),
             digits,
         );
-        time(
-            &mut frame,
-            layout.alarm,
-            layout.alarm_unit,
-            face.active_alarm(),
-            digits,
+        let rang = face.rung.map_or_else(
+            || face.active_alarm().map(of_day),
+            |rung| Some(of_countdown(rung)),
         );
+        figures(&mut frame, layout.alarm, layout.alarm_unit, rang, digits);
         return frame;
     }
     match (face.screen, sheet) {
         (Screen::Alarm, Some(sheet)) => alarm_screen(&mut frame, &layout, sheet, face),
+        (Screen::Timer, Some(sheet)) => timer_screen(&mut frame, &layout, sheet, face),
         (Screen::Settings, Some(sheet)) => settings_screen(&mut frame, sheet, face),
         _ => {}
     }
@@ -657,9 +755,9 @@ fn sheet_target(sheet: Sheet, x: usize, y: usize) -> Target {
             };
         }
         let field = if x < sheet.left + COLON_UNITS * unit + unit / 2 {
-            Field::Hour
+            Field::Left
         } else {
-            Field::Minute
+            Field::Right
         };
         let row = Row::ALL
             .into_iter()
@@ -693,7 +791,8 @@ pub fn target(size: Size, screen: Screen, x: usize, y: usize) -> Target {
         });
     }
     match (screen, sheet(size, &layout)) {
-        (Screen::Alarm, Some(sheet)) => sheet_target(sheet, x, y),
+        (Screen::Timer, Some(sheet)) if sheet.band(sheet.active.1, y) => Target::Start,
+        (Screen::Alarm | Screen::Timer, Some(sheet)) => sheet_target(sheet, x, y),
         (Screen::Settings, Some(sheet)) if sheet.band(sheet.setting_row(), y) => Target::PowerOff,
         _ => Target::Blank,
     }
@@ -757,6 +856,10 @@ mod tests {
             battery,
             screen: Screen::Alarm,
             power_off: true,
+            timers: Vec::new(),
+            countdown: Countdown::default(),
+            left: None,
+            rung: None,
         })
     }
 
@@ -836,14 +939,78 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn the_timer_screen_shows_only_the_bar_with_its_tab_marked() -> Outcome {
-        let timer = Face {
+    fn timer(left: Option<Countdown>, ringing: bool) -> Result<Face, Box<dyn std::error::Error>> {
+        Ok(Face {
             screen: Screen::Timer,
-            ..face(Some(0), false, charged(80)?)?
-        };
-        let frame = render(SMALL, &timer);
+            timers: vec![Countdown::new(3, 0)?, Countdown::new(12, 5)?],
+            countdown: Countdown::new(3, 0)?,
+            left,
+            ..face(Some(0), ringing, charged(80)?)?
+        })
+    }
+
+    #[test]
+    fn the_timer_screen_shows_the_play_the_slider_and_the_saved_timers_as_recorded() -> Outcome {
+        let frame = render(SHEET, &timer(None, false)?);
         assert_eq!(picture(&frame), include_str!("../testdata/face-timer.txt"));
+        Ok(())
+    }
+
+    #[test]
+    fn a_running_timer_shows_the_time_left_beside_the_stop_as_recorded() -> Outcome {
+        let frame = render(SHEET, &timer(Some(Countdown::new(2, 47)?), false)?);
+        assert_eq!(
+            picture(&frame),
+            include_str!("../testdata/face-timer-running.txt")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_zero_countdown_dims_the_play_and_the_add() -> Outcome {
+        let idle = render(
+            SHEET,
+            &Face {
+                countdown: Countdown::new(4, 0)?,
+                ..timer(None, false)?
+            },
+        );
+        let zero = render(
+            SHEET,
+            &Face {
+                countdown: Countdown::default(),
+                ..timer(None, false)?
+            },
+        );
+        let layout = layout(SHEET).ok_or("no layout")?;
+        let sheet = sheet(SHEET, &layout).ok_or("no sheet")?;
+        let across = SIDE_UNITS * sheet.unit;
+        let shown = |frame: &Frame, top: usize| {
+            (top..top + across)
+                .flat_map(|y| frame.row(y)[sheet.side..sheet.side + across].to_vec())
+                .filter(|&colour| colour != BACKGROUND)
+                .collect::<Vec<_>>()
+        };
+        for top in [sheet.active.1, sheet.wheel_row(Row::Picked)] {
+            assert!(shown(&idle, top).iter().all(|&colour| colour == FOREGROUND));
+            assert_ne!(shown(&zero, top), []);
+            assert!(shown(&zero, top).iter().all(|&colour| colour == DIM));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_ringing_timer_shows_its_length_in_amber_as_recorded() -> Outcome {
+        let rung = Face {
+            rung: Some(Countdown::new(12, 5)?),
+            ..timer(None, true)?
+        };
+        let frame = render(SMALL, &rung);
+        assert_eq!(
+            picture(&frame),
+            include_str!("../testdata/face-timer-ringing.txt")
+        );
+        assert_ne!(frame, render(SMALL, &face(Some(0), true, charged(80)?)?));
         Ok(())
     }
 
@@ -876,7 +1043,7 @@ mod tests {
     }
 
     #[test]
-    fn each_screen_marks_its_own_tab_and_only_the_alarm_screen_shows_the_slider() -> Outcome {
+    fn each_screen_marks_its_own_tab_and_the_settings_screen_alone_has_no_slider() -> Outcome {
         let mut seen = Vec::new();
         for screen in Screen::ALL {
             let face = Face {
@@ -895,7 +1062,7 @@ mod tests {
             seen.push(marked[0]);
             assert_eq!(
                 frame.row(1000).contains(&FOREGROUND),
-                screen == Screen::Alarm
+                screen != Screen::Settings
             );
         }
         Ok(())
@@ -1049,13 +1216,13 @@ mod tests {
     #[test]
     fn a_tap_on_a_wheel_picks_its_field_and_row() {
         let alarm = |x, y| target(PANEL, Screen::Alarm, x, y);
-        assert_eq!(alarm(300, 720), Target::Wheel(Field::Hour, Row::Above));
-        assert_eq!(alarm(423, 800), Target::Wheel(Field::Hour, Row::Above));
-        assert_eq!(alarm(424, 800), Target::Wheel(Field::Minute, Row::Above));
-        assert_eq!(alarm(300, 1000), Target::Wheel(Field::Hour, Row::Picked));
-        assert_eq!(alarm(600, 1000), Target::Wheel(Field::Minute, Row::Picked));
-        assert_eq!(alarm(0, 1200), Target::Wheel(Field::Hour, Row::Below));
-        assert_eq!(alarm(700, 1287), Target::Wheel(Field::Minute, Row::Below));
+        assert_eq!(alarm(300, 720), Target::Wheel(Field::Left, Row::Above));
+        assert_eq!(alarm(423, 800), Target::Wheel(Field::Left, Row::Above));
+        assert_eq!(alarm(424, 800), Target::Wheel(Field::Right, Row::Above));
+        assert_eq!(alarm(300, 1000), Target::Wheel(Field::Left, Row::Picked));
+        assert_eq!(alarm(600, 1000), Target::Wheel(Field::Right, Row::Picked));
+        assert_eq!(alarm(0, 1200), Target::Wheel(Field::Left, Row::Below));
+        assert_eq!(alarm(700, 1287), Target::Wheel(Field::Right, Row::Below));
     }
 
     #[test]
@@ -1102,9 +1269,24 @@ mod tests {
     }
 
     #[test]
-    fn a_tap_above_the_bar_on_an_empty_screen_is_blank() {
-        for (x, y) in [(400, 800), (400, 1000), (300, 1400)] {
-            assert_eq!(target(PANEL, Screen::Timer, x, y), Target::Blank);
+    fn a_tap_across_the_readout_row_starts_and_the_rest_of_the_timer_screen_is_the_slider() {
+        let timer = |x, y| target(PANEL, Screen::Timer, x, y);
+        assert_eq!(timer(0, 495), Target::Start);
+        assert_eq!(timer(540, 580), Target::Start);
+        assert_eq!(timer(1079, 678), Target::Start);
+        assert_eq!(timer(540, 494), Target::Blank);
+        assert_eq!(timer(540, 679), Target::Blank);
+        for (x, y) in [
+            (300, 720),
+            (600, 1000),
+            (900, 1000),
+            (800, 1200),
+            (300, 1400),
+            (900, 1400),
+            (540, 1300),
+            (540, 300),
+        ] {
+            assert_eq!(timer(x, y), target(PANEL, Screen::Alarm, x, y));
         }
     }
 

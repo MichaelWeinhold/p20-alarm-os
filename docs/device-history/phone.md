@@ -2084,3 +2084,39 @@ partition `/etc` is a link to `/system/etc`, and a first push to `etc/alarmd` fa
 Then `init` was moved to `init.rom` and `init.ours` to `init`; read back on a fresh
 mount, `init` hashed `da4dc63c…c867d`, `init.rom` `e8e2768e…78ef` and `init.alarmd`
 `3d555c02…e94f`. `misc`'s first 32 bytes were zeroed, and the phone was left in TWRP.
+
+## 2026-11-21 — the timer screen, for issue 81
+
+`alarmd` was built from `30a592a`, 534784 bytes, sha256
+`c459b465ef1bf077a5f98b97f1fefb8b076a918d0cf9324354160611048b472f`. From TWRP it was copied
+over `/init` on `system`, replacing issue 83's `da4dc63c…c867d`. `init.rom` still hashed
+`e8e2768e…78ef`, `misc`'s first 32 bytes read zero, and the RTC read 1795275548, the Mac's
+UTC to the second, before `adb reboot` at 15:39:14 UTC, with the battery full on the cable.
+
+Before it, `reserved4` held issue 83's sequence 17 in slot 1: version 2, the toggle on,
+07:00 unarmed and 15:10 armed. The readings below are the operator's, the record's, and
+`alarmd`'s lines in `console-ramoops-0`, garbled in places; kernel time 0 was 1795275554.
+
+**A version-2 record loads with no timers.** The timer screen opened with dim dashes beside
+a dim play and both wheels at 00, and the log read `timers []`.
+
+**The saved timers are kept in version 3.** The operator saved 01:00, then 05:00. Slot 0
+held sequence 18 with 01:00 alone; slot 1 then held sequence 19, version 3, payload
+`100e0000 78000000 01 02 07007f00 0f0a7f01 02 0100 0500`: the alarms and toggle as before,
+then two timers, with the CRC good and the rest of the slot zero.
+
+**A running timer held the phone suspended and rang at its end.** A 01:00 timer woke a
+suspend armed for 18:19:18 UTC and lit the panel. Then the operator started 05:00, logged
+`running until 1795285506`, 18:25:06 UTC, pulled the cable and turned the panel off. At
+18:22:10 UTC, two minutes after `settings saved`, `alarmd` resumed from a suspend armed for
+the window's end and suspended again rather than powering off. At 9952 s, 18:25:06, the
+panel lit; the log read `Ringing` with `running until none`, and the operator saw it amber
+and felt the vibrator. Power dismissed it at 9996 s.
+
+**The saved timers survived a power-off.** With the cable out, the operator turned the
+panel off at 10006 s. pstore ends at 10014 s with the eMMC timing out and the modem's
+power-management notifier, as at a shutdown, and holds no later boot. A press of Power
+booted the phone, and the timer screen listed 01:00 and 05:00, with 01:00 on the wheels.
+
+**The saved timers survived a reboot.** After `adb reboot` from TWRP at 18:36:33 UTC the
+operator saw 01:00 and 05:00 still listed. The image was left on the phone.

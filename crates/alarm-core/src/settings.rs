@@ -1,12 +1,13 @@
 use crate::alarm::{Alarm, Weekdays};
 use crate::hardware::{HardwareError, Settings};
-use crate::time::{TimeOfDay, UtcOffset};
+use crate::time::{Countdown, TimeOfDay, UtcOffset};
 
 pub const RECORD_BYTES: usize = 2 * SLOT_BYTES;
 pub const SLOT_BYTES: usize = 4096;
 pub const MAGIC: [u8; 8] = *b"P20ALRM\0";
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 pub const FIRST_VERSION: u32 = 1;
+const UNTIMED_VERSION: u32 = 2;
 pub const LARGEST_PAYLOAD: usize = SLOT_BYTES - HEADER_BYTES - CRC_BYTES;
 
 const HEADER_BYTES: usize = 24;
@@ -14,6 +15,7 @@ const CRC_BYTES: usize = 4;
 const CHOICES_BYTES: usize = 10;
 const FIRST_CHOICES_BYTES: usize = 9;
 const ALARM_BYTES: usize = 4;
+const TIMER_BYTES: usize = 2;
 const DEVICE: &str = "settings";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -51,6 +53,7 @@ pub struct Choices {
     pub window_seconds: i64,
     pub power_off: bool,
     pub alarms: Vec<SetAlarm>,
+    pub timers: Vec<Countdown>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -89,7 +92,14 @@ fn payload(choices: &Choices) -> Result<Vec<u8>, HardwareError> {
         .map_err(|_| refused(format!("a window of {} s", choices.window_seconds)))?;
     let count = u8::try_from(choices.alarms.len())
         .map_err(|_| refused(format!("{} alarms", choices.alarms.len())))?;
-    let mut bytes = Vec::with_capacity(CHOICES_BYTES + ALARM_BYTES * choices.alarms.len());
+    let timers = u8::try_from(choices.timers.len())
+        .map_err(|_| refused(format!("{} timers", choices.timers.len())))?;
+    if let Some(zero) = choices.timers.iter().find(|timer| timer.is_zero()) {
+        return Err(refused(format!("a timer of {zero:?}")));
+    }
+    let mut bytes = Vec::with_capacity(
+        CHOICES_BYTES + ALARM_BYTES * choices.alarms.len() + 1 + TIMER_BYTES * choices.timers.len(),
+    );
     bytes.extend_from_slice(&offset.to_le_bytes());
     bytes.extend_from_slice(&window.to_le_bytes());
     bytes.push(u8::from(choices.power_off));
@@ -101,6 +111,10 @@ fn payload(choices: &Choices) -> Result<Vec<u8>, HardwareError> {
             set.alarm.repeat.bits(),
             u8::from(set.armed),
         ]);
+    }
+    bytes.push(timers);
+    for timer in &choices.timers {
+        bytes.extend_from_slice(&[timer.minutes(), timer.seconds()]);
     }
     Ok(bytes)
 }
@@ -161,6 +175,27 @@ fn set_alarm([hour, minute, repeat, armed]: [u8; ALARM_BYTES]) -> Option<SetAlar
     })
 }
 
+fn timer([minutes, seconds]: [u8; TIMER_BYTES]) -> Option<Countdown> {
+    Countdown::new(minutes, seconds)
+        .ok()
+        .filter(|timer| !timer.is_zero())
+}
+
+fn listed<const N: usize, T>(
+    bytes: &[u8],
+    count: usize,
+    entry: fn([u8; N]) -> Option<T>,
+) -> Option<(Vec<T>, &[u8])> {
+    let (entries, rest) = bytes.split_at_checked(count.checked_mul(N)?)?;
+    let (entries, _) = entries.as_chunks::<N>();
+    let entries = entries
+        .iter()
+        .copied()
+        .map(entry)
+        .collect::<Option<Vec<_>>>()?;
+    Some((entries, rest))
+}
+
 fn choices(payload: &[u8], version: u32) -> Option<Choices> {
     let offset = UtcOffset::from_seconds(word(payload, 0)?.cast_signed()).ok()?;
     let window = word(payload, 4)?;
@@ -170,20 +205,22 @@ fn choices(payload: &[u8], version: u32) -> Option<Choices> {
         (flag(*payload.get(8)?)?, CHOICES_BYTES)
     };
     let count = usize::from(*payload.get(fixed - 1)?);
-    let (entries, rest) = payload.get(fixed..)?.as_chunks::<ALARM_BYTES>();
-    if entries.len() != count || !rest.is_empty() {
+    let (alarms, rest) = listed(payload.get(fixed..)?, count, set_alarm)?;
+    let (timers, rest) = if version <= UNTIMED_VERSION {
+        (Vec::new(), rest)
+    } else {
+        let (&count, rest) = rest.split_first()?;
+        listed(rest, usize::from(count), timer)?
+    };
+    if !rest.is_empty() {
         return None;
     }
-    let alarms = entries
-        .iter()
-        .copied()
-        .map(set_alarm)
-        .collect::<Option<Vec<_>>>()?;
     Some(Choices {
         offset,
         window_seconds: i64::from(window),
         power_off,
         alarms,
+        timers,
     })
 }
 
@@ -303,6 +340,14 @@ mod tests {
             window_seconds: 120,
             power_off: true,
             alarms: vec![alarm_at(hour, minute, true)?],
+            timers: vec![Countdown::new(5, 30)?],
+        })
+    }
+
+    fn untimed(hour: u8, minute: u8) -> Result<Choices, TimeError> {
+        Ok(Choices {
+            timers: Vec::new(),
+            ..choices_at(hour, minute)?
         })
     }
 
@@ -317,15 +362,17 @@ mod tests {
         let choices = choices_at(6, 45)?;
         let slot = encode(&choices, 7)?;
         assert_eq!(&slot[..8], b"P20ALRM\0");
-        assert_eq!(slot[8..12], 2_u32.to_le_bytes());
-        assert_eq!(slot[12..16], 14_u32.to_le_bytes());
+        assert_eq!(slot[8..12], 3_u32.to_le_bytes());
+        assert_eq!(slot[12..16], 17_u32.to_le_bytes());
         assert_eq!(slot[16..24], 7_u64.to_le_bytes());
         assert_eq!(
-            slot[24..38],
-            [0x10, 0x0e, 0, 0, 120, 0, 0, 0, 1, 1, 6, 45, 0b111_1111, 1]
+            slot[24..41],
+            [
+                0x10, 0x0e, 0, 0, 120, 0, 0, 0, 1, 1, 6, 45, 0b111_1111, 1, 1, 5, 30
+            ]
         );
-        assert_eq!(slot[38..42], crc32(&slot[..38]).to_le_bytes());
-        assert!(slot[42..].iter().all(|&byte| byte == 0));
+        assert_eq!(slot[41..45], crc32(&slot[..41]).to_le_bytes());
+        assert!(slot[45..].iter().all(|&byte| byte == 0));
         Ok(())
     }
 
@@ -335,10 +382,42 @@ mod tests {
         let mut record = FakeRecord::blank();
         let first = [0x10, 0x0e, 0, 0, 120, 0, 0, 0, 1, 6, 45, 0b111_1111, 1];
         record.put(Slot::First, &framed_as(FIRST_VERSION, &first, 4)?);
-        assert_eq!(load(&mut record)?, Some(choices_at(6, 45)?));
+        assert_eq!(load(&mut record)?, Some(untimed(6, 45)?));
         save(&mut record, &choices_at(6, 45)?)?;
         assert_eq!(record.saved, [Slot::Second]);
-        assert_eq!(record.bytes[SLOT_BYTES + 8], 2);
+        assert_eq!(record.bytes[SLOT_BYTES + 8], 3);
+        assert_eq!(load(&mut record)?, Some(choices_at(6, 45)?));
+        Ok(())
+    }
+
+    #[test]
+    fn a_second_version_slot_loads_with_no_timers() -> Result<(), Box<dyn std::error::Error>> {
+        let mut record = FakeRecord::blank();
+        let second = [0x10, 0x0e, 0, 0, 120, 0, 0, 0, 0, 1, 6, 45, 0b111_1111, 1];
+        record.put(Slot::Second, &framed_as(UNTIMED_VERSION, &second, 9)?);
+        let stays = Choices {
+            power_off: false,
+            ..untimed(6, 45)?
+        };
+        assert_eq!(load(&mut record)?, Some(stays));
+        let mut timed = second.to_vec();
+        timed.extend_from_slice(&[1, 5, 30]);
+        assert_eq!(decode(&framed_as(UNTIMED_VERSION, &timed, 0)?), None);
+        Ok(())
+    }
+
+    #[test]
+    fn every_saved_timer_round_trips_in_order() -> Result<(), Box<dyn std::error::Error>> {
+        let mut record = FakeRecord::blank();
+        let mut timers = choices_at(6, 45)?;
+        timers.timers = vec![
+            Countdown::new(0, 1)?,
+            Countdown::new(3, 0)?,
+            Countdown::new(12, 5)?,
+            Countdown::LONGEST,
+        ];
+        save(&mut record, &timers)?;
+        assert_eq!(load(&mut record)?, Some(timers));
         Ok(())
     }
 
@@ -475,6 +554,10 @@ mod tests {
             (13, 2),
             (9, 2),
             (8, 2),
+            (14, 2),
+            (14, 0),
+            (15, 100),
+            (16, 60),
         ] {
             let mut payload = good.clone();
             payload[at] = value;
@@ -487,6 +570,11 @@ mod tests {
         longer.push(0);
         bad.push(longer);
         bad.push(good[..9].to_vec());
+        bad.push(good[..14].to_vec());
+        bad.push(good[..16].to_vec());
+        let mut zero = good.clone();
+        zero[15..17].copy_from_slice(&[0, 0]);
+        bad.push(zero);
         assert!(decode(&framed(&good, 0)?).is_some());
         for payload in bad {
             assert_eq!(decode(&framed(&payload, 0)?), None, "{payload:?}");
@@ -499,7 +587,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let slot = encode(&choices_at(6, 45)?, 0)?;
         let mut version = slot;
-        version[8] = 3;
+        version[8] = 4;
         let mut magic = slot;
         magic[0] = b'Q';
         let mut length = slot;
@@ -535,7 +623,9 @@ mod tests {
         window.window_seconds = -1;
         let mut many = choices_at(7, 1)?;
         many.alarms = vec![alarm_at(7, 1, false)?; 256];
-        for choices in [window, many] {
+        let mut zero = choices_at(7, 1)?;
+        zero.timers = vec![Countdown::default()];
+        for choices in [window, many, zero] {
             assert!(save(&mut record, &choices).is_err());
         }
         assert_eq!(record.saved, []);

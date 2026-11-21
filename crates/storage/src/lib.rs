@@ -121,7 +121,7 @@ mod tests {
 
     use alarm_core::alarm::{Alarm, Weekdays};
     use alarm_core::settings::{Choices, SetAlarm, load, save};
-    use alarm_core::time::{TimeOfDay, UtcOffset};
+    use alarm_core::time::{Countdown, TimeOfDay, UtcOffset};
 
     use super::*;
 
@@ -172,6 +172,7 @@ mod tests {
                 },
                 armed: true,
             }],
+            timers: vec![Countdown::new(3, 0)?],
         })
     }
 
