@@ -195,10 +195,10 @@ the keys. Never push a file named `recovery`, which asks for TWRP the same way.
 **`alarmd`**, `crates/alarmd`, the clock: the local time each minute, the charge held at
 80 %, a bar of alarm, timer and settings tabs. A drag on a wheel sets a time, `+` saves
 it, a tap on a saved alarm makes it active or disarms it, a second tap on its cross, red
-after the first, removes it. Ringing turns it amber, pulses the vibrator; a volume key
-snoozes 9 minutes, Power dismisses. Try it from the debug shell first, pushed to `/mnt`,
-then swap it in as above; with the debug `/init` already on `system`, replace `init` alone
-and leave `init.rom`. → `docs/device-history/phone.md`, issues 10, 13, 79 and 80.
+after the first, removes it. A ring turns it amber, pulses the vibrator and loops
+`ringtone.wav` on the speaker; a volume key snoozes 9 minutes, Power dismisses. Try it
+from the debug shell, pushed to `/mnt`, then swap it in as above, `init` alone over the
+debug `/init`. → `docs/device-history/phone.md`, issues 10, 13, 79, 80 and 92.
 
 ```bash
 cargo build --release --locked -p alarmd --target aarch64-unknown-linux-musl

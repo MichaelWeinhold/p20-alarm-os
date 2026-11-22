@@ -1,8 +1,9 @@
 # Audio
 
 **State.** `system` holds, under `/system/etc/alarmd/`, the HAL's DSP init and the
-speaker's route, read off this phone and its `odm` backup. Nothing reads them yet; the
-speaker adapter that replays them is issue 92. → ADR 0015, D1 and D2.
+speaker's route, read off this phone and its `odm` backup. `alarmd`'s speaker adapter
+reads both at start-up and logs `opening the speaker` if either is missing or malformed.
+→ ADR 0015, D1 and D2.
 
 | File | Bytes | sha256 |
 |---|---|---|
@@ -53,7 +54,8 @@ they match the table above.
 ## Alarm sounds
 
 **State.** `/system/media/audio/alarms` holds the ROM's eleven Vorbis alarms and the
-operator's test sound beside them; `alarmd` plays only the `.wav` files. → ADR 0014, D2
+operator's test sound beside them; `alarmd` plays only the `.wav` files, and until a
+chosen sound is kept in the settings (issue 86) it plays `ringtone.wav`. → ADR 0014, D2
 and D3; ADR 0015, D3.
 
 | File | Bytes | sha256 |

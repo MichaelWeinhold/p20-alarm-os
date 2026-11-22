@@ -43,11 +43,14 @@ crates/
                 wakealarm and /sys/power/state
   vibrator/     the adapter for the vibrator: the LED class device `vibrator`, timed by
                 its transient trigger
+  speaker/      the adapter for the speaker: the HAL's DSP init replayed on hifi_misc,
+                the speaker's route set on controlC0, the alarm sound looped on pcmC0D0p
   alarmd/       the binary: opens the adapters, draws the time and the alarms, waits on input
                 until the next minute or until the panel is due off, saves a changed list
                 as the panel goes off, suspends while it is off, powers off after the
                 window off the cable, starts dark on a boot by the alarm, boots the
-                modem with its radio off, pulses the vibrator while it rings, is PID 1
+                modem with its radio off, pulses the vibrator and sounds the speaker
+                while it rings, is PID 1
   init-probe/   a probe /init that runs the charge stop and logs the power nodes
   debug-init/   the debug /init: the ROM's shell on a USB serial gadget (ADR 0009)
   dsp-recorder/ run under the ROM, not in the image: records the audio HAL's ioctls on
@@ -66,7 +69,7 @@ It turns the panel off with `FBIOBLANK` on that descriptor, never by closing it.
 |---|---|
 | `time` | `UnixSeconds`, `TimeOfDay`, `Weekday`, `UtcOffset` — civil time without a tz database |
 | `alarm` | `Alarm`, `Weekdays`, and when an alarm next fires after a given instant |
-| `hardware` | the traits `Clock`, `WakeAlarm`, `Suspend`, `PowerOff`, `BootReason`, `Vibrator`, `Battery`, `Display`, `Input`, `Settings`, `Modem`, and `HardwareError` |
+| `hardware` | the traits `Clock`, `WakeAlarm`, `Suspend`, `PowerOff`, `BootReason`, `Vibrator`, `Speaker`, `Battery`, `Display`, `Input`, `Settings`, `Modem`, and `HardwareError` |
 | `boot` | `Boot`: why the phone started — the alarm, a press, the charger or anything else; only the alarm starts with the panel dark — ADR 0010, D4 |
 | `window` | `Window`: two minutes suspended after the panel goes off, then *power off*, unless an alarm rings, is snoozed or is due within two minutes of the end, which `Ringer::held` extends to a running timer; the RTC instant to suspend until; `power_on_at`, two minutes before the alarm — ADR 0010, D2 and D3; `alarmd` stays suspended instead on the cable or with the power-off toggle off |
 | `input` | `InputEvent`: a touch at a panel pixel, the finger moved while held, its lift, or a press of `VolumeUp`, `VolumeDown` or `Power` |
@@ -77,6 +80,7 @@ It turns the panel off with `FBIOBLANK` on that descriptor, never by closing it.
 | `ringer` | `Ringer`: up to four daily alarms, sorted, at most one of them active; quiet, ringing or snoozed for 9 minutes, and the instant the active one next rings; the slider's picked time, moved by a drag on a wheel or a tap on one of its arrows, added to the list by the `+`; a tap on a saved alarm makes it active, or disarms it when it already is, and a second tap on its cross, red after the first, removes it; any other touch, the panel going off or a ring clears the red; a tap on the switch's row turns the power-off toggle, on until turned; a tap on the lit time's row steps it through 10 s, 30 s, 1 min, 2 min and 5 min and back to 10 s; up to four saved timers from 00:01 to 99:59, sorted, a tap on one putting it on the wheels; one running timer, started and stopped by the start row, ringing at its end until a press of the side button, held in memory only; `show` draws the open screen, and `listen` sends a tab tap and the lit time to the `Light` and every tap, move, lift or press to the `Ringer`, touch only while no alarm rings |
 | `light` | `Light`: the panel lit by a press for the lit time, 10 s until set, kept lit by a touch or a ringing alarm, off at a press or the timeout — ADR 0008, D2; the ringer hears input only while it is lit; the open `Screen`, back to the alarm screen when the panel goes off or an alarm rings |
 | `vibration` | `Vibration`: a 1 s pulse every 2 s while the alarm rings, stopped at once by a snooze or a dismissal; a vibrator that fails is left alone until the next ring |
+| `sound` | `Sound`: the speaker started once when an alarm or a timer rings and stopped at a snooze or a dismissal; a speaker that fails to start is left alone until the next ring |
 
 The panel is the legacy framebuffer, `/dev/fb0` under our `devtmpfs`, with no DRM (ADR
 0004).
@@ -107,6 +111,18 @@ at a `SYN_DROPPED`, sending no lift.
 off. At start-up it checks that `trigger` offers `transient` and writes `transient`, which
 resets `duration`; a pulse writes `duration`, then `state` 1, then `activate` 1, and the
 kernel's timer switches the motor off. A stop writes `activate` 0.
+
+`speaker` drives the codec's own class-D through the HiFi DSP, as the ROM's HAL does
+(ADR 0015). At start-up it reads `dsp-init.bin`, `speaker-route.tsv` and `ringtone.wav`
+off `system`, opens `hifi_misc`, `controlC0` and `pcmC0D0p`, and resolves every route
+control to its element number and value, an enumerated one by its item's name; a missing
+file, node or control is a `HardwareError` before anything rings. The first start
+replays the DSP's messages once. Each start writes the defaults and then the speaker's
+controls, less `CLASSD_VOLTAGE_CONFIG`, which refuses its value, asks for 16-bit 48 kHz
+stereo in two periods of 960 frames, checks that the kernel kept them, and loops the
+sound on a thread of its own, preparing again after an underrun. A stop drops the
+stream, which ends the thread's blocked write, and puts the speaker's controls back to
+their defaults.
 
 `modem` boots the modem as the debug `/init` did by hand, on a thread of `alarmd`: a
 `tmpfs` on `/mnt` and on `/data`, a link in `/dev/block/by-name` to every partition, as
