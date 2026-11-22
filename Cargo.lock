@@ -18,6 +18,7 @@ dependencies = [
  "modem",
  "pid1",
  "power",
+ "speaker",
  "storage",
  "suspend",
  "vibrator",
