@@ -8,6 +8,7 @@ pub mod light;
 pub mod ringer;
 pub mod schedule;
 pub mod settings;
+pub mod sound;
 pub mod time;
 pub mod vibration;
 pub mod window;
