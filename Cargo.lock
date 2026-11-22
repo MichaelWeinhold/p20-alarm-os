@@ -93,6 +93,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "speaker"
+version = "0.1.0"
+dependencies = [
+ "alarm-core",
+]
+
+[[package]]
 name = "storage"
 version = "0.1.0"
 dependencies = [
