@@ -8,12 +8,13 @@ use std::os::fd::AsRawFd;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use alarm_core::hardware::{HardwareError, Speaker};
 
 use crate::control::{self, ELEM_INFO, ELEM_LIST, ELEM_WRITE, ENUMERATED, ID_BYTES, Info, Write};
 use crate::dsp::{self, Message};
-use crate::pcm::{self, DROP, HW_PARAMS, PREPARE, WRITEI_FRAMES};
+use crate::pcm::{self, DROP, HW_FREE, HW_PARAMS, PREPARE, WRITEI_FRAMES};
 use crate::route::{self, Control, Route};
 use crate::wav::{self, FRAME_BYTES};
 use crate::{CONTROL, DSP_INIT, HIFI_MISC, PCM, ROUTE, SOUND};
@@ -24,6 +25,7 @@ const SMALLEST_REPLY: usize = 4;
 const EINTR: i32 = 4;
 const EPIPE: i32 = 32;
 const ESTRPIPE: i32 = 86;
+const SETTLE: Duration = Duration::from_secs(5);
 
 unsafe extern "C" {
     fn ioctl(descriptor: c_int, request: c_int, ...) -> c_int;
@@ -291,13 +293,11 @@ fn device(path: &str, device: &'static str) -> Result<File, HardwareError> {
 }
 
 pub struct AlsaSpeaker {
-    init: Vec<Message>,
     writes: Writes,
     samples: Arc<[u8]>,
-    hifi: File,
     control: File,
     pcm: Arc<File>,
-    replayed: bool,
+    replayed: Instant,
     playing: Option<Playing>,
 }
 
@@ -305,10 +305,8 @@ impl fmt::Debug for AlsaSpeaker {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("AlsaSpeaker")
-            .field("messages", &self.init.len())
             .field("controls", &self.writes.ring.len())
             .field("sample_bytes", &self.samples.len())
-            .field("replayed", &self.replayed)
             .field("playing", &self.playing.is_some())
             .finish_non_exhaustive()
     }
@@ -324,28 +322,20 @@ impl AlsaSpeaker {
         let samples = Arc::from(wav::samples(&sound)?);
         let hifi = device(HIFI_MISC, HIFI)?;
         let control = device(CONTROL, control::DEVICE)?;
-        let pcm = Arc::new(device(PCM, pcm::DEVICE)?);
         let writes = resolved(&control, &route)?;
+        for message in &init {
+            sent(&hifi, message)?;
+        }
+        let replayed = Instant::now();
+        let pcm = Arc::new(device(PCM, pcm::DEVICE)?);
         Ok(Self {
-            init,
             writes,
             samples,
-            hifi,
             control,
             pcm,
-            replayed: false,
+            replayed,
             playing: None,
         })
-    }
-
-    fn replay(&mut self) -> Result<(), HardwareError> {
-        if !self.replayed {
-            for message in &self.init {
-                sent(&self.hifi, message)?;
-            }
-            self.replayed = true;
-        }
-        Ok(())
     }
 }
 
@@ -354,7 +344,7 @@ impl Speaker for AlsaSpeaker {
         if self.playing.is_some() {
             return Ok(());
         }
-        self.replay()?;
+        thread::sleep(SETTLE.saturating_sub(self.replayed.elapsed()));
         let started = set(&self.control, &self.writes.ring)
             .and_then(|()| prepared(&self.pcm))
             .and_then(|()| playing(Arc::clone(&self.pcm), Arc::clone(&self.samples)));
@@ -380,7 +370,8 @@ impl Speaker for AlsaSpeaker {
             .thread
             .join()
             .unwrap_or_else(|_| Err(refused(pcm::DEVICE, "the playing thread ended".to_owned())));
+        let freed = plain(&self.pcm, HW_FREE).map_err(|error| failed(pcm::DEVICE, &error));
         let reset = set(&self.control, &self.writes.after);
-        played.and(dropped).and(reset)
+        played.and(dropped).and(freed).and(reset)
     }
 }

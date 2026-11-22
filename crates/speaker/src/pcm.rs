@@ -4,6 +4,7 @@ use crate::wav::{BITS, CHANNELS, FRAME_BYTES, RATE};
 use crate::{failed, put, word};
 
 pub const HW_PARAMS: u32 = 0xc260_4111;
+pub const HW_FREE: u32 = 0x4112;
 pub const PREPARE: u32 = 0x4140;
 pub const DROP: u32 = 0x4143;
 pub const WRITEI_FRAMES: u32 = 0x4018_4150;
@@ -147,6 +148,7 @@ mod tests {
     #[test]
     fn the_requests_encode_the_layouts_of_their_structs() {
         assert_eq!(encoded(3, b'A', 0x11, HW_PARAMS_BYTES), Some(HW_PARAMS));
+        assert_eq!(encoded(0, b'A', 0x12, 0), Some(HW_FREE));
         assert_eq!(encoded(0, b'A', 0x40, 0), Some(PREPARE));
         assert_eq!(encoded(0, b'A', 0x43, 0), Some(DROP));
         assert_eq!(encoded(1, b'A', 0x50, XFERI_BYTES), Some(WRITEI_FRAMES));

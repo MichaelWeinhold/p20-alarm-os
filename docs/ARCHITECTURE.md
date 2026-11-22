@@ -116,13 +116,15 @@ kernel's timer switches the motor off. A stop writes `activate` 0.
 (ADR 0015). At start-up it reads `dsp-init.bin`, `speaker-route.tsv` and `ringtone.wav`
 off `system`, opens `hifi_misc`, `controlC0` and `pcmC0D0p`, and resolves every route
 control to its element number and value, an enumerated one by its item's name; a missing
-file, node or control is a `HardwareError` before anything rings. The first start
-replays the DSP's messages once. Each start writes the defaults and then the speaker's
-controls, less `CLASSD_VOLTAGE_CONFIG`, which refuses its value, asks for 16-bit 48 kHz
-stereo in two periods of 960 frames, checks that the kernel kept them, and loops the
-sound on a thread of its own, preparing again after an underrun. A stop drops the
-stream, which ends the thread's blocked write, and puts the speaker's controls back to
-their defaults.
+file, node or control is a `HardwareError` before anything rings. It then replays the
+DSP's messages, once. A start within 5 s of the replay waits out the rest: a stream the
+DSP is sent sooner plays at an eighth of its speed, unheard, and its watchdog fires when
+the stream ends (`docs/device-history/phone.md`, issue 92). Each start writes the
+defaults and then the speaker's controls, less `CLASSD_VOLTAGE_CONFIG`, which refuses its
+value, asks for 16-bit 48 kHz stereo in two periods of 960 frames, checks that the kernel
+kept them, and loops the sound on a thread of its own, preparing again after an underrun. A stop drops the
+stream, which ends the thread's blocked write, frees its parameters, and puts the
+speaker's controls back to their defaults.
 
 `modem` boots the modem as the debug `/init` did by hand, on a thread of `alarmd`: a
 `tmpfs` on `/mnt` and on `/data`, a link in `/dev/block/by-name` to every partition, as

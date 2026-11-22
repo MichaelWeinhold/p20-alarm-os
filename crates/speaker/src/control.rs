@@ -140,6 +140,8 @@ pub fn setting(
         BOOLEAN => match value {
             "0" => Ok(Setting::Integer(0)),
             "1" => Ok(Setting::Integer(1)),
+            _ if value.eq_ignore_ascii_case("off") => Ok(Setting::Integer(0)),
+            _ if value.eq_ignore_ascii_case("on") => Ok(Setting::Integer(1)),
             _ => Err(refused()),
         },
         INTEGER => value.parse().map(Setting::Integer).map_err(|_| refused()),
@@ -296,11 +298,15 @@ mod tests {
         };
         let names = items(&["Off", "APB", "U_3RD"]);
         assert_eq!(setting("A", &boolean, &[], "1")?, Setting::Integer(1));
+        assert_eq!(setting("A", &boolean, &[], "Off")?, Setting::Integer(0));
+        assert_eq!(setting("A", &boolean, &[], "on")?, Setting::Integer(1));
         assert_eq!(setting("A", &integer, &[], "5200")?, Setting::Integer(5200));
         assert_eq!(setting("A", &integer, &[], "-3")?, Setting::Integer(-3));
         assert_eq!(setting("A", &enumerated, &names, "APB")?, Setting::Item(1));
         for (info, value) in [
             (boolean, "2"),
+            (boolean, "Offset"),
+            (integer, "Off"),
             (integer, "APB"),
             (enumerated, "apb"),
             (enumerated, "1"),
