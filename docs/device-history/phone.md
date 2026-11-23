@@ -2189,3 +2189,89 @@ written`, and `system` was unmounted after.
 **The ROM's alarms after**, read the same way, hashed as before, all eleven. `ringtone.wav`
 reads 5760044 bytes, mode 644, with the host's sha256, and no `.part` file is left. `df`
 reads 3753456 KiB, 1888036 used and 1865420 free.
+
+## 2026-11-22 — the speaker rings the alarm, for issue 92
+
+Read under the debug `/init` `7a27e4dc…e7f8` and then under `alarmd`, both on `system`,
+swapped from TWRP; `init.rom` stayed at `e8e2768e…78ef` and `init.alarmd` at
+`3d555c02…e94f`, and `system/etc/alarmd/` held issue 91's `dsp-init.bin` `bd239d63…1efa`
+and `speaker-route.tsv` `f522fb95…09b7` beside issue 87's `ringtone.wav` `cb3a1320…8836`.
+The players were throwaway probes of the `speaker` crate, not committed. Times in the
+kernel log lines are its clock.
+
+**The route writes `Off` to a boolean.** `HISSC_S1_MST_SLV` is a `BOOLEAN` control and the
+route gives it `Off`, as `mixer_paths_anne.xml` does; the adapter now reads `Off` and `On`,
+in any case, as 0 and 1 on a boolean, and nowhere else. With it, all 272 values resolve.
+
+**Four controls read 1 where the route writes 0.** `HBF1I_EN` to `HBF4I_EN`, numids 1 to
+4, read 1 two seconds into a stream after the route had written 0, and the write's
+encoding was checked against the kernel's. The rings below were heard with them so.
+
+**A stream started straight after the DSP init plays at an eighth of its speed.** Under the
+debug `/init`, a fresh boot, the replay and then the probe's start within milliseconds:
+6 s of the clip took 48.02 s, each 20 ms period about 160 ms, nothing was heard but a
+click at the start and stop, the DSP's `sochifi watchdog` fired about 110 ms after the
+stream ended, and a second stream in that boot was dead. Neither booting the ROM first, as
+issue 14 did, nor replaying issue 14's recording of the HAL changed it: 48.02 s again.
+
+**The gap between the init and the stream decides it.** Issue 14's heard run had, by
+chance, about 5 s between its replay and its play, from two commands typed apart.
+
+| Gap after the replay | 6 s of the clip took | Watchdog | Heard |
+|---|---|---|---|
+| a few ms | 48.02 s | yes | no |
+| 10 s | 6.04 s | no | yes |
+| 2 s | 6.03 s | no | — |
+| a second play, same boot | 6.03 s | no | — |
+
+The adapter replays the init when it opens, at start-up, and a start within 5 s of it
+waits out the rest. Under the debug `/init`, a probe that opened and then started twice,
+5 s each and 10 s apart, moved `hw_ptr` from 63360 to 160320 over 25.78 to 27.81 s and
+from 62400 to 159360 over 40.84 to 42.87 s: 96960 frames in 2.03 s, about 47800 a
+second. Every start and stop returned `Ok`, no watchdog fired, and both rings were heard.
+
+**The draw while it rings**, the same probe run again in that boot, so a second replay into
+a DSP that had played, with the panel lit and `enable_hiz` 1 under
+`/sys/class/hw_power/charger/charge_data/` so the battery carried the phone. `current_now`
+of `/sys/class/power_supply/Battery`, in mA, negative for a discharge:
+
+| When | `current_now` |
+|---|---|
+| before the first start | −348 to −365 |
+| ringing, both rounds | −390 to −398 |
+| after each stop | −351 to −363 |
+
+About 40 mA while it rings, and back to the baseline at the stop. `enable_hiz` was written 0
+after, and `current_now` read 177. No watchdog fired.
+
+**`alarmd` rang it.** Built from `4148cfc`, 575920 bytes, sha256
+`dda6d763bcfccea70edc7e11b8421c44ddb81b6096b19ac52481191aa64f5041`, it was copied over
+`/init` from TWRP, with the debug `/init` kept as `init.debug`. The RTC read 1795351268,
+one second behind the Mac's UTC, `misc` was zeroed, and `adb reboot` ran at 12:41:20 UTC.
+The log below is from pstore, read in TWRP the next morning after a key reset.
+
+- **After a cold boot.** Booted by `Other`, toggle off, on the cable, an alarm at 13:45
+  at UTC+1. The panel went dark at 65 s and the phone suspended until 12:45:00 UTC; it
+  rang at 223 s, through the speaker with the vibration and the amber face, and a Volume
+  press snoozed it. The snooze rang again from a suspend armed for 1795352040, and a press
+  of Power at 763.34 s made it `Quiet`.
+- **After a suspend.** Off the cable, an alarm at 14:06: resumed from a suspend armed for
+  1795352760 at 1479.61 s, rang, and a press of Power at 1482.75 s made it `Quiet`. The
+  operator heard both, and reported each as planned.
+
+**After a power-on alarm**, on 2026-11-23, after `alarmd` was rebooted from TWRP. Twice the
+operator turned the toggle on, set an alarm about eight minutes ahead, pulled the cable and
+turned the panel off; each time the phone powered off, booted by itself and rang through
+the speaker, and Power stopped it. pstore was empty after both runs, so these readings are
+the operator's and `reserved4`'s:
+
+| Run | Slot written before the power-off | Slot written after the boot |
+|---|---|---|
+| first | sequence 25: toggle on, 11:51 armed, 14:06 | sequence 26: toggle **off**, the alarms the same |
+| second | sequence 27: toggle on, 12:08 armed | none |
+
+After the first run the operator found the toggle off on opening settings, having not
+touched it; after the second it was still on. Only a tap on the toggle's row turns it off
+once the settings load, so the first run's change is unexplained here.
+
+The image was left on the phone, with the RTC on the Mac's UTC.

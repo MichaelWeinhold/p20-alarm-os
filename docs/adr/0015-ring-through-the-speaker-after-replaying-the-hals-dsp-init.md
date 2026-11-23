@@ -1,6 +1,6 @@
 # 15. Ring through the speaker after replaying the HAL's DSP init
 
-- **Status:** Accepted
+- **Status:** Accepted; D1 amended with the wait after the replay by issue 92
 - **Date:** 2026-11-21
 - **Issue:** #14
 - **Amends:** ADR 0014, D2
@@ -53,6 +53,13 @@ whose `/init` stays on `system` as `init.rom`:
 
 `alarmd` builds each argument struct itself. It sends the file as it is and does not try
 to understand it.
+
+**Amended by issue 92**: a stream started within milliseconds of the replay played at an
+eighth of its speed, unheard, and the DSP's watchdog fired when it ended; started 2 s or
+10 s after it, 6 s of the clip played in 6.03 s and 6.04 s. Issue 14's heard run had about
+5 s between the two by chance. `alarmd` replays the messages at start-up, and a ring
+within 5 s of the replay waits out the rest. A second replay, into a DSP that had played,
+did no harm.
 
 ### D2. The route is `media-speaker`'s controls, set at each ring and unset after it
 
@@ -115,7 +122,8 @@ HAL's `ap_param_init` for four algorithm files, for a block that does not change
 recorded, or if the block must change at runtime, for a volume for example.
 
 **A smaller, hand-written init.** `SET_DEVICE` alone left the DSP eight times too slow,
-and its watchdog fired. Which subset of the twelve is enough was not searched. *Reopens
+and its watchdog fired, but its stream started straight after it, which issue 92 found
+slows the full init too. Which subset of the twelve is enough was not searched. *Reopens
 if* sending the replay costs a ring a noticeable delay or draw.
 
 **The PCM sent past the DSP.** Device 0 is fed through the DSP's mailbox: with the DSP
