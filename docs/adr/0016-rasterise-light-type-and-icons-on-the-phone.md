@@ -1,6 +1,6 @@
 # 16. Rasterise light type and icons on the phone
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-23
 - **Issue:** #95
 
@@ -35,9 +35,16 @@ onto a 1080×2280 frame:
 | `ttf-parser` and `ab_glyph_rasterizer`, both fonts embedded | 403 008 bytes | +58 728 |
 | `fontdue`, both fonts embedded | 426 496 bytes | +82 216 |
 
-On the Mac host, the glyphs cost 0.95 ms per frame over a 0.19 ms fill of the whole frame.
-13 221 of the frame's 110 725 lit pixels came out grey. The phone's reading is in
-`docs/device-history/phone.md`, *Glyph rasterising on the Kirin 659*.
+13 221 of the frame's 110 725 lit pixels came out grey, the same on the Mac and on the
+phone. The phone's reading, from TWRP, is in `docs/device-history/phone.md`, *glyph
+rasterising on the Kirin 659*:
+
+- **The glyphs cost 12.9 ms per frame** on cpu0 at 1709 MHz, over a 1.65 ms fill.
+  `fontdue` costs 0.6 ms more.
+- **1709 MHz is what `alarmd` runs at.** The kernel's default governor is `performance`,
+  and `alarmd` leaves it (ADR 0007). Forced to `powersave`, cpu0 at 480 MHz took 41.3 ms.
+- **Rasterising is two thirds of it**: 26 ns per pixel of a glyph's box, and blending
+  13 ns.
 
 ## Decisions
 
@@ -104,7 +111,8 @@ rerun.
 For each pixel with coverage `a`, `face` writes `(glyph·a + under·(255 − a)) / 255` per
 channel, in integers, where `under` is the colour already at that pixel. Most glyphs sit
 on a solid background, but the knob sits on the switch, so the blend reads the frame
-rather than assuming `BACKGROUND`. A pixel with no coverage is skipped. `Frame` stays a
+rather than assuming `BACKGROUND`. A pixel with no coverage is skipped, and one with full
+coverage takes the glyph's colour without arithmetic. `Frame` stays a
 `Vec<Colour>` of XRGB, and the `framebuffer` adapter does not change.
 
 ### D6. The fixtures map each pixel to its nearest palette colour
@@ -115,6 +123,17 @@ pictures in characters, a diff still reads as a picture, and an anti-aliased edg
 to the side it is mostly on. One test asserts that a rendered clock has grey pixels, so
 the anti-aliasing cannot silently stop. All nine fixtures are regenerated in the
 follow-up that changes the glyphs.
+
+### D7. `render` rasterises every frame, with no glyph cache
+
+The fullest screen, the alarm screen with four saved alarms, puts about 680 000 pixels
+of glyph boxes on the panel: the clock, the active alarm, the wheels, the list and the
+icons. By the reading's 39 ns per pixel that is about 28 ms per frame, and a drag on a
+wheel redraws once per step. That is fast enough to follow a finger, and `render` stays
+a function of its size and its `Face`, with nothing kept between calls.
+
+A cache would hold each glyph's coverage per size, and leave blending alone, about 10 ms.
+It means state that `render` does not have today, owned by `alarmd` and passed in.
 
 ## Rejected alternatives
 
@@ -138,7 +157,11 @@ drawn as paths rather than glyphs, such as a dial.
 
 **Seven segments drawn thinner.** Issue 80 shipped this as the stopgap. The strokes are
 still whole pixels on a unit grid, so the slanted strokes and the icons stay stepped.
-*Reopens if* D1's cost per frame on the phone proves too high to be worth it.
+*Reopens if* a cached frame still lags a drag on the phone.
+
+**A glyph cache from the start.** D7's estimate leaves a drag fast enough without one.
+*Reopens if* the type's follow-up reads the alarm screen above 33 ms a frame on the
+phone, or a drag visibly lags.
 
 **Another typeface.** Roboto Flex and IBM Plex Sans are also under the OFL and come in
 light weights, but neither was rendered here. Inter was chosen for its tall, open figures
@@ -151,10 +174,11 @@ phone, or a converter on the host, for a set Material Symbols already covers as 
 
 ## Consequences
 
-- **The type is a follow-up under this issue**: D1, D2, D4, D5 and D6 for the digits,
-  the colon, the dashes and `%`, with the fixtures regenerated.
-- **The icons are a second follow-up**, waiting for the first: D3 for the tab bar, the
-  battery, the power symbol, the sun, the switch, the wheels' arrows, `+`, the cross, play
-  and stop.
+- **The type is a follow-up under this issue**, issue 104: D1, D2, D4, D5, D6 and D7
+  for the digits, the colon, the dashes and `%`, with the fixtures regenerated. It reads
+  the alarm screen's time per frame on the phone, which checks D7's estimate.
+- **The icons are a second follow-up**, issue 105, waiting for the first: D3 for the tab
+  bar, the battery, the power symbol, the sun, the switch, the wheels' arrows, `+`, the
+  cross, play and stop.
 - **`alarmd` grows by about 59 KB**, about 11 %.
 - `ARCHITECTURE.md`'s row for `face` changes with each follow-up, not with this ADR.
