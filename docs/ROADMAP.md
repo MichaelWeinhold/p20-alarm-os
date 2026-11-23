@@ -104,3 +104,10 @@ and a timer wakes a suspended phone when it ends.
   routed by the HAL's `media-speaker` controls, after `alarmd` replays the HAL's DSP init
   recorded under the ROM. Sounds are WAV files converted on the host. Its two follow-ups
   are a recorder with its host scripts, and the `speaker` adapter.
+
+## Research before smooth type
+
+- **Smooth type and thinner icons.** **Decided** — in ADR 0016: Inter at weight 300 and
+  Material Symbols, rasterised by `face` at the layout's unit and blended into the frame,
+  12.9 ms per frame for a clock's worth of glyphs on the Kirin 659. Its two follow-ups are
+  the figures (104) and the icons (105).

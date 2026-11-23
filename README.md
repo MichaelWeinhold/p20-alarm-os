@@ -36,6 +36,7 @@ documentation, starting from the vendor kernel rather than from nothing.
 | Low-battery light | **Decided; built, host-tested.** The LED blinks red at its lowest current while suspended at or below 20 % off the cable; the power model does not change for it — [ADR 0013](docs/adr/0013-blink-the-led-red-while-suspended-on-a-low-battery.md), issues 64 and 76. |
 | Vibration | **Built and on the phone.** A 1 s pulse every 2 s while the alarm rings, stopped at once by a snooze or a dismissal, issue 13. |
 | Speaker | **Decided and proven.** The codec's class-D, after `alarmd` replays the HAL's DSP init recorded under the ROM; sounds are WAV files converted on the host — [ADR 0015](docs/adr/0015-ring-through-the-speaker-after-replaying-the-hals-dsp-init.md), issue 14. |
+| Type and icons | **Decided.** Inter at weight 300 and Material Symbols, rasterised on the phone at the layout's unit and blended into the frame, for about 59 KB of binary — [ADR 0016](docs/adr/0016-rasterise-light-type-and-icons-on-the-phone.md), issue 95. |
 
 ## How it works
 

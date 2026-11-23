@@ -2275,3 +2275,34 @@ touched it; after the second it was still on. Only a tap on the toggle's row tur
 once the settings load, so the first run's change is unexplained here.
 
 The image was left on the phone, with the RTC on the Mac's UTC.
+
+## 2026-11-23 — glyph rasterising on the Kirin 659, for issue 95
+
+From TWRP 3.7.0_9-0 over `adb`, about 12:50 UTC. A prototype built outside the repository
+with `alarmd`'s release profile for `aarch64-unknown-linux-musl` filled a 1080×2280 XRGB
+frame black, then drew `19:37` and `06:45` in Inter at weight 300, and three tab icons and
+the battery from Material Symbols, blended white over black. The fonts were the two
+subsets of ADR 0016, D2 and D3: 2792 bytes, sha256 `ca8c81fb…9cec`, and 2904 bytes,
+`b58cfc19…157d`. Each binary ran from `/tmp`, pinned to cpu0 with `taskset 01`, averaged
+over 50 frames, three runs each, and was deleted afterwards.
+
+Both clusters are Cortex-A53, part `0xd03`. The kernel's `CONFIG_CPU_FREQ_DEFAULT_GOV` is
+`PERFORMANCE`, which `alarmd` leaves as it is (ADR 0007), so cpu0 runs at 1709 MHz under
+our `/init` as under TWRP.
+
+| Binary | Bytes | sha256 | Fill | Fill and glyphs |
+|---|---|---|---|---|
+| no font | 344280 | — | 1.65 ms | — |
+| `ttf-parser` and `ab_glyph_rasterizer` | 403008 | `b9c49b64…931f` | 1.65 ms | 14.52–14.54 ms |
+| `fontdue` | 426496 | `e5891014…76e2` | 1.65 ms | 15.14–15.15 ms |
+
+The glyph boxes covered 351391 pixels; 110725 came out lit, 13221 of them grey, the same
+counts as on the Mac. **The glyphs cost 12.9 ms per frame** at 1709 MHz.
+
+With cpu0 and cpu4 set to `powersave`, cpu0 ran at 480 MHz and the same frame took
+44.57–44.62 ms over a 3.28 ms fill, 41.3 ms for the glyphs. Both were set back to
+`performance` afterwards.
+
+**Rasterising is two thirds of the cost.** A second binary, `d75d732b…733e`, rasterised ten
+digits at the alarm's size, 165712 box pixels, in 4.33 ms, and blended them in 2.19 ms:
+26 ns and 13 ns per box pixel.
