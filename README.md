@@ -33,7 +33,7 @@ documentation, starting from the vendor kernel rather than from nothing.
 | RTC wake and power-off | **Decided.** Suspended for two minutes after a use, then off until the RTC switches it on for the alarm — [ADR 0010](docs/adr/0010-suspend-briefly-then-power-off-until-the-alarm.md), issue 12. |
 | Settings across a power-off | **Decided.** A raw record of two checksummed slots on `reserved4`, a partition the ROM never used — [ADR 0011](docs/adr/0011-keep-the-settings-in-a-raw-record-on-reserved4.md), issue 30. |
 | Alarm sounds | **Decided.** Files on `system`, read-only, the ROM's own used as they are; the settings stay on `reserved4`, with room to spare — [ADR 0014](docs/adr/0014-keep-alarm-sounds-on-system-and-the-settings-on-reserved4.md), issue 82. |
-| Low-battery light | **Decided.** The LED blinks red at its lowest current while suspended at or below 20 % off the cable; the power model does not change for it — [ADR 0013](docs/adr/0013-blink-the-led-red-while-suspended-on-a-low-battery.md), issue 64. |
+| Low-battery light | **Decided; built, host-tested.** The LED blinks red at its lowest current while suspended at or below 20 % off the cable; the power model does not change for it — [ADR 0013](docs/adr/0013-blink-the-led-red-while-suspended-on-a-low-battery.md), issues 64 and 76. |
 | Vibration | **Built and on the phone.** A 1 s pulse every 2 s while the alarm rings, stopped at once by a snooze or a dismissal, issue 13. |
 | Speaker | **Decided and proven.** The codec's class-D, after `alarmd` replays the HAL's DSP init recorded under the ROM; sounds are WAV files converted on the host — [ADR 0015](docs/adr/0015-ring-through-the-speaker-after-replaying-the-hals-dsp-init.md), issue 14. |
 

@@ -11,4 +11,5 @@ pub mod settings;
 pub mod sound;
 pub mod time;
 pub mod vibration;
+pub mod warning;
 pub mod window;

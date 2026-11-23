@@ -24,3 +24,4 @@ and a new row. A reference to another file's heading is a relative link.
 | 3 | [phone.md](manual-steps/phone.md) | The ROM and kernel on the phone, its partitions, the stock image's backup, fastboot, the flash and the rollback |
 | 4 | [modem.md](manual-steps/modem.md) | Booting the modem with its radio off from the debug shell |
 | 5 | [audio.md](manual-steps/audio.md) | The HAL's DSP init and the speaker route, recorded and pushed to `system` |
+| 6 | [indicator.md](manual-steps/indicator.md) | The low-battery light, and its open reading on the phone |
