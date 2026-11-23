@@ -3,12 +3,13 @@ use alarm_core::battery::{ChargeLimit, ChargeStep, Gauge, stop_at_limit};
 use std::thread::JoinHandle;
 
 use alarm_core::hardware::{
-    Battery, BootReason, Clock, Display, HardwareError, Modem, PowerOff, Settings, Suspend,
-    Vibrator, WakeAlarm,
+    Battery, BootReason, Clock, Display, HardwareError, Modem, PowerOff, Settings, Speaker,
+    Suspend, Vibrator, WakeAlarm,
 };
 use alarm_core::light::Light;
 use alarm_core::ringer::{Ringer, show};
 use alarm_core::settings::{self, Choices, SetAlarm};
+use alarm_core::sound::Sound;
 use alarm_core::time::{Countdown, TimeOfDay, UnixSeconds, UtcOffset, seconds_to_next_minute};
 use alarm_core::vibration::Vibration;
 use alarm_core::window::{Answer, WINDOW_SECONDS, Window, power_on_at};
@@ -74,22 +75,30 @@ pub fn minute(
 }
 
 #[derive(Debug)]
-pub struct Buzz<V> {
+pub struct Buzz<V, S> {
     pub vibration: Vibration,
     pub vibrator: Result<V, HardwareError>,
+    pub sound: Sound,
+    pub speaker: Result<S, HardwareError>,
 }
 
 pub fn pulse(
     clock: &impl Clock,
     ringer: &Ringer,
-    buzz: &mut Buzz<impl Vibrator>,
+    buzz: &mut Buzz<impl Vibrator, impl Speaker>,
     wait_seconds: u64,
 ) -> Minute {
     let mut log = Vec::new();
+    let ring = ringer.ring();
+    if let Ok(speaker) = &mut buzz.speaker
+        && let Err(error) = buzz.sound.tick(ring, speaker)
+    {
+        log.push(kmsg::failure("driving the speaker", &error));
+    }
     let (Ok(vibrator), Ok(now)) = (&mut buzz.vibrator, clock.now()) else {
         return Minute { log, wait_seconds };
     };
-    if let Err(error) = buzz.vibration.tick(now, ringer.ring(), vibrator) {
+    if let Err(error) = buzz.vibration.tick(now, ring, vibrator) {
         log.push(kmsg::failure("driving the vibrator", &error));
     }
     let wait_seconds = buzz
@@ -522,10 +531,42 @@ mod tests {
         }
     }
 
-    fn buzz(vibrator: Result<FakeVibrator, HardwareError>) -> Buzz<FakeVibrator> {
+    #[derive(Default)]
+    struct FakeSpeaker {
+        starts: u32,
+        stops: u32,
+        refusing: bool,
+    }
+
+    impl Speaker for FakeSpeaker {
+        fn start(&mut self) -> Result<(), HardwareError> {
+            self.starts += 1;
+            if self.refusing {
+                Err(refused("speaker"))
+            } else {
+                Ok(())
+            }
+        }
+
+        fn stop(&mut self) -> Result<(), HardwareError> {
+            self.stops += 1;
+            Ok(())
+        }
+    }
+
+    fn buzz(vibrator: Result<FakeVibrator, HardwareError>) -> Buzz<FakeVibrator, FakeSpeaker> {
         Buzz {
             vibration: Vibration::still(),
             vibrator,
+            sound: Sound::quiet(),
+            speaker: Ok(FakeSpeaker::default()),
+        }
+    }
+
+    fn sounding(speaker: Result<FakeSpeaker, HardwareError>) -> Buzz<FakeVibrator, FakeSpeaker> {
+        Buzz {
+            speaker,
+            ..buzz(Ok(FakeVibrator::default()))
         }
     }
 
@@ -1902,6 +1943,71 @@ mod tests {
                 wait_seconds: 10,
             }
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_ringing_alarm_starts_the_speaker_once_and_a_dismissal_stops_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(7, 0, 0);
+        let mut ringer = ringing_at(&clock)?;
+        let mut buzz = buzz(Ok(FakeVibrator::default()));
+        pulse(&clock, &ringer, &mut buzz, 10);
+        pulse(&at(7, 0, 2), &ringer, &mut buzz, 10);
+        assert!(buzz.sound.playing());
+        ringer.pressed(Key::Power, clock.now()?);
+        let step = pulse(&clock, &ringer, &mut buzz, 10);
+        assert_eq!(step.log, Vec::<String>::new());
+        assert!(!buzz.sound.playing());
+        let speaker = buzz.speaker.as_ref().map_err(Clone::clone)?;
+        assert_eq!((speaker.starts, speaker.stops), (1, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn a_snooze_stops_the_speaker() -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(7, 0, 0);
+        let mut ringer = ringing_at(&clock)?;
+        let mut buzz = buzz(Ok(FakeVibrator::default()));
+        pulse(&clock, &ringer, &mut buzz, 10);
+        ringer.pressed(Key::VolumeUp, clock.now()?);
+        assert!(matches!(ringer.ring(), Ring::Snoozed(_)));
+        pulse(&clock, &ringer, &mut buzz, 10);
+        let speaker = buzz.speaker.as_ref().map_err(Clone::clone)?;
+        assert_eq!((speaker.starts, speaker.stops), (1, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn a_refusing_speaker_is_logged_once_and_the_vibrator_still_pulses()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(7, 0, 0);
+        let ringer = ringing_at(&clock)?;
+        let mut buzz = sounding(Ok(FakeSpeaker {
+            refusing: true,
+            ..FakeSpeaker::default()
+        }));
+        let step = pulse(&clock, &ringer, &mut buzz, 10);
+        assert_eq!(step.log.len(), 1);
+        assert!(step.log[0].contains("driving the speaker"));
+        let step = pulse(&at(7, 0, 2), &ringer, &mut buzz, 10);
+        assert_eq!(step.log, Vec::<String>::new());
+        let vibrator = buzz.vibrator.as_ref().map_err(Clone::clone)?;
+        assert_eq!(vibrator.pulses, [PULSE_MILLISECONDS; 2]);
+        let speaker = buzz.speaker.as_ref().map_err(Clone::clone)?;
+        assert_eq!(speaker.starts, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn an_absent_speaker_leaves_the_vibrator_to_wake() -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(7, 0, 0);
+        let ringer = ringing_at(&clock)?;
+        let mut buzz = sounding(Err(HardwareError::Absent("speaker")));
+        let step = pulse(&clock, &ringer, &mut buzz, 10);
+        assert_eq!(step.log, Vec::<String>::new());
+        let vibrator = buzz.vibrator.as_ref().map_err(Clone::clone)?;
+        assert_eq!(vibrator.pulses, [PULSE_MILLISECONDS]);
         Ok(())
     }
 }

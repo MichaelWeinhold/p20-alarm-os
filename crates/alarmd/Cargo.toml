@@ -17,6 +17,7 @@ input = { path = "../input" }
 modem = { path = "../modem" }
 pid1 = { path = "../pid1" }
 power = { path = "../power" }
+speaker = { path = "../speaker" }
 storage = { path = "../storage" }
 suspend = { path = "../suspend" }
 vibrator = { path = "../vibrator" }

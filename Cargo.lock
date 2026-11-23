@@ -18,6 +18,7 @@ dependencies = [
  "modem",
  "pid1",
  "power",
+ "speaker",
  "storage",
  "suspend",
  "vibrator",
@@ -90,6 +91,13 @@ version = "0.1.0"
 dependencies = [
  "alarm-core",
  "pid1",
+]
+
+[[package]]
+name = "speaker"
+version = "0.1.0"
+dependencies = [
+ "alarm-core",
 ]
 
 [[package]]

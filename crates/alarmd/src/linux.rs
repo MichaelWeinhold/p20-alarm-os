@@ -6,6 +6,7 @@ use std::time::Duration;
 use alarm_core::hardware::{Display, HardwareError};
 use alarm_core::light::Light;
 use alarm_core::ringer::listen;
+use alarm_core::sound::Sound;
 use alarm_core::time::{TimeOfDay, UtcOffset};
 use alarm_core::vibration::Vibration;
 use alarm_core::window::Window;
@@ -18,6 +19,7 @@ use pid1::kmsg;
 use pid1::linux::{into_recovery, mounted};
 use power::Cmdline;
 use power::linux::PoweroffAlarm;
+use speaker::linux::AlsaSpeaker;
 use storage::Partition;
 use suspend::{SysfsSuspend, SysfsWakeAlarm};
 use vibrator::LedVibrator;
@@ -129,14 +131,20 @@ fn booting(log: &mut Option<File>, lit_seconds: i64) -> Light {
     light
 }
 
-fn buzzing(log: &mut Option<File>) -> Buzz<LedVibrator> {
+fn buzzing(log: &mut Option<File>) -> Buzz<LedVibrator, AlsaSpeaker> {
     let vibrator = LedVibrator::open();
     if let Err(error) = &vibrator {
         logged(log, &kmsg::failure("opening the vibrator", error));
     }
+    let speaker = AlsaSpeaker::open();
+    if let Err(error) = &speaker {
+        logged(log, &kmsg::failure("opening the speaker", error));
+    }
     Buzz {
         vibration: Vibration::still(),
         vibrator,
+        sound: Sound::quiet(),
+        speaker,
     }
 }
 
