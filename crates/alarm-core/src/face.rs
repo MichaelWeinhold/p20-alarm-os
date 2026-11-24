@@ -124,9 +124,9 @@ impl Row {
     #[must_use]
     pub fn step(self) -> i8 {
         match self {
-            Self::Above => -1,
+            Self::Above => 1,
             Self::Picked => 0,
-            Self::Below => 1,
+            Self::Below => -1,
         }
     }
 

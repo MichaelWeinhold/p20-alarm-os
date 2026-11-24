@@ -655,12 +655,12 @@ mod tests {
         let clock = FakeClock::at(6, 58, 20);
         let mut ringer = Ringer::listed(Vec::new(), TimeOfDay::new(7, 59)?);
         let mut input =
-            FakeInput::with(&[&HOUR_ABOVE, &MINUTE_BELOW, &MINUTE_BELOW, &MINUTE_ABOVE]);
+            FakeInput::with(&[&HOUR_BELOW, &MINUTE_ABOVE, &MINUTE_ABOVE, &MINUTE_BELOW]);
         drain(&mut input, &clock, &mut ringer)?;
         assert_eq!(ringer.picked(), TimeOfDay::new(6, 0)?);
         assert_eq!(ringer.alarms(), []);
         assert!(!ringer.armed());
-        let mut input = FakeInput::with(&[&HOUR_BELOW, &ADD, &FIRST, &FIRST, &FIRST]);
+        let mut input = FakeInput::with(&[&HOUR_ABOVE, &ADD, &FIRST, &FIRST, &FIRST]);
         drain(&mut input, &clock, &mut ringer)?;
         assert_eq!(ringer.alarms(), times(&[(7, 0)])?);
         assert_eq!(ringer.active(), Some(TimeOfDay::new(7, 0)?));
@@ -1057,9 +1057,9 @@ mod tests {
         let mut on = |gestures: &[&[InputEvent]], ringer: &mut Ringer| {
             drain_lit(&mut FakeInput::with(gestures), &clock, ringer, &mut light)
         };
-        on(&[&TIMER_TAB, &HOUR_ABOVE, &MINUTE_ABOVE], &mut ringer)?;
+        on(&[&TIMER_TAB, &HOUR_BELOW, &MINUTE_BELOW], &mut ringer)?;
         assert_eq!(ringer.countdown(), Countdown::LONGEST);
-        on(&[&HOUR_BELOW, &MINUTE_BELOW, &MINUTE_BELOW], &mut ringer)?;
+        on(&[&HOUR_ABOVE, &MINUTE_ABOVE, &MINUTE_ABOVE], &mut ringer)?;
         assert_eq!(ringer.countdown(), Countdown::new(0, 1)?);
         on(&[&drag(300, 1000, &[1000 - 3 * PITCH])], &mut ringer)?;
         assert_eq!(ringer.countdown(), Countdown::new(3, 1)?);
@@ -1074,9 +1074,9 @@ mod tests {
         drain(
             &mut FakeInput::with(&[
                 &TIMER_TAB,
-                &HOUR_ABOVE,
-                &HOUR_ABOVE,
-                &MINUTE_BELOW,
+                &HOUR_BELOW,
+                &HOUR_BELOW,
+                &MINUTE_ABOVE,
                 &ADD,
                 &ADD,
             ]),
@@ -1397,6 +1397,36 @@ mod tests {
     }
 
     #[test]
+    fn a_tap_on_the_up_arrow_counts_up_and_on_the_down_arrow_counts_down()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 0, 0);
+        let mut alarm = Ringer::listed(Vec::new(), TimeOfDay::new(23, 59)?);
+        drain(&mut FakeInput::with(&[&HOUR_ABOVE]), &clock, &mut alarm)?;
+        assert_eq!(alarm.picked(), TimeOfDay::new(0, 59)?);
+        drain(&mut FakeInput::with(&[&MINUTE_ABOVE]), &clock, &mut alarm)?;
+        assert_eq!(alarm.picked(), TimeOfDay::new(0, 0)?);
+        drain(&mut FakeInput::with(&[&HOUR_BELOW]), &clock, &mut alarm)?;
+        assert_eq!(alarm.picked(), TimeOfDay::new(23, 0)?);
+        drain(&mut FakeInput::with(&[&MINUTE_BELOW]), &clock, &mut alarm)?;
+        assert_eq!(alarm.picked(), TimeOfDay::new(23, 59)?);
+
+        let mut timer = timed(&[])?;
+        let mut light = always();
+        let mut on = |gestures: &[&[InputEvent]], ringer: &mut Ringer| {
+            drain_lit(&mut FakeInput::with(gestures), &clock, ringer, &mut light)
+        };
+        on(&[&TIMER_TAB, &HOUR_ABOVE], &mut timer)?;
+        assert_eq!(timer.countdown(), Countdown::new(1, 0)?);
+        on(&[&MINUTE_ABOVE], &mut timer)?;
+        assert_eq!(timer.countdown(), Countdown::new(1, 1)?);
+        on(&[&HOUR_BELOW, &HOUR_BELOW], &mut timer)?;
+        assert_eq!(timer.countdown(), Countdown::new(99, 1)?);
+        on(&[&MINUTE_BELOW, &MINUTE_BELOW], &mut timer)?;
+        assert_eq!(timer.countdown(), Countdown::LONGEST);
+        Ok(())
+    }
+
+    #[test]
     fn dragging_a_wheel_up_counts_forward_one_step_per_pitch()
     -> Result<(), Box<dyn std::error::Error>> {
         let clock = FakeClock::at(6, 0, 0);
@@ -1430,7 +1460,7 @@ mod tests {
     {
         let clock = FakeClock::at(6, 0, 0);
         let mut ringer = ringer(7, 0)?;
-        let gesture = drag(300, 1200, &[1210, 1200 + PITCH / 2 - 1]);
+        let gesture = drag(300, 800, &[810, 800 + PITCH / 2 - 1]);
         drain(&mut FakeInput::with(&[&gesture]), &clock, &mut ringer)?;
         assert_eq!(ringer.picked(), TimeOfDay::new(8, 0)?);
         let gesture = drag(300, 1000, &[1000 + PITCH / 2]);
