@@ -2365,3 +2365,17 @@ zero, and the RTC read 1795528188 against the Mac's 1795528191, before `adb rebo
 operator tapped the hour's up arrow and the minute's down arrow on the alarm screen, and
 the minutes' and seconds' arrows on the timer screen, and each stepped the way its arrow
 points; a drag up still counted up. The image was left on the phone.
+
+## 2026-11-24 — only Power ends a ring, for issue 113
+
+**`alarmd` at `5cbe5f9` is 634824 bytes**, sha256
+`72f13c7cc0fce04edf9e272a2208696924b0996368c93778be3e51b50bf6bf68`, 224 bytes less than
+issue 108's. From TWRP 3.7.0_9-0 it was copied over `/init` on `system`, replacing issue
+108's `eb817803…3387`. `init.rom` still hashed `e8e2768e…78ef`, `misc`'s first 32 bytes
+read zero, and the RTC read 1795529833 against the Mac's 1795529836, before `adb reboot`
+at 14:17:20 UTC.
+
+**Volume Up and Volume Down leave a ring ringing, and Power dismisses it.** The operator
+set an alarm a minute or two ahead and let it ring, then pressed Volume Up and Volume Down
+a few times each: the screen stayed amber, the speaker kept looping and the vibrator kept
+pulsing. Power ended the ring. The image was left on the phone.
