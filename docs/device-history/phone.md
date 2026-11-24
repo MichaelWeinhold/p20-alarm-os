@@ -2306,3 +2306,26 @@ With cpu0 and cpu4 set to `powersave`, cpu0 ran at 480 MHz and the same frame to
 **Rasterising is two thirds of the cost.** A second binary, `d75d732b…733e`, rasterised ten
 digits at the alarm's size, 165712 box pixels, in 4.33 ms, and blended them in 2.19 ms:
 26 ns and 13 ns per box pixel.
+
+## 2026-11-24 — the figures in Inter Light, for issue 104
+
+From TWRP 3.7.0_9-0 over `adb`, about 13:00 UTC. Two throwaway binaries, built outside the
+repository with `alarmd`'s release profile for `aarch64-unknown-linux-musl`, called
+`render` at 1080×2280 for the alarm screen with four saved alarms, 19:37 and 06:45 active.
+Each ran from `/tmp`, pinned to cpu0 with `taskset 01`, averaged over 50 frames, three runs
+each, and was deleted afterwards. cpu0's governor read `performance` at 1709 MHz.
+
+| `alarm-core` at | Binary sha256 | `render` |
+|---|---|---|
+| `c3c8d1a`, seven segments | `fce96eb2…ea27` | 9.17–9.28 ms |
+| `67e3711`, Inter Light | `9205c0ac…b5e7` | 30.10–30.17 ms |
+
+**The figures cost about 21 ms per frame**, and `render` stays under ADR 0016, D7's 33 ms,
+so its glyph cache stays rejected. D7 estimated 28 ms.
+
+**`alarmd` at `67e3711` is 632680 bytes**, sha256
+`89567298061c03ece5172e61a0215710a21b19198f928ca56c36e043a91d551f`; `main` at `c3c8d1a`
+builds to 578096, so the type adds 54584 bytes. It was copied over `/init` on `system` at
+13:07 UTC, replacing issue 92's `dda6d763…f5041`. `init.rom` still hashed `e8e2768e…78ef`,
+`misc`'s first 32 bytes read zero, and the RTC read 1795525656 against the Mac's
+1795525658, before `adb reboot` at 13:07:42 UTC.
