@@ -1,6 +1,6 @@
 # 16. Rasterise light type and icons on the phone
 
-- **Status:** Accepted
+- **Status:** Accepted; D2 amended for the figure height by issue 104
 - **Date:** 2026-11-23
 - **Issue:** #95
 
@@ -82,6 +82,12 @@ A figure's height is the digit height the layout already gives, `DIGIT_HEIGHT_UN
 units. Inter's default figures are proportional, `1` at 703 units of advance and `0` at
 1217. So each glyph is centred in the `DIGIT_UNITS`-wide cell it fills today, and the
 time does not shift as it changes.
+
+**Amended by issue 104**: at `DIGIT_HEIGHT_UNITS`, seven units, `4` is 5.29 units wide and
+`0` 4.95, past the five-unit pitch, so `04` overlaps. A figure is six units tall,
+centred in the seven-unit cell, which leaves `44` a 0.46-unit gap; the cells and `target`
+do not change. `:` and `-` are centred on the figures' middle, as Inter's case forms
+would place them with the layout features dropped.
 
 ### D3. The icons are Material Symbols Outlined, drawn the same way
 

@@ -8,5 +8,9 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[dependencies]
+ab_glyph_rasterizer = "0.1.10"
+ttf-parser = { version = "0.25.1", default-features = false, features = ["std"] }
+
 [lints]
 workspace = true
