@@ -1,4 +1,5 @@
 use crate::battery::{Gauge, Level};
+use crate::glyph::{self, Align, Place};
 use crate::time::{Countdown, TimeOfDay};
 
 pub const BACKGROUND: Colour = Colour(0x00_0000);
@@ -10,6 +11,7 @@ pub const DIM: Colour = Colour(0x63_6366);
 const UNITS_ACROSS: usize = 21;
 const DIGIT_UNITS: usize = 4;
 const DIGIT_HEIGHT_UNITS: usize = 7;
+const FIGURE_HEIGHT_UNITS: usize = 6;
 const MARK_GAP_UNITS: usize = 2;
 const MARK_HEIGHT_UNITS: usize = 2;
 const SYMBOL_UNITS: usize = 13;
@@ -24,7 +26,6 @@ const ROW_UNITS: usize = 8;
 const SECTION_GAP_UNITS: usize = 3;
 const COLON_UNITS: usize = 2 * (DIGIT_UNITS + 1);
 const MINUTE_UNITS: usize = COLON_UNITS + 2;
-const DASH: u8 = 0b100_0000;
 const STROKE_PARTS: usize = 3;
 const ARROW_UNITS: usize = 2;
 const ARROW_GAP_UNITS: usize = 2;
@@ -76,11 +77,6 @@ const SUN: [&str; DIGIT_HEIGHT_UNITS] = [
 ];
 const POWER_OFF_ROW: usize = 0;
 const LIT_ROW: usize = 1;
-
-const SEGMENTS: [u8; 10] = [
-    0b011_1111, 0b000_0110, 0b101_1011, 0b100_1111, 0b110_0110, 0b110_1101, 0b111_1101, 0b000_0111,
-    0b111_1111, 0b110_1111,
-];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Colour(pub u32);
@@ -227,6 +223,28 @@ impl Frame {
             self.pixels[start + x.min(right)..start + right].fill(colour);
         }
     }
+
+    fn blend(&mut self, x: usize, y: usize, colour: Colour, alpha: u8) {
+        if x >= self.size.width || y >= self.size.height || alpha == 0 {
+            return;
+        }
+        let pixel = &mut self.pixels[y * self.size.width + x];
+        *pixel = if alpha == u8::MAX {
+            colour
+        } else {
+            mixed(colour, *pixel, alpha)
+        };
+    }
+}
+
+fn mixed(over: Colour, under: Colour, alpha: u8) -> Colour {
+    let above = u32::from(alpha);
+    let below = u32::from(u8::MAX) - above;
+    Colour([16, 8, 0].into_iter().fold(0, |sum, shift| {
+        let top = (over.0 >> shift) & 0xff;
+        let bottom = (under.0 >> shift) & 0xff;
+        sum | ((top * above + bottom * below) / 0xff) << shift
+    }))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -350,32 +368,32 @@ fn slanted(
     }
 }
 
-fn digit(frame: &mut Frame, x: usize, y: usize, unit: usize, value: u8, colour: Colour) {
-    segmented(frame, x, y, unit, SEGMENTS[usize::from(value % 10)], colour);
+fn glyph(
+    frame: &mut Frame,
+    character: char,
+    (x, y): (usize, usize),
+    across: usize,
+    unit: usize,
+    colour: Colour,
+) {
+    let align = match character {
+        ':' | '-' => Align::Middle,
+        _ => Align::Baseline,
+    };
+    let place = Place {
+        centre2: 2 * x + across,
+        middle2: 2 * y + DIGIT_HEIGHT_UNITS * unit,
+        height: FIGURE_HEIGHT_UNITS * unit,
+        align,
+    };
+    glyph::rasterise(character, place, |left, top, alpha| {
+        frame.blend(left, top, colour, alpha);
+    });
 }
 
-fn segmented(frame: &mut Frame, x: usize, y: usize, unit: usize, segments: u8, colour: Colour) {
-    let thick = stroke(unit);
-    let width = DIGIT_UNITS * unit;
-    let height = DIGIT_HEIGHT_UNITS * unit;
-    let right = x + width - thick;
-    let middle = y + (height - thick) / 2;
-    let upper = middle + thick - y;
-    let lower = y + height - middle;
-    let bars = [
-        (x, y, width, thick),
-        (right, y, thick, upper),
-        (right, middle, thick, lower),
-        (x, y + height - thick, width, thick),
-        (x, middle, thick, lower),
-        (x, y, thick, upper),
-        (x, middle, width, thick),
-    ];
-    for (index, (left, top, across, down)) in bars.into_iter().enumerate() {
-        if segments & (1 << index) != 0 {
-            frame.fill(left, top, across, down, colour);
-        }
-    }
+fn digit(frame: &mut Frame, x: usize, y: usize, unit: usize, value: u8, colour: Colour) {
+    let character = char::from(b'0' + value % 10);
+    glyph(frame, character, (x, y), DIGIT_UNITS * unit, unit, colour);
 }
 
 fn pair(frame: &mut Frame, (x, y): (usize, usize), unit: usize, value: u8, colour: Colour) {
@@ -390,11 +408,8 @@ fn pair(frame: &mut Frame, (x, y): (usize, usize), unit: usize, value: u8, colou
     );
 }
 
-fn colon(frame: &mut Frame, (x, y): (usize, usize), unit: usize, colour: Colour) {
-    let thick = stroke(unit);
-    let inset = (unit - thick) / 2;
-    frame.fill(x + inset, y + 2 * unit + inset, thick, thick, colour);
-    frame.fill(x + inset, y + 4 * unit + inset, thick, thick, colour);
+fn colon(frame: &mut Frame, at: (usize, usize), unit: usize, colour: Colour) {
+    glyph(frame, ':', at, unit, unit, colour);
 }
 
 fn of_day(time: TimeOfDay) -> (u8, u8) {
@@ -430,7 +445,14 @@ fn figures(
             MINUTE_UNITS,
             MINUTE_UNITS + DIGIT_UNITS + 1,
         ] {
-            segmented(frame, x + figure * unit, y, unit, DASH, colour);
+            glyph(
+                frame,
+                '-',
+                (x + figure * unit, y),
+                DIGIT_UNITS * unit,
+                unit,
+                colour,
+            );
         }
         return;
     };
@@ -439,16 +461,7 @@ fn figures(
 }
 
 fn percent_sign(frame: &mut Frame, x: usize, y: usize, unit: usize, colour: Colour) {
-    frame.fill(x, y, unit, unit, colour);
-    frame.fill(x + 3 * unit, y + 6 * unit, unit, unit, colour);
-    slanted(
-        frame,
-        (x, y),
-        (PERCENT_UNITS * unit, DIGIT_HEIGHT_UNITS * unit),
-        unit,
-        true,
-        colour,
-    );
+    glyph(frame, '%', (x, y), (PERCENT_UNITS + 1) * unit, unit, colour);
 }
 
 fn battery_symbol(
@@ -839,19 +852,49 @@ mod tests {
         height: 2280,
     };
 
+    const PALETTE: [(Colour, char); 5] = [
+        (BACKGROUND, '.'),
+        (FOREGROUND, '#'),
+        (WARNING, '!'),
+        (RINGING, '~'),
+        (DIM, ':'),
+    ];
+
+    fn distance(one: Colour, other: Colour) -> u32 {
+        [16, 8, 0]
+            .into_iter()
+            .map(|shift| ((one.0 >> shift) & 0xff).abs_diff((other.0 >> shift) & 0xff))
+            .map(|step| step * step)
+            .sum()
+    }
+
+    fn nearest(colour: Colour) -> char {
+        PALETTE
+            .into_iter()
+            .min_by_key(|&(palette, _)| distance(colour, palette))
+            .map_or('.', |(_, character)| character)
+    }
+
+    fn blended(pixel: Colour, colour: Colour) -> bool {
+        let strongest = [16, 8, 0]
+            .into_iter()
+            .max_by_key(|&shift| (colour.0 >> shift) & 0xff)
+            .unwrap_or(0);
+        let full = (colour.0 >> strongest) & 0xff;
+        let part = (pixel.0 >> strongest) & 0xff;
+        let guess = (part * 0xff).checked_div(full).unwrap_or(0);
+        (guess.saturating_sub(1)..=guess + 2)
+            .filter_map(|alpha| u8::try_from(alpha).ok())
+            .any(|alpha| alpha > 0 && mixed(colour, BACKGROUND, alpha) == pixel)
+    }
+
     fn picture(frame: &Frame) -> String {
         (0..frame.size().height)
             .map(|y| {
                 frame
                     .row(y)
                     .iter()
-                    .map(|&colour| match colour {
-                        FOREGROUND => '#',
-                        WARNING => '!',
-                        RINGING => '~',
-                        DIM => ':',
-                        _ => '.',
-                    })
+                    .map(|&colour| nearest(colour))
                     .chain(['\n'])
                     .collect::<String>()
             })
@@ -1124,6 +1167,44 @@ mod tests {
     }
 
     #[test]
+    fn the_clock_is_drawn_with_grey_edges() -> Outcome {
+        let frame = render(PANEL, &face(Some(0), false, charged(80)?)?);
+        let layout = layout(PANEL).ok_or("no layout")?;
+        let (left, top) = layout.clock;
+        let across = UNITS_ACROSS * layout.unit;
+        let down = DIGIT_HEIGHT_UNITS * layout.unit;
+        let clock: Vec<Colour> = (top..top + down)
+            .flat_map(|y| frame.row(y)[left..left + across].iter().copied())
+            .collect();
+        assert!(clock.contains(&FOREGROUND));
+        assert!(
+            clock
+                .iter()
+                .any(|&pixel| pixel != FOREGROUND && blended(pixel, FOREGROUND))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_glyph_blends_over_the_colour_beneath_it() {
+        let mut frame = Frame::filled(
+            Size {
+                width: 1,
+                height: 1,
+            },
+            RINGING,
+        );
+        frame.blend(0, 0, BACKGROUND, 0);
+        assert_eq!(frame.row(0), [RINGING]);
+        frame.blend(0, 0, BACKGROUND, 0x80);
+        assert_eq!(frame.row(0), [Colour(0x7f_4f04)]);
+        frame.blend(0, 0, FOREGROUND, u8::MAX);
+        assert_eq!(frame.row(0), [FOREGROUND]);
+        frame.blend(1, 0, BACKGROUND, u8::MAX);
+        assert_eq!(frame.row(0), [FOREGROUND]);
+    }
+
+    #[test]
     fn every_digit_has_its_own_shape() -> Outcome {
         let mut seen = Vec::new();
         for value in 0..10 {
@@ -1194,7 +1275,7 @@ mod tests {
             );
             assert!(bar.iter().any(|&(_, _, lit)| lit == DIM));
             assert_ne!(status, []);
-            assert!(status.iter().all(|&(_, _, lit)| lit == colour));
+            assert!(status.iter().all(|&(_, _, lit)| blended(lit, colour)));
             assert!(
                 status
                     .iter()
@@ -1204,7 +1285,7 @@ mod tests {
             assert!(rest.iter().all(|&(x, _, _)| x > 40 && x < PANEL.width - 40));
             assert!(
                 rest.iter()
-                    .all(|&(_, _, lit)| lit == FOREGROUND || lit == DIM)
+                    .all(|&(_, _, lit)| blended(lit, FOREGROUND) || blended(lit, DIM))
             );
         }
         Ok(())

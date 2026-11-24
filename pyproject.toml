@@ -8,6 +8,7 @@ dependencies = []
 [dependency-groups]
 dev = [
     "coverage>=7.17.0",
+    "fonttools>=4.68.0",
     "mypy>=2.3",
     "pytest>=9.1",
     "pytest-randomly>=5.0.0",
@@ -63,3 +64,7 @@ timeout = 5
 source = ["scripts", ".claude/hooks"]
 dynamic_context = "test_function"
 data_file = ".coverage"
+
+[[tool.mypy.overrides]]
+module = ["fontTools", "fontTools.*"]
+ignore_missing_imports = true
