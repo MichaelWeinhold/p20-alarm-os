@@ -146,7 +146,7 @@ mod tests {
     fn a_touch_or_a_volume_key_leaves_a_dark_panel_dark() {
         let mut light = dark();
         light.heard(TOUCH, Ring::Quiet, at(30));
-        light.heard(VOLUME, Ring::Snoozed(at(300)), at(31));
+        light.heard(VOLUME, Ring::Quiet, at(31));
         assert_eq!(light, dark());
     }
 
@@ -171,12 +171,10 @@ mod tests {
     }
 
     #[test]
-    fn a_press_that_dismisses_or_ends_a_snooze_leaves_the_panel_lit() {
+    fn a_press_that_dismisses_a_ring_leaves_the_panel_lit() {
         let mut light = Light::lit_at(START, LIT_SECONDS);
         light.heard(POWER, Ring::Ringing, at(5));
         assert_eq!(light.seconds_left(at(5)), Some(10));
-        light.heard(POWER, Ring::Snoozed(at(300)), at(6));
-        assert_eq!(light.seconds_left(at(6)), Some(10));
     }
 
     #[test]

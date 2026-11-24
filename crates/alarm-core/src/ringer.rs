@@ -6,15 +6,13 @@ use crate::face::{
 use crate::hardware::{Clock, Display, HardwareError, Input};
 use crate::input::{InputEvent, Key};
 use crate::light::{LIT_SECONDS, Light, next_lit_seconds};
-use crate::time::{Countdown, TimeOfDay, UnixSeconds, UtcOffset, start_of_minute};
-
-pub const SNOOZE_SECONDS: i64 = 9 * 60;
+use crate::time::{Countdown, TimeOfDay, UnixSeconds, UtcOffset};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Ring {
     Quiet,
     Ringing,
-    Snoozed(UnixSeconds),
+    Held(UnixSeconds),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -194,8 +192,7 @@ impl Ringer {
     #[must_use]
     pub fn held(&self) -> Ring {
         match (self.ring(), self.running) {
-            (Ring::Quiet, Some(run)) => Ring::Snoozed(run.ends),
-            (Ring::Snoozed(until), Some(run)) => Ring::Snoozed(until.min(run.ends)),
+            (Ring::Quiet, Some(run)) => Ring::Held(run.ends),
             (ring, _) => ring,
         }
     }
@@ -282,11 +279,6 @@ impl Ringer {
             self.ring = Ring::Ringing;
             self.next = Some(after(alarm, now, offset));
         }
-        if let Ring::Snoozed(until) = self.ring
-            && now >= until
-        {
-            self.ring = Ring::Ringing;
-        }
         if let Some(run) = self.running
             && now >= run.ends
         {
@@ -298,15 +290,9 @@ impl Ringer {
         }
     }
 
-    pub fn pressed(&mut self, key: Key, now: UnixSeconds) {
-        match (self.ring, key) {
-            (Ring::Ringing, Key::VolumeUp | Key::VolumeDown) => {
-                self.ring = Ring::Snoozed(UnixSeconds(start_of_minute(now).0 + SNOOZE_SECONDS));
-            }
-            (Ring::Ringing | Ring::Snoozed(_), Key::Power) => self.ring = Ring::Quiet,
-            _ => {}
-        }
+    pub fn pressed(&mut self, key: Key) {
         if key == Key::Power {
+            self.ring = Ring::Quiet;
             self.rung = None;
         }
     }
@@ -457,7 +443,7 @@ pub fn listen(
     let ring = ringer.ring();
     if light.lit() {
         match event {
-            InputEvent::Press(key) => ringer.pressed(key, now),
+            InputEvent::Press(key) => ringer.pressed(key),
             _ if ring == Ring::Ringing => {}
             InputEvent::Touch { x, y } => {
                 let touched = target(size, light.screen(), x, y);
@@ -505,7 +491,10 @@ mod tests {
     const TIMER_TAB: [InputEvent; 2] = tap(540, 2200);
     const SETTINGS_TAB: [InputEvent; 2] = tap(900, 2200);
     const START: [InputEvent; 2] = tap(540, 580);
-    const SNOOZE: [InputEvent; 1] = [InputEvent::Press(Key::VolumeDown)];
+    const VOLUME: [InputEvent; 2] = [
+        InputEvent::Press(Key::VolumeUp),
+        InputEvent::Press(Key::VolumeDown),
+    ];
     const DISMISS: [InputEvent; 1] = [InputEvent::Press(Key::Power)];
 
     const fn tap(x: usize, y: usize) -> [InputEvent; 2] {
@@ -650,7 +639,7 @@ mod tests {
     }
 
     #[test]
-    fn an_alarm_set_on_the_slider_rings_is_snoozed_rings_again_and_is_dismissed()
+    fn an_alarm_set_on_the_slider_rings_until_power_dismisses_it()
     -> Result<(), Box<dyn std::error::Error>> {
         let clock = FakeClock::at(6, 58, 20);
         let mut ringer = Ringer::listed(Vec::new(), TimeOfDay::new(7, 59)?);
@@ -695,20 +684,9 @@ mod tests {
         );
 
         clock.pass(15);
-        drain(&mut FakeInput::with(&[&SNOOZE]), &clock, &mut ringer)?;
-        let snoozed_until = UnixSeconds(20_768 * 86_400 + 7 * 3_600 + 9 * 60);
-        assert_eq!(ringer.ring(), Ring::Snoozed(snoozed_until));
-        clock.pass(8 * 60 + 24);
-        show(
-            &clock,
-            UtcOffset::UTC,
-            &mut ringer,
-            &mut always(),
-            Gauge::UNREAD,
-            &mut display,
-        )?;
-        assert_eq!(ringer.ring(), Ring::Snoozed(snoozed_until));
-        clock.pass(1);
+        drain(&mut FakeInput::with(&[&VOLUME]), &clock, &mut ringer)?;
+        assert_eq!(ringer.ring(), Ring::Ringing);
+        clock.pass(9 * 60);
         show(
             &clock,
             UtcOffset::UTC,
@@ -732,7 +710,7 @@ mod tests {
             &mut display,
         )?;
         assert_eq!(ringer.ring(), Ring::Quiet);
-        assert_eq!(display.shown.len(), 5);
+        assert_eq!(display.shown.len(), 4);
         Ok(())
     }
 
@@ -768,21 +746,19 @@ mod tests {
     }
 
     #[test]
-    fn a_tap_on_the_active_alarm_disarms_a_snooze() -> Result<(), Box<dyn std::error::Error>> {
+    fn a_volume_key_leaves_a_ringing_alarm_ringing() -> Result<(), Box<dyn std::error::Error>> {
         let clock = FakeClock::at(6, 59, 0);
         let mut ringer = ringer(7, 0)?;
         drain(&mut FakeInput::with(&[&FIRST]), &clock, &mut ringer)?;
         clock.pass(60);
         ringer.tick(clock.now()?, UtcOffset::UTC);
-        drain(
-            &mut FakeInput::with(&[&SNOOZE, &FIRST]),
-            &clock,
-            &mut ringer,
-        )?;
-        assert_eq!(ringer.ring(), Ring::Quiet);
-        assert!(!ringer.armed());
+        drain(&mut FakeInput::with(&[&VOLUME]), &clock, &mut ringer)?;
+        assert_eq!(ringer.ring(), Ring::Ringing);
+        assert!(ringer.armed());
         clock.pass(9 * 60);
         ringer.tick(clock.now()?, UtcOffset::UTC);
+        assert_eq!(ringer.ring(), Ring::Ringing);
+        drain(&mut FakeInput::with(&[&DISMISS]), &clock, &mut ringer)?;
         assert_eq!(ringer.ring(), Ring::Quiet);
         Ok(())
     }
@@ -793,7 +769,7 @@ mod tests {
         let clock = FakeClock::at(6, 59, 0);
         let mut ringer = ringer(7, 0)?;
         drain(
-            &mut FakeInput::with(&[&SNOOZE, &FIRST, &DISMISS]),
+            &mut FakeInput::with(&[&VOLUME, &FIRST, &DISMISS]),
             &clock,
             &mut ringer,
         )?;
@@ -895,15 +871,13 @@ mod tests {
     }
 
     #[test]
-    fn a_press_on_a_dark_panel_lights_it_and_leaves_a_snooze_alone()
+    fn a_press_on_a_dark_panel_lights_it_and_leaves_a_ring_ringing()
     -> Result<(), Box<dyn std::error::Error>> {
         let clock = FakeClock::at(6, 59, 0);
         let mut ringer = ringer(7, 0)?;
         drain(&mut FakeInput::with(&[&FIRST]), &clock, &mut ringer)?;
         clock.pass(60);
         ringer.tick(clock.now()?, UtcOffset::UTC);
-        drain(&mut FakeInput::with(&[&SNOOZE]), &clock, &mut ringer)?;
-        let snoozed = ringer.ring();
         let mut light = Light::dark(LIT_SECONDS);
         let mut input = FakeInput::with(&[&DISMISS]);
         listen(
@@ -915,7 +889,7 @@ mod tests {
             &mut ringer,
             &mut light,
         )?;
-        assert_eq!(ringer.ring(), snoozed);
+        assert_eq!(ringer.ring(), Ring::Ringing);
         assert!(light.lit());
         let mut display = FakeDisplay::default();
         show(
@@ -1132,7 +1106,7 @@ mod tests {
         )?;
         let ends = UnixSeconds(clock.now()?.0 + 300);
         assert_eq!(ringer.running_until(), Some(ends));
-        assert_eq!(ringer.held(), Ring::Snoozed(ends));
+        assert_eq!(ringer.held(), Ring::Held(ends));
         clock.pass(1);
         let face = ringer.face(clock.now()?, UtcOffset::UTC, Gauge::UNREAD, Screen::Timer);
         assert_eq!(face.left, Some(Countdown::new(4, 59)?));
@@ -1147,7 +1121,7 @@ mod tests {
         assert!(face.ringing);
         assert_eq!(face.rung, Some(Countdown::new(5, 0)?));
         drain_lit(
-            &mut FakeInput::with(&[&SNOOZE, &START]),
+            &mut FakeInput::with(&[&VOLUME, &START]),
             &clock,
             &mut ringer,
             &mut light,
@@ -1202,7 +1176,7 @@ mod tests {
     }
 
     #[test]
-    fn a_running_timer_survives_power_and_holds_the_earlier_of_itself_and_a_snooze()
+    fn a_running_timer_survives_power_and_holds_the_phone_after_a_dismissed_alarm()
     -> Result<(), Box<dyn std::error::Error>> {
         let clock = FakeClock::at(6, 59, 0);
         let mut ringer = timed(&[(5, 0)])?;
@@ -1216,9 +1190,11 @@ mod tests {
         clock.pass(60);
         ringer.tick(clock.now()?, UtcOffset::UTC);
         assert_eq!(ringer.held(), Ring::Ringing);
-        ringer.pressed(Key::VolumeDown, clock.now()?);
-        assert_eq!(ringer.ring(), Ring::Snoozed(FakeClock::at(7, 9, 0).now()?));
-        assert_eq!(ringer.held(), Ring::Snoozed(ends));
+        ringer.pressed(Key::VolumeDown);
+        assert_eq!(ringer.held(), Ring::Ringing);
+        ringer.pressed(Key::Power);
+        assert_eq!(ringer.ring(), Ring::Quiet);
+        assert_eq!(ringer.held(), Ring::Held(ends));
         Ok(())
     }
 

@@ -45,9 +45,7 @@ impl Vibration {
     ) -> Result<(), HardwareError> {
         match (ring, self.state) {
             (Ring::Ringing, State::Pulsing(next)) if now < next => Ok(()),
-            (Ring::Ringing, State::Failed) | (Ring::Quiet | Ring::Snoozed(_), State::Still) => {
-                Ok(())
-            }
+            (Ring::Ringing, State::Failed) | (Ring::Quiet | Ring::Held(_), State::Still) => Ok(()),
             (Ring::Ringing, State::Still | State::Pulsing(_)) => {
                 match vibrator.vibrate(PULSE_MILLISECONDS) {
                     Ok(()) => {
@@ -61,11 +59,11 @@ impl Vibration {
                     }
                 }
             }
-            (Ring::Quiet | Ring::Snoozed(_), State::Pulsing(_)) => {
+            (Ring::Quiet | Ring::Held(_), State::Pulsing(_)) => {
                 self.state = State::Still;
                 vibrator.stop()
             }
-            (Ring::Quiet | Ring::Snoozed(_), State::Failed) => {
+            (Ring::Quiet | Ring::Held(_), State::Failed) => {
                 self.state = State::Still;
                 Ok(())
             }
@@ -78,7 +76,7 @@ mod tests {
     use super::*;
 
     const START: UnixSeconds = UnixSeconds(1_794_512_278);
-    const SNOOZED: Ring = Ring::Snoozed(UnixSeconds(1_794_512_818));
+    const HELD: Ring = Ring::Held(UnixSeconds(1_794_512_818));
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum Call {
@@ -135,7 +133,7 @@ mod tests {
         let mut vibrator = FakeVibrator::default();
         let mut vibration = Vibration::still();
         vibration.tick(at(0), Ring::Quiet, &mut vibrator)?;
-        vibration.tick(at(5), SNOOZED, &mut vibrator)?;
+        vibration.tick(at(5), HELD, &mut vibrator)?;
         assert_eq!(vibrator.calls, []);
         assert_eq!(vibration.seconds_left(at(5)), None);
         Ok(())
@@ -158,8 +156,8 @@ mod tests {
     }
 
     #[test]
-    fn a_snooze_or_a_dismissal_stops_the_vibrator_at_once() -> Result<(), HardwareError> {
-        for quiet in [SNOOZED, Ring::Quiet] {
+    fn a_dismissal_stops_the_vibrator_at_once() -> Result<(), HardwareError> {
+        for quiet in [Ring::Quiet, HELD] {
             let mut vibrator = FakeVibrator::default();
             let mut vibration = Vibration::still();
             vibration.tick(at(0), Ring::Ringing, &mut vibrator)?;
@@ -173,11 +171,11 @@ mod tests {
     }
 
     #[test]
-    fn a_snoozed_alarm_pulses_again_when_it_rings_again() -> Result<(), HardwareError> {
+    fn a_dismissed_alarm_pulses_again_when_it_rings_again() -> Result<(), HardwareError> {
         let mut vibrator = FakeVibrator::default();
         let mut vibration = Vibration::still();
         vibration.tick(at(0), Ring::Ringing, &mut vibrator)?;
-        vibration.tick(at(1), SNOOZED, &mut vibrator)?;
+        vibration.tick(at(1), Ring::Quiet, &mut vibrator)?;
         vibration.tick(at(540), Ring::Ringing, &mut vibrator)?;
         assert_eq!(vibrator.calls, [PULSE, Call::Stop, PULSE]);
         Ok(())

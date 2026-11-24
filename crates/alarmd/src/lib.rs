@@ -1960,7 +1960,7 @@ mod tests {
                 wait_seconds: PERIOD_SECONDS.unsigned_abs(),
             }
         );
-        ringer.pressed(Key::Power, clock.now()?);
+        ringer.pressed(Key::Power);
         let step = pulse(&clock, &ringer, &mut buzz, 10);
         assert_eq!(step.wait_seconds, 10);
         let vibrator = buzz.vibrator.as_ref().map_err(Clone::clone)?;
@@ -2056,7 +2056,7 @@ mod tests {
         pulse(&clock, &ringer, &mut buzz, 10);
         pulse(&at(7, 0, 2), &ringer, &mut buzz, 10);
         assert!(buzz.sound.playing());
-        ringer.pressed(Key::Power, clock.now()?);
+        ringer.pressed(Key::Power);
         let step = pulse(&clock, &ringer, &mut buzz, 10);
         assert_eq!(step.log, Vec::<String>::new());
         assert!(!buzz.sound.playing());
@@ -2066,16 +2066,20 @@ mod tests {
     }
 
     #[test]
-    fn a_snooze_stops_the_speaker() -> Result<(), Box<dyn std::error::Error>> {
+    fn a_volume_key_leaves_the_speaker_and_the_vibrator_on()
+    -> Result<(), Box<dyn std::error::Error>> {
         let clock = at(7, 0, 0);
         let mut ringer = ringing_at(&clock)?;
         let mut buzz = buzz(Ok(FakeVibrator::default()));
         pulse(&clock, &ringer, &mut buzz, 10);
-        ringer.pressed(Key::VolumeUp, clock.now()?);
-        assert!(matches!(ringer.ring(), Ring::Snoozed(_)));
-        pulse(&clock, &ringer, &mut buzz, 10);
+        ringer.pressed(Key::VolumeUp);
+        ringer.pressed(Key::VolumeDown);
+        assert_eq!(ringer.ring(), Ring::Ringing);
+        pulse(&at(7, 0, 2), &ringer, &mut buzz, 10);
+        assert!(buzz.sound.playing());
+        assert!(buzz.vibration.pulsing());
         let speaker = buzz.speaker.as_ref().map_err(Clone::clone)?;
-        assert_eq!((speaker.starts, speaker.stops), (1, 1));
+        assert_eq!((speaker.starts, speaker.stops), (1, 0));
         Ok(())
     }
 

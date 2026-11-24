@@ -49,7 +49,7 @@ impl Window {
         let due = match ring {
             Ring::Quiet => next,
             Ring::Ringing => Some(now),
-            Ring::Snoozed(until) => Some(next.map_or(until, |next| next.min(until))),
+            Ring::Held(until) => Some(next.map_or(until, |next| next.min(until))),
         };
         if now < ends {
             return Answer::Suspend(due.map_or(ends, |due| due.min(ends)));
@@ -195,14 +195,14 @@ mod tests {
     }
 
     #[test]
-    fn a_snoozed_alarm_keeps_it_suspended_until_the_snooze_ends() {
+    fn a_running_timer_keeps_it_suspended_until_it_ends() {
         let window = dark_at(0);
         assert_eq!(
-            window.answer(at(120), Ring::Snoozed(at(540)), Some(at(86_400))),
+            window.answer(at(120), Ring::Held(at(540)), Some(at(86_400))),
             Answer::Suspend(at(540))
         );
         assert_eq!(
-            window.answer(at(60), Ring::Snoozed(at(540)), None),
+            window.answer(at(60), Ring::Held(at(540)), None),
             Answer::Suspend(at(120))
         );
     }
