@@ -2379,3 +2379,18 @@ at 14:17:20 UTC.
 set an alarm a minute or two ahead and let it ring, then pressed Volume Up and Volume Down
 a few times each: the screen stayed amber, the speaker kept looping and the vibrator kept
 pulsing. Power ended the ring. The image was left on the phone.
+
+## 2026-11-24 — the settings screen reboots into TWRP, for issue 118
+
+**`alarmd` at `f4a7168` is 634440 bytes**, sha256
+`2f38bdfe9f8384d92d4dba49ce0b4c246921fea8097603e24dba86564751e35e`, 384 bytes less than
+issue 113's. From TWRP 3.7.0_9-0 it was copied over `/init` on `system`, replacing issue
+113's `72f13c7c…bf68`. `init.rom` still hashed `e8e2768e…78ef` and `misc`'s first 32 bytes
+read zero before `adb reboot`.
+
+**A first tap on the recovery row turns it red, and a second reboots into TWRP.** The
+operator opened the settings screen and tapped the wrench row twice; TWRP came up on USB
+at 14:55:16 UTC. Its pstore held `rebooting into recovery` as `alarmd`'s last line, 5 s
+after `panel lit`, and `misc`'s first 32 bytes still read zero: `reboot(2)` into recovery
+writes no BCB. An `adb reboot` from TWRP then brought no TWRP back within 150 s and left
+nothing on USB, `alarmd` running again. The image was left on the phone.

@@ -5,7 +5,8 @@ use std::time::Duration;
 
 use alarm_core::hardware::{Display, HardwareError};
 use alarm_core::light::Light;
-use alarm_core::ringer::listen;
+use alarm_core::ringer::{Ringer, listen};
+use alarm_core::settings::Choices;
 use alarm_core::sound::Sound;
 use alarm_core::time::{TimeOfDay, UtcOffset};
 use alarm_core::vibration::Vibration;
@@ -20,7 +21,7 @@ use modem::linux::Balong;
 use pid1::kmsg;
 use pid1::linux::{into_recovery, mounted};
 use power::Cmdline;
-use power::linux::PoweroffAlarm;
+use power::linux::{PoweroffAlarm, RecoveryReboot};
 use speaker::linux::AlsaSpeaker;
 use storage::Partition;
 use suspend::{SysfsSuspend, SysfsWakeAlarm};
@@ -29,7 +30,7 @@ use vibrator::LedVibrator;
 use crate::{
     ALARM_HOUR, ALARM_MINUTE, AfterModem, BRIGHTNESS, Booted, Buzz, LOCAL_OFFSET_SECONDS, Lamp,
     Restored, Sleep, booted, cable_in, change, choices, minute, modem_booted, persisted, pulse,
-    rest, restored, warned,
+    recover, rest, restored, warned,
 };
 
 const FIRMWARE_POLL: Duration = Duration::from_millis(250);
@@ -161,6 +162,24 @@ fn warning(log: &mut Option<File>) -> Lamp<RedLed> {
     }
 }
 
+fn answered(
+    log: &mut Option<File>,
+    before: &Ringer,
+    ringer: &mut Ringer,
+    settings: &mut Result<Partition, HardwareError>,
+    saved: &mut Choices,
+) {
+    if let Some(line) = change(before, ringer) {
+        logged(log, &line);
+    }
+    if ringer.take_recovery() {
+        let current = choices(ringer, saved.offset, saved.window_seconds);
+        recover(settings, saved, current, &mut RecoveryReboot, &mut |line| {
+            logged(log, line);
+        });
+    }
+}
+
 pub fn run() -> ! {
     let mut log = started().ok();
     let (
@@ -247,9 +266,7 @@ pub fn run() -> ! {
             &mut ringer,
             &mut light,
         );
-        if let Some(line) = change(&before, &ringer) {
-            logged(&mut log, &line);
-        }
+        answered(&mut log, &before, &mut ringer, &mut settings, &mut saved);
         if input.absent() != absent {
             absent = input.absent();
             logged(
