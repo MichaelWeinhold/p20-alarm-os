@@ -2329,3 +2329,9 @@ builds to 578096, so the type adds 54584 bytes. It was copied over `/init` on `s
 13:07 UTC, replacing issue 92's `dda6d763…f5041`. `init.rom` still hashed `e8e2768e…78ef`,
 `misc`'s first 32 bytes read zero, and the RTC read 1795525656 against the Mac's
 1795525658, before `adb reboot` at 13:07:42 UTC.
+
+**The figures are Inter Light on all three screens.** The operator saw the clock, the
+active alarm, the wheels, the saved alarms, the battery's percentage, the timer and the
+lit time drawn thin with smooth edges, nothing overlapping, and taps on the wheels, a saved
+alarm and the tabs landing as before. The operator photographed the alarm, timer and
+settings screens; the photos are kept off the repository. The image was left on the phone.
