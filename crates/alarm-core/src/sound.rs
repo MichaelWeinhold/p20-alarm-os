@@ -28,7 +28,7 @@ impl Sound {
     pub fn tick(&mut self, ring: Ring, speaker: &mut impl Speaker) -> Result<(), HardwareError> {
         match (ring, self.state) {
             (Ring::Ringing, State::Playing | State::Failed)
-            | (Ring::Quiet | Ring::Snoozed(_), State::Quiet) => Ok(()),
+            | (Ring::Quiet | Ring::Held(_), State::Quiet) => Ok(()),
             (Ring::Ringing, State::Quiet) => match speaker.start() {
                 Ok(()) => {
                     self.state = State::Playing;
@@ -39,11 +39,11 @@ impl Sound {
                     Err(error)
                 }
             },
-            (Ring::Quiet | Ring::Snoozed(_), State::Playing) => {
+            (Ring::Quiet | Ring::Held(_), State::Playing) => {
                 self.state = State::Quiet;
                 speaker.stop()
             }
-            (Ring::Quiet | Ring::Snoozed(_), State::Failed) => {
+            (Ring::Quiet | Ring::Held(_), State::Failed) => {
                 self.state = State::Quiet;
                 Ok(())
             }
@@ -56,7 +56,7 @@ mod tests {
     use super::*;
     use crate::time::UnixSeconds;
 
-    const SNOOZED: Ring = Ring::Snoozed(UnixSeconds(1_794_512_818));
+    const HELD: Ring = Ring::Held(UnixSeconds(1_794_512_818));
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum Call {
@@ -107,7 +107,7 @@ mod tests {
         let mut speaker = FakeSpeaker::default();
         let mut sound = Sound::quiet();
         sound.tick(Ring::Quiet, &mut speaker)?;
-        sound.tick(SNOOZED, &mut speaker)?;
+        sound.tick(HELD, &mut speaker)?;
         assert_eq!(speaker.calls, []);
         assert!(!sound.playing());
         Ok(())
@@ -126,8 +126,8 @@ mod tests {
     }
 
     #[test]
-    fn a_snooze_or_a_dismissal_stops_the_sound_at_once() -> Result<(), HardwareError> {
-        for quiet in [SNOOZED, Ring::Quiet] {
+    fn a_dismissal_stops_the_sound_at_once() -> Result<(), HardwareError> {
+        for quiet in [Ring::Quiet, HELD] {
             let mut speaker = FakeSpeaker::default();
             let mut sound = Sound::quiet();
             sound.tick(Ring::Ringing, &mut speaker)?;
@@ -140,11 +140,11 @@ mod tests {
     }
 
     #[test]
-    fn a_snoozed_alarm_sounds_again_when_it_rings_again() -> Result<(), HardwareError> {
+    fn a_dismissed_alarm_sounds_again_when_it_rings_again() -> Result<(), HardwareError> {
         let mut speaker = FakeSpeaker::default();
         let mut sound = Sound::quiet();
         sound.tick(Ring::Ringing, &mut speaker)?;
-        sound.tick(SNOOZED, &mut speaker)?;
+        sound.tick(Ring::Quiet, &mut speaker)?;
         sound.tick(Ring::Ringing, &mut speaker)?;
         assert_eq!(speaker.calls, [Call::Start, Call::Stop, Call::Start]);
         Ok(())

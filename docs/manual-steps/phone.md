@@ -196,7 +196,7 @@ the keys. Never push a file named `recovery`, which asks for TWRP the same way.
 80 %, a bar of alarm, timer and settings tabs. A drag on a wheel sets a time, `+` saves
 it, a tap on a saved alarm makes it active or disarms it, a second tap on its cross, red
 after the first, removes it. A ring turns it amber, pulses the vibrator and loops
-`ringtone.wav` on the speaker; a volume key snoozes 9 minutes, Power dismisses. Try it
+`ringtone.wav` on the speaker until Power dismisses it. Try it
 from the debug shell, pushed to `/mnt`, then swap it in as above, `init` alone over the
 debug `/init`. → `docs/device-history/phone.md`, issues 10, 13, 79, 80 and 92.
 

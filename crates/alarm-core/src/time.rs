@@ -168,11 +168,6 @@ fn wrapped(value: u8, step: i8, modulo: i16) -> u8 {
 }
 
 #[must_use]
-pub fn start_of_minute(now: UnixSeconds) -> UnixSeconds {
-    UnixSeconds(now.0 - now.0.rem_euclid(SECONDS_PER_MINUTE))
-}
-
-#[must_use]
 pub fn seconds_to_next_minute(now: UnixSeconds) -> u64 {
     (SECONDS_PER_MINUTE - now.0.rem_euclid(SECONDS_PER_MINUTE)).unsigned_abs()
 }
@@ -354,13 +349,6 @@ mod tests {
             Countdown::new(3, 0)?
         );
         Ok(())
-    }
-
-    #[test]
-    fn a_minute_starts_on_its_first_second() {
-        assert_eq!(start_of_minute(UnixSeconds(179)), UnixSeconds(120));
-        assert_eq!(start_of_minute(UnixSeconds(120)), UnixSeconds(120));
-        assert_eq!(start_of_minute(UnixSeconds(-1)), UnixSeconds(-60));
     }
 
     #[test]

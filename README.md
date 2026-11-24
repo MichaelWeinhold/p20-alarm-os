@@ -29,12 +29,12 @@ documentation, starting from the vendor kernel rather than from nothing.
 | Battery and charging | **Decided.** The kernel charges under our `/init`; the phone sleeps between uses, lights the panel only when used, and stops a charge at 80 % — [ADR 0007](docs/adr/0007-hold-the-charge-and-leave-charging-to-the-kernel.md) and [ADR 0008](docs/adr/0008-sleep-between-uses-and-charge-to-eighty.md), issues 27 and 39. |
 | Debug shell over USB | **Decided.** A serial shell on a USB gadget, and the kernel log in pstore — [ADR 0009](docs/adr/0009-a-serial-shell-over-usb-and-logs-in-pstore.md), issue 15. Built in P2; `scripts/serial_shell.py` runs a command on it, issue 42. |
 | Clock on screen | **Built and on the phone.** `alarmd` as `/init` draws the local time each minute, issue 10. |
-| Touch and the side keys | **Built and on the phone.** One daily alarm set by touch, ringing on the panel, snoozed by a volume key, dismissed by Power, issue 11. |
+| Touch and the side keys | **Built and on the phone.** One daily alarm set by touch, ringing on the panel until Power dismisses it, issues 11 and 113. |
 | RTC wake and power-off | **Decided.** Suspended for two minutes after a use, then off until the RTC switches it on for the alarm — [ADR 0010](docs/adr/0010-suspend-briefly-then-power-off-until-the-alarm.md), issue 12. |
 | Settings across a power-off | **Decided.** A raw record of two checksummed slots on `reserved4`, a partition the ROM never used — [ADR 0011](docs/adr/0011-keep-the-settings-in-a-raw-record-on-reserved4.md), issue 30. |
 | Alarm sounds | **Decided.** Files on `system`, read-only, the ROM's own used as they are; the settings stay on `reserved4`, with room to spare — [ADR 0014](docs/adr/0014-keep-alarm-sounds-on-system-and-the-settings-on-reserved4.md), issue 82. |
 | Low-battery light | **Decided; built, host-tested.** The LED blinks red at its lowest current while suspended at or below 20 % off the cable; the power model does not change for it — [ADR 0013](docs/adr/0013-blink-the-led-red-while-suspended-on-a-low-battery.md), issues 64 and 76. |
-| Vibration | **Built and on the phone.** A 1 s pulse every 2 s while the alarm rings, stopped at once by a snooze or a dismissal, issue 13. |
+| Vibration | **Built and on the phone.** A 1 s pulse every 2 s while the alarm rings, stopped at once by a dismissal, issue 13. |
 | Speaker | **Decided and proven.** The codec's class-D, after `alarmd` replays the HAL's DSP init recorded under the ROM; sounds are WAV files converted on the host — [ADR 0015](docs/adr/0015-ring-through-the-speaker-after-replaying-the-hals-dsp-init.md), issue 14. |
 | Type and icons | **Decided.** Inter at weight 300 and Material Symbols, rasterised on the phone at the layout's unit and blended into the frame, for about 59 KB of binary — [ADR 0016](docs/adr/0016-rasterise-light-type-and-icons-on-the-phone.md), issue 95. |
 
