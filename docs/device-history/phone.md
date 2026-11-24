@@ -2351,3 +2351,17 @@ arrows, the `+`, the crosses, the play and the stop drawn thin with smooth edges
 on the arrows, the `+`, a saved alarm and its cross, the timer's start row, the switch's
 row, the lit time's row and the tabs landing as before. No photos were taken; the
 operator takes them once the interface is final. The image was left on the phone.
+
+## 2026-11-24 — the wheels' arrows step the right way, for issue 108
+
+**`alarmd` at `bc97446` is 635048 bytes**, sha256
+`eb817803912cefa23970e80cd2c84426f0002f989cb61e76debff6d1d94f3387`, the same size as issue
+105's. From TWRP 3.7.0_9-0 it was copied over `/init` on `system`, replacing issue 105's
+`746f4208…4559`. `init.rom` still hashed `e8e2768e…78ef`, `misc`'s first 32 bytes read
+zero, and the RTC read 1795528188 against the Mac's 1795528191, before `adb reboot` at
+13:49:54 UTC.
+
+**A tap on an up arrow counts up and on a down arrow counts down, on both screens.** The
+operator tapped the hour's up arrow and the minute's down arrow on the alarm screen, and
+the minutes' and seconds' arrows on the timer screen, and each stepped the way its arrow
+points; a drag up still counted up. The image was left on the phone.
