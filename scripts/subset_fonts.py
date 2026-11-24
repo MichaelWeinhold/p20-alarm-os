@@ -23,6 +23,27 @@ class Subset:
 
 
 INTER: Final = Subset("inter-light-figures.ttf", {"wght": 300, "opsz": 32}, "0123456789:%-")
+ICONS: Final[Mapping[str, int]] = {
+    "alarm": 0xE855,
+    "hourglass_empty": 0xE88B,
+    "settings": 0xE8B8,
+    "battery_android_0": 0xF30D,
+    "power_settings_new": 0xF8C7,
+    "light_mode": 0xE518,
+    "add": 0xE145,
+    "close": 0xE5CD,
+    "keyboard_arrow_up": 0xE316,
+    "keyboard_arrow_down": 0xE313,
+    "play_arrow": 0xE037,
+    "stop": 0xE047,
+    "toggle_on": 0xE9F6,
+    "toggle_off": 0xE9F5,
+}
+SYMBOLS: Final = Subset(
+    "material-symbols-light-icons.ttf",
+    {"FILL": 0, "GRAD": 0, "opsz": 48, "wght": 300},
+    "".join(map(chr, ICONS.values())),
+)
 
 
 class FontError(RuntimeError):
@@ -67,7 +88,8 @@ def subset(source: Path, wanted: Subset) -> bytes:
     subsetter.subset(instance)
     absent = sorted(code_points(wanted.text) - mapped(instance))
     if absent:
-        raise FontError(f"{source} has no glyph for {''.join(map(chr, absent))!r}")
+        listed = ", ".join(f"U+{point:04X}" for point in absent)
+        raise FontError(f"{source} has no glyph for {listed}")
     out = io.BytesIO()
     instance.save(out)
     return out.getvalue()
@@ -77,6 +99,7 @@ def parser() -> argparse.ArgumentParser:
     found = argparse.ArgumentParser(prog="subset_fonts.py")
     found.add_argument("--out", type=Path, default=OUT)
     found.add_argument("inter", type=Path)
+    found.add_argument("symbols", type=Path)
     return found
 
 
@@ -84,14 +107,19 @@ def main(argv: list[str]) -> int:
     options = parser().parse_args(argv[1:])
     out: Path = options.out
     inter: Path = options.inter
+    symbols: Path = options.symbols
     try:
-        made = subset(inter, INTER)
-        target = out / INTER.name
-        target.write_bytes(made)
+        made = [
+            (out / wanted.name, subset(source, wanted))
+            for source, wanted in ((inter, INTER), (symbols, SYMBOLS))
+        ]
+        for target, data in made:
+            target.write_bytes(data)
     except (FontError, OSError) as error:
         print(error, file=sys.stderr)
         return 1
-    print(f"{target}: {len(made)} bytes")
+    for target, data in made:
+        print(f"{target}: {len(data)} bytes")
     return 0
 
 

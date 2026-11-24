@@ -1,5 +1,5 @@
 use crate::battery::{Gauge, Level};
-use crate::glyph::{self, Align, Place};
+use crate::glyph::{self, Align, Icon, Place, Square};
 use crate::time::{Countdown, TimeOfDay};
 
 pub const BACKGROUND: Colour = Colour(0x00_0000);
@@ -26,55 +26,19 @@ const ROW_UNITS: usize = 8;
 const SECTION_GAP_UNITS: usize = 3;
 const COLON_UNITS: usize = 2 * (DIGIT_UNITS + 1);
 const MINUTE_UNITS: usize = COLON_UNITS + 2;
-const STROKE_PARTS: usize = 3;
 const ARROW_UNITS: usize = 2;
 const ARROW_GAP_UNITS: usize = 2;
-const SWITCH_UNITS: usize = 13;
-const KNOB_UNITS: usize = 3;
+const ICON_UNITS: usize = 7;
+const BATTERY_UNITS: usize = 14;
+const ICON_EM: usize = 960;
+const BARS: [usize; 3] = [150, 359, 568];
+const BAR_WIDTH: usize = 164;
+const BAR_TOP: usize = 350;
+const BAR_HEIGHT: usize = 260;
 
 pub const SAVED_ALARMS: usize = 4;
 pub const SAVED_TIMERS: usize = 4;
 
-const BELL: [&str; TAB_UNITS] = [
-    "....#....",
-    "...###...",
-    "..#####..",
-    "..#####..",
-    "..#####..",
-    ".#######.",
-    "#########",
-    ".........",
-    "...###...",
-];
-const HOURGLASS: [&str; TAB_UNITS] = [
-    "#########",
-    ".#######.",
-    "..#####..",
-    "...###...",
-    "....#....",
-    "...###...",
-    "..#####..",
-    ".#######.",
-    "#########",
-];
-const GEAR: [&str; TAB_UNITS] = [
-    "...###...",
-    ".#.###.#.",
-    ".#######.",
-    "####.####",
-    "###...###",
-    "####.####",
-    ".#######.",
-    ".#.###.#.",
-    "...###...",
-];
-
-const POWER: [&str; DIGIT_HEIGHT_UNITS] = [
-    "...#...", ".#.#.#.", "#..#..#", "#..#..#", "#.....#", "#.....#", ".#####.",
-];
-const SUN: [&str; DIGIT_HEIGHT_UNITS] = [
-    "#..#..#", ".#...#.", "..###..", "#.###.#", "..###..", ".#...#.", "#..#..#",
-];
 const POWER_OFF_ROW: usize = 0;
 const LIT_ROW: usize = 1;
 
@@ -97,11 +61,11 @@ pub enum Screen {
 impl Screen {
     pub const ALL: [Self; 3] = [Self::Alarm, Self::Timer, Self::Settings];
 
-    fn symbol(self) -> [&'static str; TAB_UNITS] {
+    fn icon(self) -> Icon {
         match self {
-            Self::Alarm => BELL,
-            Self::Timer => HOURGLASS,
-            Self::Settings => GEAR,
+            Self::Alarm => Icon::Alarm,
+            Self::Timer => Icon::Timer,
+            Self::Settings => Icon::Settings,
         }
     }
 }
@@ -262,7 +226,7 @@ struct Layout {
 fn layout(size: Size) -> Option<Layout> {
     let unit = size.width * 9 / 10 / UNITS_ACROSS;
     let alarm_unit = unit / 2;
-    let status_unit = (unit / 4).max(1);
+    let status_unit = (unit / 8).max(1);
     let status_width =
         (FIGURES * (DIGIT_UNITS + 1) + PERCENT_UNITS + SYMBOL_GAP_UNITS + SYMBOL_UNITS)
             * status_unit
@@ -345,27 +309,6 @@ fn sheet(size: Size, layout: &Layout) -> Option<Sheet> {
         wheel_top,
         list_top,
     })
-}
-
-fn stroke(unit: usize) -> usize {
-    (unit / STROKE_PARTS).max(1)
-}
-
-fn slanted(
-    frame: &mut Frame,
-    (x, y): (usize, usize),
-    (across, down): (usize, usize),
-    unit: usize,
-    rising: bool,
-    colour: Colour,
-) {
-    let thick = stroke(unit);
-    let reach = across.saturating_sub(thick);
-    let last = down.saturating_sub(1).max(1);
-    for row in 0..down {
-        let step = if rising { last - row.min(last) } else { row };
-        frame.fill(x + step * reach / last, y + row, thick, 1, colour);
-    }
 }
 
 fn glyph(
@@ -464,6 +407,10 @@ fn percent_sign(frame: &mut Frame, x: usize, y: usize, unit: usize, colour: Colo
     glyph(frame, '%', (x, y), (PERCENT_UNITS + 1) * unit, unit, colour);
 }
 
+fn em(start2: usize, offset: usize, size: usize) -> usize {
+    (start2 * ICON_EM + 2 * offset * size) / (2 * ICON_EM)
+}
+
 fn battery_symbol(
     frame: &mut Frame,
     (x, y): (usize, usize),
@@ -471,27 +418,22 @@ fn battery_symbol(
     gauge: Gauge,
     colour: Colour,
 ) {
-    let thick = stroke(unit);
-    let width = (SYMBOL_UNITS - 1) * unit;
-    let height = DIGIT_HEIGHT_UNITS * unit;
-    frame.fill(x, y, width, thick, colour);
-    frame.fill(x, y + height - thick, width, thick, colour);
-    frame.fill(x, y, thick, height, colour);
-    frame.fill(x + width - thick, y, thick, height, colour);
-    frame.fill(x + width, y + 2 * unit, unit, 3 * unit, colour);
+    let size = BATTERY_UNITS * unit;
+    let centre2 = 2 * x + SYMBOL_UNITS * unit;
+    let middle2 = 2 * y + DIGIT_HEIGHT_UNITS * unit;
+    centred(frame, Icon::Battery, (centre2, middle2), size, colour);
     let bars = match gauge.level {
         Level::Low => 1,
         Level::Middle => 2,
         Level::Full => 3,
     };
-    for bar in 0..bars {
-        frame.fill(
-            x + (2 + 3 * bar) * unit,
-            y + 2 * unit,
-            2 * unit,
-            3 * unit,
-            colour,
-        );
+    let (left2, top2) = (centre2 - size, middle2 - size);
+    let top = em(top2, BAR_TOP, size);
+    let bottom = em(top2, BAR_TOP + BAR_HEIGHT, size);
+    for &bar in BARS.iter().take(bars) {
+        let left = em(left2, bar, size);
+        let right = em(left2, bar + BAR_WIDTH, size);
+        frame.fill(left, top, right - left, bottom - top, colour);
     }
     let Some(capacity) = gauge.capacity else {
         return;
@@ -512,91 +454,43 @@ fn battery_symbol(
     }
 }
 
-fn symbol(frame: &mut Frame, (x, y): (usize, usize), unit: usize, rows: &[&str], colour: Colour) {
-    for (row, line) in rows.iter().enumerate() {
-        for (column, cell) in line.bytes().enumerate() {
-            if cell == b'#' {
-                frame.fill(x + column * unit, y + row * unit, unit, unit, colour);
-            }
-        }
-    }
+fn centred(
+    frame: &mut Frame,
+    icon: Icon,
+    (centre2, middle2): (usize, usize),
+    size: usize,
+    colour: Colour,
+) {
+    let square = Square {
+        centre2,
+        middle2,
+        size,
+    };
+    glyph::icon(icon, square, |x, y, alpha| frame.blend(x, y, colour, alpha));
 }
 
-fn plus(frame: &mut Frame, (x, y): (usize, usize), unit: usize, colour: Colour) {
-    let thick = stroke(unit);
-    let across = SIDE_UNITS * unit;
-    let middle = (across - thick) / 2;
-    frame.fill(x, y + middle, across, thick, colour);
-    frame.fill(x + middle, y, thick, across, colour);
+fn symbol(frame: &mut Frame, icon: Icon, (x, y): (usize, usize), unit: usize, colour: Colour) {
+    let size = ICON_UNITS * unit;
+    centred(frame, icon, (2 * x + size, 2 * y + size), size, colour);
 }
 
-fn cross(frame: &mut Frame, (x, y): (usize, usize), unit: usize, colour: Colour) {
-    let across = SIDE_UNITS * unit;
-    for rising in [false, true] {
-        slanted(frame, (x, y), (across, across), unit, rising, colour);
-    }
-}
-
-fn arrow(frame: &mut Frame, (centre, y): (usize, usize), unit: usize, up: bool, colour: Colour) {
-    let half = ARROW_UNITS * unit;
-    let left = centre.saturating_sub(half);
-    let down = ARROW_UNITS * unit;
-    slanted(frame, (left, y), (half, down), unit, up, colour);
-    slanted(frame, (centre, y), (half, down), unit, !up, colour);
-}
-
-fn play(frame: &mut Frame, (x, y): (usize, usize), unit: usize, colour: Colour) {
-    let across = SIDE_UNITS * unit;
-    let half = across / 2;
-    for row in 0..across {
-        let reach = half.saturating_sub(row.abs_diff(half));
-        frame.fill(
-            x + unit,
-            y + row,
-            reach * (across - unit) / half.max(1),
-            1,
-            colour,
-        );
-    }
-}
-
-fn stop(frame: &mut Frame, (x, y): (usize, usize), unit: usize, colour: Colour) {
-    let across = (SIDE_UNITS - 2) * unit;
-    frame.fill(x + unit, y + unit, across, across, colour);
-}
-
-fn switch(frame: &mut Frame, (x, y): (usize, usize), unit: usize, on: bool) {
-    let colour = if on { FOREGROUND } else { DIM };
-    let thick = stroke(unit);
-    let width = SWITCH_UNITS * unit;
-    let height = DIGIT_HEIGHT_UNITS * unit;
-    frame.fill(x, y, width, thick, colour);
-    frame.fill(x, y + height - thick, width, thick, colour);
-    frame.fill(x, y, thick, height, colour);
-    frame.fill(x + width - thick, y, thick, height, colour);
-    let knob = if on { SWITCH_UNITS - 2 - KNOB_UNITS } else { 2 };
-    frame.fill(
-        x + knob * unit,
-        y + 2 * unit,
-        KNOB_UNITS * unit,
-        KNOB_UNITS * unit,
-        colour,
-    );
+fn switch(frame: &mut Frame, (right, y): (usize, usize), unit: usize, on: bool) {
+    let (icon, colour) = if on {
+        (Icon::On, FOREGROUND)
+    } else {
+        (Icon::Off, DIM)
+    };
+    symbol(frame, icon, (right - ICON_UNITS * unit, y), unit, colour);
 }
 
 fn settings_screen(frame: &mut Frame, sheet: Sheet, face: &Face) {
     let unit = sheet.unit;
     let right = sheet.side + SIDE_UNITS * unit;
     let top = sheet.setting_row(POWER_OFF_ROW);
-    symbol(frame, (sheet.left, top), unit, &POWER, FOREGROUND);
-    switch(
-        frame,
-        (right - SWITCH_UNITS * unit, top),
-        unit,
-        face.power_off,
-    );
+    symbol(frame, Icon::Power, (sheet.left, top), unit, FOREGROUND);
+    switch(frame, (right, top), unit, face.power_off);
     let top = sheet.setting_row(LIT_ROW);
-    symbol(frame, (sheet.left, top), unit, &SUN, FOREGROUND);
+    symbol(frame, Icon::Light, (sheet.left, top), unit, FOREGROUND);
     figures(
         frame,
         (right - UNITS_ACROSS * unit, top),
@@ -610,13 +504,13 @@ fn wheels(frame: &mut Frame, sheet: Sheet, picked: (u8, u8)) {
     let unit = sheet.unit;
     let y = sheet.wheel_row(Row::Picked);
     figures(frame, (sheet.left, y), unit, Some(picked), FOREGROUND);
-    let above = y - (ARROW_UNITS + ARROW_GAP_UNITS) * unit;
-    let below = y + (DIGIT_HEIGHT_UNITS + ARROW_GAP_UNITS) * unit;
-    let middle = (2 * DIGIT_UNITS + 1) * unit / 2;
+    let above = 2 * (y - (ARROW_UNITS + ARROW_GAP_UNITS) * unit) + ARROW_UNITS * unit;
+    let below = 2 * (y + (DIGIT_HEIGHT_UNITS + ARROW_GAP_UNITS) * unit) + ARROW_UNITS * unit;
+    let size = ICON_UNITS * unit;
     for start in [0, MINUTE_UNITS * unit] {
-        let centre = sheet.left + start + middle;
-        arrow(frame, (centre, above), unit, true, DIM);
-        arrow(frame, (centre, below), unit, false, DIM);
+        let centre2 = 2 * (sheet.left + start) + (2 * DIGIT_UNITS + 1) * unit;
+        centred(frame, Icon::Up, (centre2, above), size, DIM);
+        centred(frame, Icon::Down, (centre2, below), size, DIM);
     }
 }
 
@@ -634,8 +528,9 @@ fn slider(
 ) {
     let unit = sheet.unit;
     wheels(frame, sheet, picked);
-    plus(
+    symbol(
         frame,
+        Icon::Add,
         (sheet.side, sheet.wheel_row(Row::Picked)),
         unit,
         shade(addable),
@@ -644,7 +539,7 @@ fn slider(
         let top = sheet.list_row(index);
         figures(frame, (sheet.left, top), unit, Some(entry), shade(on));
         let mark = if marked == Some(index) { WARNING } else { DIM };
-        cross(frame, (sheet.side, top), unit, mark);
+        symbol(frame, Icon::Close, (sheet.side, top), unit, mark);
     }
 }
 
@@ -682,9 +577,10 @@ fn timer_screen(frame: &mut Frame, layout: &Layout, sheet: Sheet, face: &Face) {
     let left = face.left.map(of_countdown);
     figures(frame, readout, unit, left, shade(left.is_some()));
     if left.is_some() {
-        stop(frame, control, unit, FOREGROUND);
+        symbol(frame, Icon::Stop, control, unit, FOREGROUND);
     } else {
-        play(frame, control, unit, shade(!face.countdown.is_zero()));
+        let colour = shade(!face.countdown.is_zero());
+        symbol(frame, Icon::Play, control, unit, colour);
     }
     let entries: Vec<_> = face
         .timers
@@ -708,11 +604,11 @@ fn bar(frame: &mut Frame, layout: &Layout, current: Screen) {
     for (index, screen) in Screen::ALL.into_iter().enumerate() {
         let centre = width * (2 * index + 1) / (2 * Screen::ALL.len());
         let colour = if screen == current { FOREGROUND } else { DIM };
-        symbol(
+        centred(
             frame,
-            (centre.saturating_sub(across / 2), top),
-            layout.tab_unit,
-            &screen.symbol(),
+            screen.icon(),
+            (2 * centre, 2 * top + across),
+            across,
             colour,
         );
     }
@@ -980,17 +876,20 @@ mod tests {
         let sheet = sheet(SHEET, &layout).ok_or("no sheet")?;
         let across = SIDE_UNITS * sheet.unit;
         let top = sheet.list_row(1);
+        let mut turned = false;
         for y in 0..SHEET.height {
             for (x, (&before, &after)) in plain.row(y).iter().zip(marked.row(y)).enumerate() {
                 let inside = (sheet.side..sheet.side + across).contains(&x)
                     && (top..top + across).contains(&y);
-                if inside && before == DIM {
-                    assert_eq!(after, WARNING);
+                if inside && before != BACKGROUND {
+                    assert!(blended(before, DIM) && blended(after, WARNING));
+                    turned |= after != before;
                 } else {
                     assert_eq!(after, before);
                 }
             }
         }
+        assert!(turned);
         Ok(())
     }
 
@@ -1057,9 +956,14 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         for top in [sheet.active.1, sheet.wheel_row(Row::Picked)] {
-            assert!(shown(&idle, top).iter().all(|&colour| colour == FOREGROUND));
+            assert_ne!(shown(&idle, top), []);
+            assert!(
+                shown(&idle, top)
+                    .iter()
+                    .all(|&colour| blended(colour, FOREGROUND))
+            );
             assert_ne!(shown(&zero, top), []);
-            assert!(shown(&zero, top).iter().all(|&colour| colour == DIM));
+            assert!(shown(&zero, top).iter().all(|&colour| blended(colour, DIM)));
         }
         Ok(())
     }
@@ -1269,10 +1173,8 @@ mod tests {
                 lit(&frame).into_iter().partition(|&(_, y, _)| y >= 2093);
             let (status, rest): (Vec<_>, Vec<_>) =
                 above.into_iter().partition(|&(x, y, _)| corner(x, y));
-            assert!(
-                bar.iter()
-                    .all(|&(_, y, lit)| y < PANEL.height - 40 && (lit == FOREGROUND || lit == DIM))
-            );
+            assert!(bar.iter().all(|&(_, y, lit)| y < PANEL.height - 40
+                && (blended(lit, FOREGROUND) || blended(lit, DIM))));
             assert!(bar.iter().any(|&(_, _, lit)| lit == DIM));
             assert_ne!(status, []);
             assert!(status.iter().all(|&(_, _, lit)| blended(lit, colour)));

@@ -1,6 +1,7 @@
 # 16. Rasterise light type and icons on the phone
 
-- **Status:** Accepted; D2 amended for the figure height by issue 104
+- **Status:** Accepted; D2 amended for the figure height by issue 104, D3 for the battery
+  glyph by issue 105
 - **Date:** 2026-11-23
 - **Issue:** #95
 
@@ -104,6 +105,12 @@ icon goes through D1's rasteriser, so the icons take no code of their own.
 
 **The battery's bars and its red stay drawn by `face`**, inside the icon's outline, since
 the font has no glyph for a one-, two- or three-bar gauge in a warning colour.
+
+**Amended by issue 105**: `battery_full` is solid at `FILL=0`, so no bar shows inside it;
+`battery_android_0`, an empty horizontal outline, replaces it, and the subset is 3 000
+bytes. Each icon's em square fills the box `face` gives it, so every stroke is the same
+45/960 of its em. The status line is an eighth of the digit's unit, half what it was, so
+the battery is about 61 by 32 pixels on the panel, the size of a phone's own.
 
 ### D4. The subsets are made by a host script, `scripts/subset_fonts.py`
 
