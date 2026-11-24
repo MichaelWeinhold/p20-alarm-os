@@ -2335,3 +2335,19 @@ active alarm, the wheels, the saved alarms, the battery's percentage, the timer 
 lit time drawn thin with smooth edges, nothing overlapping, and taps on the wheels, a saved
 alarm and the tabs landing as before. The operator photographed the alarm, timer and
 settings screens; the photos are kept off the repository. The image was left on the phone.
+
+## 2026-11-24 — the icons in Material Symbols, for issue 105
+
+**`alarmd` at `d2e9976` is 635048 bytes**, sha256
+`746f420864d88a7609fb59f58ad6c9a1f833c396dbe719b432232af5db154559`, 2368 bytes more than
+issue 104's. From TWRP 3.7.0_9-0 it was copied over `/init` on `system`, replacing issue
+104's `89567298…d551f`. `init.rom` still hashed `e8e2768e…78ef`, `misc`'s first 32 bytes
+read zero, and the RTC read 1795527416 against the Mac's 1795527418, before `adb reboot`
+at 13:37:06 UTC.
+
+**The icons are Material Symbols on all three screens, and every tap lands.** The operator
+saw the tab bar, the smaller battery, the power symbol, the switch, the sun, the wheels'
+arrows, the `+`, the crosses, the play and the stop drawn thin with smooth edges, and taps
+on the arrows, the `+`, a saved alarm and its cross, the timer's start row, the switch's
+row, the lit time's row and the tabs landing as before. No photos were taken; the
+operator takes them once the interface is final. The image was left on the phone.
