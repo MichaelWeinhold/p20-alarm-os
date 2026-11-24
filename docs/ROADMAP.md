@@ -54,8 +54,8 @@ log that can be read.
 
 Read `/dev/input/event*`; set an alarm and dismiss it.
 
-**Done** — issue 11. The alarm is set by touch, rings on the panel, a volume key snoozes it
-and Power dismisses it.
+**Done** — issue 11. The alarm is set by touch, rings on the panel and Power dismisses
+it; since issue 113, Power is the only key that ends a ring.
 
 ## P5 — Wake from suspend
 
@@ -76,8 +76,8 @@ window are built; the power-off with its power-on alarm, off the cable only, is 
 Ring the alarm through the vibrator.
 
 **Built** — issue 13. The alarm pulses `hisi_vibrator` through its LED class device and
-the transient trigger, and woke a suspended phone vibrating; a snooze and a dismissal
-stop it at once.
+the transient trigger, and woke a suspended phone vibrating; a dismissal stops it at
+once.
 
 ## Research before P7
 
