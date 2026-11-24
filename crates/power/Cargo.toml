@@ -1,6 +1,6 @@
 [package]
 name = "power"
-description = "The power-off adapter, a CLOCK_POWEROFF_ALARM timer then reboot(2), and the boot-reason adapter over /proc/cmdline"
+description = "The power-off adapter, a CLOCK_POWEROFF_ALARM timer then reboot(2), the recovery adapter, reboot(2) into recovery, and the boot-reason adapter over /proc/cmdline"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

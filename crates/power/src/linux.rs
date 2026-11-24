@@ -2,9 +2,9 @@ use std::ffi::{c_int, c_long};
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 
-use alarm_core::hardware::{HardwareError, PowerOff};
+use alarm_core::hardware::{HardwareError, PowerOff, Recovery};
 use alarm_core::time::UnixSeconds;
-use pid1::linux::powered_off;
+use pid1::linux::{powered_off, rebooted_into_recovery};
 
 use crate::{failed, timer_target};
 
@@ -91,5 +91,14 @@ impl PowerOff for PoweroffAlarm {
         let seconds = on_at.map_or(0, |at| timer_target(at).0);
         set(&self.0, seconds).map_err(|error| failed(TIMER_DEVICE, &error))?;
         Err(failed(REBOOT_DEVICE, &powered_off()))
+    }
+}
+
+#[derive(Debug)]
+pub struct RecoveryReboot;
+
+impl Recovery for RecoveryReboot {
+    fn reboot_into_recovery(&mut self) -> Result<(), HardwareError> {
+        Err(failed(REBOOT_DEVICE, &rebooted_into_recovery()))
     }
 }

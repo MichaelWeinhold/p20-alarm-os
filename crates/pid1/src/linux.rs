@@ -117,6 +117,14 @@ pub fn powered_off() -> io::Error {
     io::Error::last_os_error()
 }
 
+#[must_use]
+pub fn rebooted_into_recovery() -> io::Error {
+    unsafe {
+        sync();
+    }
+    reboot_into(c"recovery")
+}
+
 pub fn into_recovery(log: Option<&mut File>) -> ! {
     let error = reboot_into(c"recovery");
     if let Some(log) = log {

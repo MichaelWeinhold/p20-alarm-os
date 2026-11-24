@@ -47,6 +47,8 @@ pub struct Ringer {
     marked: Option<usize>,
     power_off: bool,
     lit_seconds: i64,
+    recovery_marked: bool,
+    recovery: bool,
     timers: Vec<Countdown>,
     countdown: Countdown,
     running: Option<Run>,
@@ -99,6 +101,8 @@ impl Ringer {
             marked: None,
             power_off: true,
             lit_seconds: LIT_SECONDS,
+            recovery_marked: false,
+            recovery: false,
             timers: Vec::new(),
             countdown: Countdown::default(),
             running: None,
@@ -168,6 +172,11 @@ impl Ringer {
 
     pub fn set_lit_seconds(&mut self, lit_seconds: i64) {
         self.lit_seconds = lit_seconds;
+    }
+
+    #[must_use]
+    pub fn take_recovery(&mut self) -> bool {
+        std::mem::take(&mut self.recovery)
     }
 
     #[must_use]
@@ -287,6 +296,7 @@ impl Ringer {
         }
         if self.ring() == Ring::Ringing {
             self.marked = None;
+            self.recovery_marked = false;
         }
     }
 
@@ -300,6 +310,7 @@ impl Ringer {
     pub fn darkened(&mut self) {
         self.grab = None;
         self.marked = None;
+        self.recovery_marked = false;
     }
 
     fn touched_timer(&mut self, target: Target, marked: Option<usize>) {
@@ -327,6 +338,7 @@ impl Ringer {
         offset: UtcOffset,
     ) {
         let marked = self.marked.take();
+        let recovery_marked = std::mem::take(&mut self.recovery_marked);
         self.grab = None;
         match target {
             Target::Wheel(field, row) => {
@@ -347,6 +359,8 @@ impl Ringer {
             Target::Remove(index) if index < self.alarms.len() => self.marked = Some(index),
             Target::PowerOff => self.power_off = !self.power_off,
             Target::LitTime => self.lit_seconds = next_lit_seconds(self.lit_seconds),
+            Target::Recovery if recovery_marked => self.recovery = true,
+            Target::Recovery => self.recovery_marked = true,
             Target::Remove(_) | Target::Tab(_) | Target::Blank => {}
         }
     }
@@ -394,6 +408,7 @@ impl Ringer {
             screen,
             power_off: self.power_off,
             lit_seconds: self.lit_seconds,
+            recovery_marked: self.recovery_marked,
             timers: self.timers.clone(),
             countdown: self.countdown,
             left: self
@@ -487,6 +502,7 @@ mod tests {
     const BLANK: [InputEvent; 2] = tap(540, 400);
     const POWER_OFF: [InputEvent; 2] = tap(540, 800);
     const LIT_TIME: [InputEvent; 2] = tap(540, 1000);
+    const RECOVERY: [InputEvent; 2] = tap(540, 1180);
     const ALARM_TAB: [InputEvent; 2] = tap(180, 2200);
     const TIMER_TAB: [InputEvent; 2] = tap(540, 2200);
     const SETTINGS_TAB: [InputEvent; 2] = tap(900, 2200);
@@ -1295,7 +1311,7 @@ mod tests {
         let armed = ringer.clone();
         let mut light = always();
         drain_lit(
-            &mut FakeInput::with(&[&SETTINGS_TAB, &FIRST, &HOUR_BELOW, &MINUTE_BELOW, &BLANK]),
+            &mut FakeInput::with(&[&SETTINGS_TAB, &FIRST, &SECOND, &REMOVE_FIRST, &BLANK]),
             &clock,
             &mut ringer,
             &mut light,
@@ -1317,6 +1333,131 @@ mod tests {
         let face = ringer.face(now, UtcOffset::UTC, Gauge::UNREAD, Screen::Settings);
         assert!(!face.power_off);
         assert_eq!(face.lit_seconds, 120);
+        Ok(())
+    }
+
+    #[test]
+    fn a_first_tap_on_the_recovery_row_marks_it_and_a_second_asks_for_recovery_once()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut ringer = ringer(7, 0)?;
+        drain(&mut FakeInput::with(&[&FIRST]), &clock, &mut ringer)?;
+        let armed = ringer.clone();
+        let mut light = always();
+        drain_lit(
+            &mut FakeInput::with(&[&SETTINGS_TAB, &RECOVERY]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        let face = ringer.face(
+            clock.now()?,
+            UtcOffset::UTC,
+            Gauge::UNREAD,
+            Screen::Settings,
+        );
+        assert!(face.recovery_marked);
+        assert!(!ringer.take_recovery());
+        drain_lit(
+            &mut FakeInput::with(&[&RECOVERY]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        let face = ringer.face(
+            clock.now()?,
+            UtcOffset::UTC,
+            Gauge::UNREAD,
+            Screen::Settings,
+        );
+        assert!(!face.recovery_marked);
+        assert!(ringer.take_recovery());
+        assert!(!ringer.take_recovery());
+        assert_eq!(ringer, armed);
+        Ok(())
+    }
+
+    #[test]
+    fn any_other_touch_between_the_two_taps_asks_for_no_recovery()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut ringer = ringer(7, 0)?;
+        let mut light = always();
+        for other in [&BLANK, &LIT_TIME, &SETTINGS_TAB] {
+            drain_lit(
+                &mut FakeInput::with(&[&SETTINGS_TAB, &RECOVERY, other, &RECOVERY, &BLANK]),
+                &clock,
+                &mut ringer,
+                &mut light,
+            )?;
+            assert!(!ringer.take_recovery());
+        }
+        let face = ringer.face(
+            clock.now()?,
+            UtcOffset::UTC,
+            Gauge::UNREAD,
+            Screen::Settings,
+        );
+        assert!(!face.recovery_marked);
+        Ok(())
+    }
+
+    #[test]
+    fn the_panel_going_off_or_the_alarm_ringing_clears_the_recovery_mark()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut ringer = ringer(7, 0)?;
+        drain(&mut FakeInput::with(&[&FIRST]), &clock, &mut ringer)?;
+        let mut light = Light::lit_at(clock.now()?, LIT_SECONDS);
+        drain_lit(
+            &mut FakeInput::with(&[&SETTINGS_TAB, &RECOVERY]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        clock.pass(LIT_SECONDS);
+        let mut display = FakeDisplay::default();
+        show(
+            &clock,
+            UtcOffset::UTC,
+            &mut ringer,
+            &mut light,
+            Gauge::UNREAD,
+            &mut display,
+        )?;
+        assert_eq!(display.lit, [false]);
+        let face = ringer.face(
+            clock.now()?,
+            UtcOffset::UTC,
+            Gauge::UNREAD,
+            Screen::Settings,
+        );
+        assert!(!face.recovery_marked);
+        let mut light = always();
+        drain_lit(
+            &mut FakeInput::with(&[&SETTINGS_TAB, &RECOVERY]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        let face = ringer.face(
+            clock.now()?,
+            UtcOffset::UTC,
+            Gauge::UNREAD,
+            Screen::Settings,
+        );
+        assert!(face.recovery_marked);
+        clock.pass(60);
+        ringer.tick(clock.now()?, UtcOffset::UTC);
+        assert_eq!(ringer.ring(), Ring::Ringing);
+        let face = ringer.face(
+            clock.now()?,
+            UtcOffset::UTC,
+            Gauge::UNREAD,
+            Screen::Settings,
+        );
+        assert!(!face.recovery_marked);
+        assert!(!ringer.take_recovery());
         Ok(())
     }
 

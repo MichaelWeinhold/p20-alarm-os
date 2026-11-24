@@ -44,6 +44,10 @@ pub trait PowerOff {
     fn power_off(&mut self, on_at: Option<UnixSeconds>) -> Result<(), HardwareError>;
 }
 
+pub trait Recovery {
+    fn reboot_into_recovery(&mut self) -> Result<(), HardwareError>;
+}
+
 pub trait BootReason {
     fn read(&self) -> Result<Boot, HardwareError>;
 }

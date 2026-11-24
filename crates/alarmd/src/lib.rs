@@ -3,8 +3,8 @@ use alarm_core::battery::{ChargeLimit, ChargeStep, Gauge, stop_at_limit};
 use std::thread::JoinHandle;
 
 use alarm_core::hardware::{
-    Battery, BootReason, Clock, Display, HardwareError, Indicator, Modem, PowerOff, Settings,
-    Speaker, Suspend, Vibrator, WakeAlarm,
+    Battery, BootReason, Clock, Display, HardwareError, Indicator, Modem, PowerOff, Recovery,
+    Settings, Speaker, Suspend, Vibrator, WakeAlarm,
 };
 use alarm_core::light::Light;
 use alarm_core::ringer::{Ringer, show};
@@ -390,6 +390,22 @@ pub fn persisted(
         }
         Err(error) => kmsg::failure("saving the settings", &error),
     })
+}
+
+pub fn recover(
+    settings: &mut Result<impl Settings, HardwareError>,
+    saved: &mut Choices,
+    current: Choices,
+    recovery: &mut impl Recovery,
+    log: &mut impl FnMut(&str),
+) {
+    if let Some(line) = persisted(settings, saved, current) {
+        log(&line);
+    }
+    log(&kmsg::line("rebooting into recovery"));
+    if let Err(error) = recovery.reboot_into_recovery() {
+        log(&kmsg::failure("rebooting into recovery", &error));
+    }
 }
 
 pub fn modem_booted(modem: &mut Result<impl Modem, HardwareError>) -> Vec<String> {
@@ -831,6 +847,7 @@ mod tests {
             screen: Screen::Alarm,
             power_off: true,
             lit_seconds: LIT_SECONDS,
+            recovery_marked: false,
             timers: Vec::new(),
             countdown: Countdown::default(),
             left: None,
@@ -1696,6 +1713,82 @@ mod tests {
                     .next_after(later.now()?, berlin()?)
             )
         );
+        Ok(())
+    }
+
+    #[derive(Debug, Default)]
+    struct FakeRecovery {
+        reboots: u32,
+        failing: bool,
+    }
+
+    impl Recovery for FakeRecovery {
+        fn reboot_into_recovery(&mut self) -> Result<(), HardwareError> {
+            self.reboots += 1;
+            if self.failing {
+                return Err(refused("reboot"));
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_changed_setting_is_saved_and_logged_before_the_reboot_into_recovery()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(19, 37, 30);
+        let mut settings = Ok(FakeSettings::blank());
+        let mut started = boot(&mut settings, &clock)?;
+        let current = choices(&armed_at(&clock)?, berlin()?, WINDOW_SECONDS);
+        let mut recovery = FakeRecovery::default();
+        let mut log = Vec::new();
+        recover(
+            &mut settings,
+            &mut started.saved,
+            current,
+            &mut recovery,
+            &mut |line| log.push(line.to_owned()),
+        );
+        assert_eq!(
+            log,
+            [
+                kmsg::line("settings saved"),
+                kmsg::line("rebooting into recovery")
+            ]
+        );
+        assert_eq!(saves(&settings), Some(1));
+        assert_eq!(recovery.reboots, 1);
+        assert!(boot(&mut settings, &at(20, 0, 0))?.ringer.armed());
+        Ok(())
+    }
+
+    #[test]
+    fn unchanged_settings_save_nothing_and_a_failed_reboot_into_recovery_is_logged()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(19, 37, 30);
+        let mut settings = Ok(FakeSettings::blank());
+        let mut started = boot(&mut settings, &clock)?;
+        let current = started.saved.clone();
+        let mut recovery = FakeRecovery {
+            failing: true,
+            ..FakeRecovery::default()
+        };
+        let mut log = Vec::new();
+        recover(
+            &mut settings,
+            &mut started.saved,
+            current,
+            &mut recovery,
+            &mut |line| log.push(line.to_owned()),
+        );
+        assert_eq!(
+            log,
+            [
+                kmsg::line("rebooting into recovery"),
+                kmsg::failure("rebooting into recovery", &refused("reboot"))
+            ]
+        );
+        assert_eq!(saves(&settings), Some(0));
+        assert_eq!(recovery.reboots, 1);
         Ok(())
     }
 

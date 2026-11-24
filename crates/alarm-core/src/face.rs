@@ -41,6 +41,7 @@ pub const SAVED_TIMERS: usize = 4;
 
 const POWER_OFF_ROW: usize = 0;
 const LIT_ROW: usize = 1;
+const RECOVERY_ROW: usize = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Colour(pub u32);
@@ -82,6 +83,7 @@ pub struct Face {
     pub screen: Screen,
     pub power_off: bool,
     pub lit_seconds: i64,
+    pub recovery_marked: bool,
     pub timers: Vec<Countdown>,
     pub countdown: Countdown,
     pub left: Option<Countdown>,
@@ -148,6 +150,7 @@ pub enum Target {
     Start,
     PowerOff,
     LitTime,
+    Recovery,
     Tab(Screen),
     Blank,
 }
@@ -498,6 +501,20 @@ fn settings_screen(frame: &mut Frame, sheet: Sheet, face: &Face) {
         Some(of_countdown(Countdown::of(face.lit_seconds))),
         FOREGROUND,
     );
+    let top = sheet.setting_row(RECOVERY_ROW);
+    let colour = if face.recovery_marked {
+        WARNING
+    } else {
+        FOREGROUND
+    };
+    symbol(frame, Icon::Recovery, (sheet.left, top), unit, colour);
+    symbol(
+        frame,
+        Icon::Restart,
+        (right - ICON_UNITS * unit, top),
+        unit,
+        colour,
+    );
 }
 
 fn wheels(frame: &mut Frame, sheet: Sheet, picked: (u8, u8)) {
@@ -724,6 +741,9 @@ pub fn target(size: Size, screen: Screen, x: usize, y: usize) -> Target {
         (Screen::Settings, Some(sheet)) if sheet.band(sheet.setting_row(LIT_ROW), y) => {
             Target::LitTime
         }
+        (Screen::Settings, Some(sheet)) if sheet.band(sheet.setting_row(RECOVERY_ROW), y) => {
+            Target::Recovery
+        }
         _ => Target::Blank,
     }
 }
@@ -817,6 +837,7 @@ mod tests {
             screen: Screen::Alarm,
             power_off: true,
             lit_seconds: 10,
+            recovery_marked: false,
             timers: Vec::new(),
             countdown: Countdown::default(),
             left: None,
@@ -984,19 +1005,33 @@ mod tests {
     }
 
     #[test]
-    fn the_settings_screen_shows_the_power_off_toggle_and_the_lit_time_as_recorded() -> Outcome {
-        for (power_off, lit_seconds, recorded) in [
-            (true, 10, include_str!("../testdata/face-settings.txt")),
+    fn the_settings_screen_shows_the_toggle_the_lit_time_and_the_recovery_row_as_recorded()
+    -> Outcome {
+        for (power_off, lit_seconds, recovery_marked, recorded) in [
+            (
+                true,
+                10,
+                false,
+                include_str!("../testdata/face-settings.txt"),
+            ),
             (
                 false,
                 300,
+                false,
                 include_str!("../testdata/face-settings-stays.txt"),
+            ),
+            (
+                true,
+                10,
+                true,
+                include_str!("../testdata/face-settings-recovery.txt"),
             ),
         ] {
             let settings = Face {
                 screen: Screen::Settings,
                 power_off,
                 lit_seconds,
+                recovery_marked,
                 ..face(Some(0), false, charged(80)?)?
             };
             assert_eq!(picture(&render(SHEET, &settings)), recorded);
@@ -1013,8 +1048,11 @@ mod tests {
         assert_eq!(settings(0, 909), Target::LitTime);
         assert_eq!(settings(540, 1000), Target::LitTime);
         assert_eq!(settings(1079, 1092), Target::LitTime);
+        assert_eq!(settings(0, 1093), Target::Recovery);
+        assert_eq!(settings(540, 1180), Target::Recovery);
+        assert_eq!(settings(1079, 1276), Target::Recovery);
         assert_eq!(settings(540, 724), Target::Blank);
-        assert_eq!(settings(540, 1093), Target::Blank);
+        assert_eq!(settings(540, 1277), Target::Blank);
         assert_eq!(settings(540, 1400), Target::Blank);
         assert_eq!(target(SMALL, Screen::Settings, 50, 20), Target::Blank);
     }

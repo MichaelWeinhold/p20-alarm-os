@@ -38,6 +38,8 @@ ICONS: Final[Mapping[str, int]] = {
     "stop": 0xE047,
     "toggle_on": 0xE9F6,
     "toggle_off": 0xE9F5,
+    "build": 0xF8CD,
+    "restart_alt": 0xF053,
 }
 SYMBOLS: Final = Subset(
     "material-symbols-light-icons.ttf",

@@ -112,6 +112,9 @@ bytes. Each icon's em square fills the box `face` gives it, so every stroke is t
 45/960 of its em. The status line is an eighth of the digit's unit, half what it was, so
 the battery is about 61 by 32 pixels on the panel, the size of a phone's own.
 
+**Amended by issue 118**: `build` and `restart_alt` join the subset for the settings
+screen's recovery row, sixteen icons in 3 336 bytes.
+
 ### D4. The subsets are made by a host script, `scripts/subset_fonts.py`
 
 It instances and subsets with `fontTools`, a dev dependency by ADR 0001, D7, from the
