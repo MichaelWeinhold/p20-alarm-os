@@ -54,9 +54,9 @@ they match the table above.
 ## Alarm sounds
 
 **State.** `/system/media/audio/alarms` holds the ROM's eleven Vorbis alarms and the
-operator's test sound beside them; `alarmd` plays only the `.wav` files, and until a
-chosen sound is kept in the settings (issue 86) it plays `ringtone.wav`. → ADR 0014, D2
-and D3; ADR 0015, D3.
+operator's test sound beside them; `alarmd` lists only the `.wav` files whose names the
+settings record can hold, and plays the one chosen on the settings screen. A record from
+before issue 86 chooses `ringtone.wav`. → ADR 0014, D2, D3 and D4; ADR 0015, D3.
 
 | File | Bytes | sha256 |
 |---|---|---|
