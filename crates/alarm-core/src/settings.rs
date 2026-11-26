@@ -8,12 +8,13 @@ use crate::time::{Countdown, TimeOfDay, UtcOffset};
 pub const RECORD_BYTES: usize = 2 * SLOT_BYTES;
 pub const SLOT_BYTES: usize = 4096;
 pub const MAGIC: [u8; 8] = *b"P20ALRM\0";
-pub const VERSION: u32 = 6;
+pub const VERSION: u32 = 7;
 pub const FIRST_VERSION: u32 = 1;
 const UNTIMED_VERSION: u32 = 2;
 const UNLIT_VERSION: u32 = 3;
 const UNVOLUMED_VERSION: u32 = 4;
 const UNTOGGLED_VERSION: u32 = 5;
+const MINUTE_TIMED_VERSION: u32 = 6;
 pub const LARGEST_PAYLOAD: usize = SLOT_BYTES - HEADER_BYTES - CRC_BYTES;
 
 const HEADER_BYTES: usize = 24;
@@ -21,7 +22,8 @@ const CRC_BYTES: usize = 4;
 const CHOICES_BYTES: usize = 10;
 const FIRST_CHOICES_BYTES: usize = 9;
 const ALARM_BYTES: usize = 4;
-const TIMER_BYTES: usize = 2;
+const TIMER_BYTES: usize = 3;
+const MINUTE_TIMER_BYTES: usize = 2;
 const LIT_BYTES: usize = 2;
 const DEVICE: &str = "settings";
 
@@ -133,7 +135,7 @@ fn payload(choices: &Choices) -> Result<Vec<u8>, HardwareError> {
     }
     bytes.push(timers);
     for timer in &choices.timers {
-        bytes.extend_from_slice(&[timer.minutes(), timer.seconds()]);
+        bytes.extend_from_slice(&[timer.hours(), timer.minutes(), timer.seconds()]);
     }
     bytes.extend_from_slice(&lit.to_le_bytes());
     bytes.push(choices.volume.level());
@@ -198,9 +200,17 @@ fn set_alarm([hour, minute, repeat, armed]: [u8; ALARM_BYTES]) -> Option<SetAlar
     })
 }
 
-fn timer([minutes, seconds]: [u8; TIMER_BYTES]) -> Option<Countdown> {
-    Countdown::new(minutes, seconds)
+fn timer([hours, minutes, seconds]: [u8; TIMER_BYTES]) -> Option<Countdown> {
+    Countdown::new(hours, minutes, seconds)
         .ok()
+        .filter(|timer| !timer.is_zero())
+}
+
+fn minute_timer([minutes, seconds]: [u8; MINUTE_TIMER_BYTES]) -> Option<Countdown> {
+    if minutes > 99 || seconds > 59 {
+        return None;
+    }
+    Some(Countdown::of(i64::from(minutes) * 60 + i64::from(seconds)))
         .filter(|timer| !timer.is_zero())
 }
 
@@ -233,7 +243,11 @@ fn choices(payload: &[u8], version: u32) -> Option<Choices> {
         (Vec::new(), rest)
     } else {
         let (&count, rest) = rest.split_first()?;
-        listed(rest, usize::from(count), timer)?
+        if version <= MINUTE_TIMED_VERSION {
+            listed(rest, usize::from(count), minute_timer)?
+        } else {
+            listed(rest, usize::from(count), timer)?
+        }
     };
     let (lit_seconds, rest) = if version <= UNLIT_VERSION {
         (LIT_SECONDS, rest)
@@ -391,7 +405,7 @@ mod tests {
             window_seconds: 120,
             power_off: true,
             alarms: vec![alarm_at(hour, minute, true)?],
-            timers: vec![Countdown::new(5, 30)?],
+            timers: vec![Countdown::new(0, 5, 30)?],
             lit_seconds: 30,
             volume: QUIETER,
             outputs: Outputs {
@@ -440,18 +454,18 @@ mod tests {
         let choices = choices_at(6, 45)?;
         let slot = encode(&choices, 7)?;
         assert_eq!(&slot[..8], b"P20ALRM\0");
-        assert_eq!(slot[8..12], 6_u32.to_le_bytes());
-        assert_eq!(slot[12..16], 22_u32.to_le_bytes());
+        assert_eq!(slot[8..12], 7_u32.to_le_bytes());
+        assert_eq!(slot[12..16], 23_u32.to_le_bytes());
         assert_eq!(slot[16..24], 7_u64.to_le_bytes());
         assert_eq!(
-            slot[24..46],
+            slot[24..47],
             [
-                0x10, 0x0e, 0, 0, 120, 0, 0, 0, 1, 1, 6, 45, 0b111_1111, 1, 1, 5, 30, 30, 0, 13, 0,
-                1
+                0x10, 0x0e, 0, 0, 120, 0, 0, 0, 1, 1, 6, 45, 0b111_1111, 1, 1, 0, 5, 30, 30, 0, 13,
+                0, 1
             ]
         );
-        assert_eq!(slot[46..50], crc32(&slot[..46]).to_le_bytes());
-        assert!(slot[50..].iter().all(|&byte| byte == 0));
+        assert_eq!(slot[47..51], crc32(&slot[..47]).to_le_bytes());
+        assert!(slot[51..].iter().all(|&byte| byte == 0));
         Ok(())
     }
 
@@ -464,7 +478,7 @@ mod tests {
         assert_eq!(load(&mut record)?, Some(untimed(6, 45)?));
         save(&mut record, &choices_at(6, 45)?)?;
         assert_eq!(record.saved, [Slot::Second]);
-        assert_eq!(record.bytes[SLOT_BYTES + 8], 6);
+        assert_eq!(record.bytes[SLOT_BYTES + 8], 7);
         assert_eq!(load(&mut record)?, Some(choices_at(6, 45)?));
         Ok(())
     }
@@ -497,7 +511,7 @@ mod tests {
         lit.extend_from_slice(&[30, 0]);
         assert_eq!(decode(&framed_as(UNLIT_VERSION, &lit, 0)?), None);
         save(&mut record, &choices_at(6, 45)?)?;
-        assert_eq!(record.bytes[SLOT_BYTES + 8], 6);
+        assert_eq!(record.bytes[SLOT_BYTES + 8], 7);
         assert_eq!(load(&mut record)?, Some(choices_at(6, 45)?));
         Ok(())
     }
@@ -515,7 +529,7 @@ mod tests {
         volumed.push(13);
         assert_eq!(decode(&framed_as(UNVOLUMED_VERSION, &volumed, 0)?), None);
         save(&mut record, &choices_at(6, 45)?)?;
-        assert_eq!(record.bytes[SLOT_BYTES + 8], 6);
+        assert_eq!(record.bytes[SLOT_BYTES + 8], 7);
         assert_eq!(load(&mut record)?, Some(choices_at(6, 45)?));
         Ok(())
     }
@@ -537,8 +551,33 @@ mod tests {
         toggled.extend_from_slice(&[0, 1]);
         assert_eq!(decode(&framed_as(UNTOGGLED_VERSION, &toggled, 0)?), None);
         save(&mut record, &choices_at(6, 45)?)?;
-        assert_eq!(record.bytes[SLOT_BYTES + 8], 6);
+        assert_eq!(record.bytes[SLOT_BYTES + 8], 7);
         assert_eq!(load(&mut record)?, Some(choices_at(6, 45)?));
+        Ok(())
+    }
+
+    #[test]
+    fn a_sixth_version_slot_loads_its_minute_timers_in_hours()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut record = FakeRecord::blank();
+        let sixth = [
+            0x10, 0x0e, 0, 0, 120, 0, 0, 0, 1, 1, 6, 45, 0b111_1111, 1, 2, 5, 30, 75, 0, 30, 0, 13,
+            0, 1,
+        ];
+        record.put(Slot::First, &framed_as(MINUTE_TIMED_VERSION, &sixth, 2)?);
+        let loaded = Choices {
+            timers: vec![Countdown::new(0, 5, 30)?, Countdown::new(1, 15, 0)?],
+            ..choices_at(6, 45)?
+        };
+        assert_eq!(load(&mut record)?, Some(loaded.clone()));
+        for (minutes, seconds) in [(100, 0), (5, 60), (0, 0)] {
+            let mut broken = sixth;
+            broken[17..19].copy_from_slice(&[minutes, seconds]);
+            assert_eq!(decode(&framed_as(MINUTE_TIMED_VERSION, &broken, 0)?), None);
+        }
+        save(&mut record, &loaded)?;
+        assert_eq!(record.bytes[SLOT_BYTES + 8], 7);
+        assert_eq!(load(&mut record)?, Some(loaded));
         Ok(())
     }
 
@@ -589,9 +628,9 @@ mod tests {
         let mut record = FakeRecord::blank();
         let mut timers = choices_at(6, 45)?;
         timers.timers = vec![
-            Countdown::new(0, 1)?,
-            Countdown::new(3, 0)?,
-            Countdown::new(12, 5)?,
+            Countdown::new(0, 0, 1)?,
+            Countdown::new(0, 3, 0)?,
+            Countdown::new(1, 12, 5)?,
             Countdown::LONGEST,
         ];
         save(&mut record, &timers)?;
@@ -734,14 +773,15 @@ mod tests {
             (8, 2),
             (14, 2),
             (14, 0),
-            (15, 100),
+            (15, 24),
             (16, 60),
-            (17, 11),
-            (18, 1),
-            (19, 0),
-            (19, 16),
-            (20, 2),
+            (17, 60),
+            (18, 11),
+            (19, 1),
+            (20, 0),
+            (20, 16),
             (21, 2),
+            (22, 2),
         ] {
             let mut payload = good.clone();
             payload[at] = value;
@@ -761,8 +801,9 @@ mod tests {
         bad.push(good[..19].to_vec());
         bad.push(good[..20].to_vec());
         bad.push(good[..21].to_vec());
+        bad.push(good[..22].to_vec());
         let mut zero = good.clone();
-        zero[15..17].copy_from_slice(&[0, 0]);
+        zero[15..18].copy_from_slice(&[0, 0, 0]);
         bad.push(zero);
         assert!(decode(&framed(&good, 0)?).is_some());
         for payload in bad {
@@ -776,7 +817,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let slot = encode(&choices_at(6, 45)?, 0)?;
         let mut version = slot;
-        version[8] = 7;
+        version[8] = 8;
         let mut magic = slot;
         magic[0] = b'Q';
         let mut length = slot;

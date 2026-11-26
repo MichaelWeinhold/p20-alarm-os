@@ -174,7 +174,7 @@ mod tests {
                 },
                 armed: true,
             }],
-            timers: vec![Countdown::new(3, 0)?],
+            timers: vec![Countdown::new(0, 3, 0)?],
             lit_seconds: 30,
             volume: Volume::LOUDEST,
             outputs: Outputs::BOTH,
