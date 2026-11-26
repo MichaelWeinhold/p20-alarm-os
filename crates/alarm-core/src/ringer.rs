@@ -1,7 +1,8 @@
 use crate::alarm::{Alarm, Weekdays};
 use crate::battery::Gauge;
 use crate::face::{
-    Face, Field, Row, SAVED_ALARMS, SAVED_TIMERS, Screen, Size, Target, pitch, render, target,
+    Face, Field, Row, Running, SAVED_ALARMS, SAVED_TIMERS, Screen, Size, Stage, Target, pitch,
+    render, target,
 };
 use crate::hardware::{Clock, Display, HardwareError, Input};
 use crate::input::{InputEvent, Key};
@@ -14,6 +15,7 @@ pub enum Ring {
     Quiet,
     Ringing,
     Held(UnixSeconds),
+    Paused,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -32,9 +34,31 @@ struct Grab {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Count {
+    Ends(UnixSeconds),
+    Paused(Countdown),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct Run {
     length: Countdown,
-    ends: UnixSeconds,
+    count: Count,
+}
+
+impl Run {
+    fn left(self, now: UnixSeconds) -> Countdown {
+        match self.count {
+            Count::Ends(ends) => Countdown::of(ends.0.saturating_sub(now.0)),
+            Count::Paused(left) => left,
+        }
+    }
+
+    fn ends(self) -> Option<UnixSeconds> {
+        match self.count {
+            Count::Ends(ends) => Some(ends),
+            Count::Paused(_) => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -135,7 +159,33 @@ impl Ringer {
 
     #[must_use]
     pub fn running_until(&self) -> Option<UnixSeconds> {
-        self.running.map(|run| run.ends)
+        self.running.and_then(Run::ends)
+    }
+
+    #[must_use]
+    pub fn paused(&self) -> Option<Countdown> {
+        match self.running?.count {
+            Count::Paused(left) => Some(left),
+            Count::Ends(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub fn stage(&self) -> Stage {
+        if self.running.is_some() {
+            Stage::Running
+        } else {
+            Stage::List
+        }
+    }
+
+    #[must_use]
+    pub fn ringing_screen(&self) -> Screen {
+        if self.rung.is_some() && self.ring != Ring::Ringing {
+            Screen::Timer
+        } else {
+            Screen::Alarm
+        }
     }
 
     #[must_use]
@@ -212,8 +262,9 @@ impl Ringer {
 
     #[must_use]
     pub fn held(&self) -> Ring {
-        match (self.ring(), self.running) {
-            (Ring::Quiet, Some(run)) => Ring::Held(run.ends),
+        match (self.ring(), self.running.map(|run| run.count)) {
+            (Ring::Quiet, Some(Count::Ends(ends))) => Ring::Held(ends),
+            (Ring::Quiet, Some(Count::Paused(_))) => Ring::Paused,
             (ring, _) => ring,
         }
     }
@@ -268,15 +319,31 @@ impl Ringer {
         self.timers.insert(at, self.countdown);
     }
 
-    fn start(&mut self, now: UnixSeconds) {
-        self.running = match self.running {
-            Some(_) => None,
-            None if self.countdown.is_zero() => None,
-            None => Some(Run {
-                length: self.countdown,
-                ends: UnixSeconds(now.0.saturating_add(self.countdown.total())),
-            }),
-        };
+    fn play(&mut self, index: usize, now: UnixSeconds) {
+        if self.running.is_some() {
+            return;
+        }
+        if let Some(&length) = self.timers.get(index) {
+            self.running = Some(Run {
+                length,
+                count: Count::Ends(UnixSeconds(now.0.saturating_add(length.total()))),
+            });
+        }
+    }
+
+    fn pause(&mut self, now: UnixSeconds) {
+        if let Some(run) = &mut self.running {
+            run.count = match run.count {
+                Count::Ends(ends) => Count::Paused(Countdown::of(ends.0.saturating_sub(now.0))),
+                Count::Paused(left) => Count::Ends(UnixSeconds(now.0.saturating_add(left.total()))),
+            };
+        }
+    }
+
+    fn close(&mut self) {
+        if self.paused().is_some() {
+            self.running = None;
+        }
     }
 
     fn picked_on(&self, screen: Screen) -> Picked {
@@ -301,7 +368,7 @@ impl Ringer {
             self.next = Some(after(alarm, now, offset));
         }
         if let Some(run) = self.running
-            && now >= run.ends
+            && run.ends().is_some_and(|ends| now >= ends)
         {
             self.running = None;
             self.rung = Some(run.length);
@@ -329,14 +396,12 @@ impl Ringer {
         self.recovery_marked = false;
     }
 
-    fn touched_timer(&mut self, target: Target, marked: Option<usize>) {
+    fn touched_timer(&mut self, target: Target, marked: Option<usize>, now: UnixSeconds) {
         match target {
             Target::Add => self.add_timer(),
-            Target::Entry(index) => {
-                if let Some(&timer) = self.timers.get(index) {
-                    self.countdown = timer;
-                }
-            }
+            Target::Play(index) => self.play(index, now),
+            Target::Pause => self.pause(now),
+            Target::Close => self.close(),
             Target::Remove(index) if index < self.timers.len() && marked == Some(index) => {
                 self.timers.remove(index);
             }
@@ -366,8 +431,7 @@ impl Ringer {
                     moved: false,
                 });
             }
-            Target::Start => self.start(now),
-            _ if screen == Screen::Timer => self.touched_timer(target, marked),
+            _ if screen == Screen::Timer => self.touched_timer(target, marked, now),
             Target::Add => self.add(),
             Target::Entry(index) if self.active == Some(index) => self.disarm(),
             Target::Entry(index) => self.activate(index, now, offset),
@@ -377,7 +441,12 @@ impl Ringer {
             Target::LitTime => self.lit_seconds = next_lit_seconds(self.lit_seconds),
             Target::Recovery if recovery_marked => self.recovery = true,
             Target::Recovery => self.recovery_marked = true,
-            Target::Remove(_) | Target::Tab(_) | Target::Blank => {}
+            Target::Remove(_)
+            | Target::Play(_)
+            | Target::Pause
+            | Target::Close
+            | Target::Tab(_)
+            | Target::Blank => {}
         }
     }
 
@@ -427,9 +496,11 @@ impl Ringer {
             recovery_marked: self.recovery_marked,
             timers: self.timers.clone(),
             countdown: self.countdown,
-            left: self
-                .running
-                .map(|run| Countdown::of(run.ends.0.saturating_sub(now.0))),
+            running: self.running.map(|run| Running {
+                left: run.left(now),
+                length: run.length,
+                paused: run.ends().is_none(),
+            }),
             rung: self.rung.filter(|_| self.ring != Ring::Ringing),
             volume: None,
         }
@@ -447,6 +518,9 @@ pub fn show(
     let now = clock.now()?;
     ringer.tick(now, offset);
     light.tick(now, ringer.ring());
+    if ringer.ring() == Ring::Ringing {
+        light.open(ringer.ringing_screen());
+    }
     if !light.lit() {
         ringer.darkened();
     }
@@ -481,7 +555,7 @@ pub fn listen(
             InputEvent::Press(key) => ringer.pressed(key),
             _ if ring == Ring::Ringing => {}
             InputEvent::Touch { x, y } => {
-                let touched = target(size, light.screen(), x, y);
+                let touched = target(size, light.screen(), ringer.stage(), x, y);
                 if let Target::Tab(screen) = touched {
                     light.open(screen);
                 }
@@ -503,6 +577,7 @@ mod tests {
 
     use super::*;
     use crate::face::Frame;
+    use crate::light::VOLUME_SECONDS;
     use crate::time::TimeError;
 
     const PANEL: Size = Size {
@@ -526,7 +601,19 @@ mod tests {
     const ALARM_TAB: [InputEvent; 2] = tap(180, 2200);
     const TIMER_TAB: [InputEvent; 2] = tap(540, 2200);
     const SETTINGS_TAB: [InputEvent; 2] = tap(900, 2200);
-    const START: [InputEvent; 2] = tap(540, 580);
+    const TIMER_MINUTES_ABOVE: [InputEvent; 2] = tap(200, 220);
+    const TIMER_MINUTES_BELOW: [InputEvent; 2] = tap(200, 600);
+    const TIMER_SECONDS_ABOVE: [InputEvent; 2] = tap(450, 220);
+    const TIMER_SECONDS_BELOW: [InputEvent; 2] = tap(450, 600);
+    const TIMER_ADD: [InputEvent; 2] = tap(700, 400);
+    const TIMER_FIRST: [InputEvent; 2] = tap(300, 820);
+    const PLAY_FIRST: [InputEvent; 2] = tap(700, 820);
+    const PLAY_SECOND: [InputEvent; 2] = tap(700, 1000);
+    const TIMER_REMOVE_FIRST: [InputEvent; 2] = tap(930, 820);
+    const TIMER_REMOVE_SECOND: [InputEvent; 2] = tap(930, 1000);
+    const TIMER_BLANK: [InputEvent; 2] = tap(540, 1600);
+    const PAUSE: [InputEvent; 2] = tap(540, 1667);
+    const CLOSE: [InputEvent; 2] = tap(218, 1667);
     const VOLUME: [InputEvent; 2] = [
         InputEvent::Press(Key::VolumeUp),
         InputEvent::Press(Key::VolumeDown),
@@ -1119,11 +1206,11 @@ mod tests {
         drain(
             &mut FakeInput::with(&[
                 &TIMER_TAB,
-                &FIRST,
-                &HOUR_ABOVE,
-                &MINUTE_BELOW,
-                &ADD,
-                &REMOVE_FIRST,
+                &TIMER_FIRST,
+                &TIMER_MINUTES_ABOVE,
+                &TIMER_SECONDS_BELOW,
+                &TIMER_ADD,
+                &TIMER_REMOVE_FIRST,
             ]),
             &clock,
             &mut ringer,
@@ -1158,11 +1245,21 @@ mod tests {
         let mut on = |gestures: &[&[InputEvent]], ringer: &mut Ringer| {
             drain_lit(&mut FakeInput::with(gestures), &clock, ringer, &mut light)
         };
-        on(&[&TIMER_TAB, &HOUR_BELOW, &MINUTE_BELOW], &mut ringer)?;
+        on(
+            &[&TIMER_TAB, &TIMER_MINUTES_BELOW, &TIMER_SECONDS_BELOW],
+            &mut ringer,
+        )?;
         assert_eq!(ringer.countdown(), Countdown::LONGEST);
-        on(&[&HOUR_ABOVE, &MINUTE_ABOVE, &MINUTE_ABOVE], &mut ringer)?;
+        on(
+            &[
+                &TIMER_MINUTES_ABOVE,
+                &TIMER_SECONDS_ABOVE,
+                &TIMER_SECONDS_ABOVE,
+            ],
+            &mut ringer,
+        )?;
         assert_eq!(ringer.countdown(), Countdown::new(0, 1)?);
-        on(&[&drag(300, 1000, &[1000 - 3 * PITCH])], &mut ringer)?;
+        on(&[&drag(200, 400, &[400 - 3 * PITCH])], &mut ringer)?;
         assert_eq!(ringer.countdown(), Countdown::new(3, 1)?);
         Ok(())
     }
@@ -1175,22 +1272,26 @@ mod tests {
         drain(
             &mut FakeInput::with(&[
                 &TIMER_TAB,
-                &HOUR_BELOW,
-                &HOUR_BELOW,
-                &MINUTE_ABOVE,
-                &ADD,
-                &ADD,
+                &TIMER_MINUTES_BELOW,
+                &TIMER_MINUTES_BELOW,
+                &TIMER_SECONDS_ABOVE,
+                &TIMER_ADD,
+                &TIMER_ADD,
             ]),
             &clock,
             &mut ringer,
         )?;
         assert_eq!(ringer.timers(), countdowns(&[(3, 1), (5, 0)])?);
         let mut zero = timed(&[])?;
-        drain(&mut FakeInput::with(&[&TIMER_TAB, &ADD]), &clock, &mut zero)?;
+        drain(
+            &mut FakeInput::with(&[&TIMER_TAB, &TIMER_ADD]),
+            &clock,
+            &mut zero,
+        )?;
         assert_eq!(zero.timers(), []);
         let mut full = timed(&[(1, 0), (2, 0), (3, 0), (4, 0)])?;
         drain(
-            &mut FakeInput::with(&[&TIMER_TAB, &MINUTE_BELOW, &ADD]),
+            &mut FakeInput::with(&[&TIMER_TAB, &TIMER_SECONDS_BELOW, &TIMER_ADD]),
             &clock,
             &mut full,
         )?;
@@ -1210,45 +1311,102 @@ mod tests {
         let mut on = |gestures: &[&[InputEvent]], ringer: &mut Ringer| {
             drain_lit(&mut FakeInput::with(gestures), &clock, ringer, &mut light)
         };
-        on(&[&TIMER_TAB, &REMOVE_SECOND], &mut ringer)?;
+        on(&[&TIMER_TAB, &TIMER_REMOVE_SECOND], &mut ringer)?;
         assert_eq!(ringer.timers(), countdowns(&[(1, 0), (2, 0)])?);
-        on(&[&REMOVE_SECOND], &mut ringer)?;
+        on(&[&TIMER_REMOVE_SECOND], &mut ringer)?;
         assert_eq!(ringer.timers(), countdowns(&[(1, 0)])?);
-        on(&[&REMOVE_FIRST, &BLANK, &REMOVE_FIRST], &mut ringer)?;
+        on(
+            &[&TIMER_REMOVE_FIRST, &TIMER_BLANK, &TIMER_REMOVE_FIRST],
+            &mut ringer,
+        )?;
         assert_eq!(ringer.timers(), countdowns(&[(1, 0)])?);
         Ok(())
     }
 
     #[test]
-    fn a_timer_started_from_its_entry_rings_at_its_end_until_power()
+    fn a_tap_on_a_saved_timer_outside_its_play_and_cross_does_nothing()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(12, 0, 0);
+        let mut ringer = timed(&[(1, 30), (5, 0)])?;
+        let before = ringer.clone();
+        drain(
+            &mut FakeInput::with(&[&TIMER_TAB, &TIMER_FIRST]),
+            &clock,
+            &mut ringer,
+        )?;
+        assert_eq!(ringer, before);
+        Ok(())
+    }
+
+    fn shown(
+        clock: &FakeClock,
+        ringer: &mut Ringer,
+        light: &mut Light,
+    ) -> Result<Frame, Box<dyn std::error::Error>> {
+        let mut display = FakeDisplay::default();
+        show(
+            clock,
+            UtcOffset::UTC,
+            ringer,
+            light,
+            Gauge::UNREAD,
+            &mut display,
+        )?;
+        Ok(display.shown.pop().ok_or("nothing shown")?)
+    }
+
+    #[test]
+    fn a_saved_timer_played_from_the_list_rings_at_its_end_and_power_returns_to_the_list()
     -> Result<(), Box<dyn std::error::Error>> {
         let clock = FakeClock::at(12, 0, 0);
         let mut ringer = timed(&[(1, 30), (5, 0)])?;
         let mut light = always();
+        let list = |ringer: &Ringer| -> Result<Frame, Box<dyn std::error::Error>> {
+            let face = ringer.face(clock.now()?, UtcOffset::UTC, Gauge::UNREAD, Screen::Timer);
+            Ok(render(PANEL, &face))
+        };
         drain_lit(
-            &mut FakeInput::with(&[&TIMER_TAB, &SECOND, &START]),
+            &mut FakeInput::with(&[&TIMER_TAB]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        let listed = list(&ringer)?;
+        assert_eq!(ringer.stage(), Stage::List);
+        drain_lit(
+            &mut FakeInput::with(&[&PLAY_SECOND]),
             &clock,
             &mut ringer,
             &mut light,
         )?;
         let ends = UnixSeconds(clock.now()?.0 + 300);
+        assert_eq!(ringer.stage(), Stage::Running);
         assert_eq!(ringer.running_until(), Some(ends));
         assert_eq!(ringer.held(), Ring::Held(ends));
         clock.pass(1);
         let face = ringer.face(clock.now()?, UtcOffset::UTC, Gauge::UNREAD, Screen::Timer);
-        assert_eq!(face.left, Some(Countdown::new(4, 59)?));
+        assert_eq!(
+            face.running,
+            Some(Running {
+                left: Countdown::new(4, 59)?,
+                length: Countdown::new(5, 0)?,
+                paused: false,
+            })
+        );
+        assert_ne!(shown(&clock, &mut ringer, &mut light)?, listed);
         clock.pass(298);
         ringer.tick(clock.now()?, UtcOffset::UTC);
         assert_eq!(ringer.ring(), Ring::Quiet);
         clock.pass(1);
-        ringer.tick(clock.now()?, UtcOffset::UTC);
+        shown(&clock, &mut ringer, &mut light)?;
         assert_eq!(ringer.ring(), Ring::Ringing);
         assert_eq!(ringer.running_until(), None);
+        assert_eq!(light.screen(), Screen::Timer);
         let face = ringer.face(clock.now()?, UtcOffset::UTC, Gauge::UNREAD, Screen::Timer);
         assert!(face.ringing);
         assert_eq!(face.rung, Some(Countdown::new(5, 0)?));
         drain_lit(
-            &mut FakeInput::with(&[&VOLUME, &START]),
+            &mut FakeInput::with(&[&VOLUME, &PLAY_FIRST]),
             &clock,
             &mut ringer,
             &mut light,
@@ -1263,42 +1421,121 @@ mod tests {
         )?;
         assert_eq!(ringer.ring(), Ring::Quiet);
         assert_eq!(ringer.held(), Ring::Quiet);
+        assert_eq!(ringer.stage(), Stage::List);
+        assert_eq!(light.screen(), Screen::Timer);
+        clock.pass(VOLUME_SECONDS);
+        assert_eq!(shown(&clock, &mut ringer, &mut light)?, list(&ringer)?);
         Ok(())
     }
 
     #[test]
-    fn start_stops_a_running_timer_and_does_nothing_at_zero()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn pause_holds_the_time_left_and_resume_continues_it() -> Result<(), Box<dyn std::error::Error>>
+    {
         let clock = FakeClock::at(12, 0, 0);
         let mut ringer = timed(&[(1, 30)])?;
         let mut light = always();
-        drain_lit(
-            &mut FakeInput::with(&[&TIMER_TAB, &START]),
-            &clock,
-            &mut ringer,
-            &mut light,
-        )?;
-        assert_eq!(
-            ringer.running_until(),
-            Some(UnixSeconds(clock.now()?.0 + 90))
-        );
-        drain_lit(
-            &mut FakeInput::with(&[&START]),
-            &clock,
-            &mut ringer,
-            &mut light,
-        )?;
+        let mut on = |gestures: &[&[InputEvent]], ringer: &mut Ringer| {
+            drain_lit(&mut FakeInput::with(gestures), &clock, ringer, &mut light)
+        };
+        on(&[&TIMER_TAB, &PLAY_FIRST], &mut ringer)?;
+        clock.pass(30);
+        on(&[&PAUSE], &mut ringer)?;
+        assert_eq!(ringer.paused(), Some(Countdown::new(1, 0)?));
         assert_eq!(ringer.running_until(), None);
+        assert_eq!(ringer.held(), Ring::Paused);
+        assert_eq!(ringer.stage(), Stage::Running);
+        clock.pass(600);
+        ringer.tick(clock.now()?, UtcOffset::UTC);
+        assert_eq!(ringer.ring(), Ring::Quiet);
+        let face = ringer.face(clock.now()?, UtcOffset::UTC, Gauge::UNREAD, Screen::Timer);
+        assert_eq!(
+            face.running,
+            Some(Running {
+                left: Countdown::new(1, 0)?,
+                length: Countdown::new(1, 30)?,
+                paused: true,
+            })
+        );
+        on(&[&PAUSE], &mut ringer)?;
+        let ends = UnixSeconds(clock.now()?.0 + 60);
+        assert_eq!(ringer.paused(), None);
+        assert_eq!(ringer.running_until(), Some(ends));
+        assert_eq!(ringer.held(), Ring::Held(ends));
+        clock.pass(60);
+        ringer.tick(clock.now()?, UtcOffset::UTC);
+        assert_eq!(ringer.ring(), Ring::Ringing);
+        Ok(())
+    }
+
+    #[test]
+    fn the_x_ends_a_paused_timer_and_returns_to_the_list_but_not_a_running_one()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(12, 0, 0);
+        let mut ringer = timed(&[(1, 30), (5, 0)])?;
+        let mut light = always();
+        let mut on = |gestures: &[&[InputEvent]], ringer: &mut Ringer| {
+            drain_lit(&mut FakeInput::with(gestures), &clock, ringer, &mut light)
+        };
+        on(&[&TIMER_TAB, &PLAY_FIRST], &mut ringer)?;
+        let ends = ringer.running_until();
+        on(&[&CLOSE, &PLAY_SECOND], &mut ringer)?;
+        assert_eq!(ringer.running_until(), ends);
+        assert_eq!(ringer.stage(), Stage::Running);
+        on(&[&PAUSE, &CLOSE], &mut ringer)?;
+        assert_eq!(ringer.stage(), Stage::List);
+        assert_eq!(ringer.running_until(), None);
+        assert_eq!(ringer.paused(), None);
+        assert_eq!(ringer.held(), Ring::Quiet);
+        assert_eq!(ringer.timers(), countdowns(&[(1, 30), (5, 0)])?);
         clock.pass(90);
         ringer.tick(clock.now()?, UtcOffset::UTC);
         assert_eq!(ringer.ring(), Ring::Quiet);
-        let mut zero = timed(&[])?;
-        drain(
-            &mut FakeInput::with(&[&TIMER_TAB, &START]),
-            &clock,
-            &mut zero,
+        on(&[&PLAY_SECOND], &mut ringer)?;
+        assert_eq!(
+            ringer.running_until(),
+            Some(UnixSeconds(clock.now()?.0 + 300))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_switch_to_another_tab_and_back_keeps_the_stage_and_the_timer()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 0, 0);
+        let mut ringer = timed(&[(1, 30)])?;
+        let mut light = always();
+        let mut on = |gestures: &[&[InputEvent]], ringer: &mut Ringer| {
+            drain_lit(&mut FakeInput::with(gestures), &clock, ringer, &mut light)
+        };
+        on(&[&TIMER_TAB, &PLAY_FIRST], &mut ringer)?;
+        let ends = ringer.running_until();
+        on(
+            &[&ALARM_TAB, &FIRST, &SETTINGS_TAB, &TIMER_TAB],
+            &mut ringer,
         )?;
-        assert_eq!(zero.running_until(), None);
+        assert_eq!(ringer.stage(), Stage::Running);
+        assert_eq!(ringer.running_until(), ends);
+        assert!(ringer.armed());
+        clock.pass(10);
+        on(&[&PAUSE, &ALARM_TAB, &TIMER_TAB], &mut ringer)?;
+        assert_eq!(ringer.stage(), Stage::Running);
+        assert_eq!(ringer.paused(), Some(Countdown::new(1, 20)?));
+        on(&[&CLOSE, &SETTINGS_TAB, &TIMER_TAB], &mut ringer)?;
+        assert_eq!(ringer.stage(), Stage::List);
+        Ok(())
+    }
+
+    #[test]
+    fn play_on_an_empty_row_starts_nothing() -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(12, 0, 0);
+        let mut ringer = timed(&[(1, 30)])?;
+        drain(
+            &mut FakeInput::with(&[&TIMER_TAB, &PLAY_SECOND]),
+            &clock,
+            &mut ringer,
+        )?;
+        assert_eq!(ringer.stage(), Stage::List);
+        assert_eq!(timed(&[])?.held(), Ring::Quiet);
         Ok(())
     }
 
@@ -1308,7 +1545,7 @@ mod tests {
         let clock = FakeClock::at(6, 59, 0);
         let mut ringer = timed(&[(5, 0)])?;
         drain(
-            &mut FakeInput::with(&[&FIRST, &TIMER_TAB, &START, &DISMISS]),
+            &mut FakeInput::with(&[&FIRST, &TIMER_TAB, &PLAY_FIRST, &DISMISS]),
             &clock,
             &mut ringer,
         )?;
@@ -1643,13 +1880,13 @@ mod tests {
         let mut on = |gestures: &[&[InputEvent]], ringer: &mut Ringer| {
             drain_lit(&mut FakeInput::with(gestures), &clock, ringer, &mut light)
         };
-        on(&[&TIMER_TAB, &HOUR_ABOVE], &mut timer)?;
+        on(&[&TIMER_TAB, &TIMER_MINUTES_ABOVE], &mut timer)?;
         assert_eq!(timer.countdown(), Countdown::new(1, 0)?);
-        on(&[&MINUTE_ABOVE], &mut timer)?;
+        on(&[&TIMER_SECONDS_ABOVE], &mut timer)?;
         assert_eq!(timer.countdown(), Countdown::new(1, 1)?);
-        on(&[&HOUR_BELOW, &HOUR_BELOW], &mut timer)?;
+        on(&[&TIMER_MINUTES_BELOW, &TIMER_MINUTES_BELOW], &mut timer)?;
         assert_eq!(timer.countdown(), Countdown::new(99, 1)?);
-        on(&[&MINUTE_BELOW, &MINUTE_BELOW], &mut timer)?;
+        on(&[&TIMER_SECONDS_BELOW, &TIMER_SECONDS_BELOW], &mut timer)?;
         assert_eq!(timer.countdown(), Countdown::LONGEST);
         Ok(())
     }

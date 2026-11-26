@@ -45,7 +45,8 @@ impl Vibration {
     ) -> Result<(), HardwareError> {
         match (ring, self.state) {
             (Ring::Ringing, State::Pulsing(next)) if now < next => Ok(()),
-            (Ring::Ringing, State::Failed) | (Ring::Quiet | Ring::Held(_), State::Still) => Ok(()),
+            (Ring::Ringing, State::Failed)
+            | (Ring::Quiet | Ring::Held(_) | Ring::Paused, State::Still) => Ok(()),
             (Ring::Ringing, State::Still | State::Pulsing(_)) => {
                 match vibrator.vibrate(PULSE_MILLISECONDS) {
                     Ok(()) => {
@@ -59,11 +60,11 @@ impl Vibration {
                     }
                 }
             }
-            (Ring::Quiet | Ring::Held(_), State::Pulsing(_)) => {
+            (Ring::Quiet | Ring::Held(_) | Ring::Paused, State::Pulsing(_)) => {
                 self.state = State::Still;
                 vibrator.stop()
             }
-            (Ring::Quiet | Ring::Held(_), State::Failed) => {
+            (Ring::Quiet | Ring::Held(_) | Ring::Paused, State::Failed) => {
                 self.state = State::Still;
                 Ok(())
             }

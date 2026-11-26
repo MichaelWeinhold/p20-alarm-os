@@ -85,7 +85,7 @@ impl Sound {
                 speaker.set_volume(volume)
             }
             (Ring::Ringing, State::Playing(_) | State::Failed)
-            | (Ring::Quiet | Ring::Held(_), State::Quiet) => Ok(()),
+            | (Ring::Quiet | Ring::Held(_) | Ring::Paused, State::Quiet) => Ok(()),
             (Ring::Ringing, State::Quiet) => match speaker.start(volume) {
                 Ok(()) => {
                     self.state = State::Playing(volume);
@@ -96,11 +96,11 @@ impl Sound {
                     Err(error)
                 }
             },
-            (Ring::Quiet | Ring::Held(_), State::Playing(_)) => {
+            (Ring::Quiet | Ring::Held(_) | Ring::Paused, State::Playing(_)) => {
                 self.state = State::Quiet;
                 speaker.stop()
             }
-            (Ring::Quiet | Ring::Held(_), State::Failed) => {
+            (Ring::Quiet | Ring::Held(_) | Ring::Paused, State::Failed) => {
                 self.state = State::Quiet;
                 Ok(())
             }

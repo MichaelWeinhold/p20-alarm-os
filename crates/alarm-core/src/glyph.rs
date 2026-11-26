@@ -3,6 +3,7 @@ use ttf_parser::{Face, GlyphId, OutlineBuilder, Rect};
 
 const INTER: &[u8] = include_bytes!("../fonts/inter-light-figures.ttf");
 const SYMBOLS: &[u8] = include_bytes!("../fonts/material-symbols-light-icons.ttf");
+const RING_STEPS: i64 = 360;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Icon {
@@ -17,7 +18,7 @@ pub(crate) enum Icon {
     Up,
     Down,
     Play,
-    Stop,
+    Pause,
     On,
     Off,
     Recovery,
@@ -39,7 +40,7 @@ impl Icon {
         Self::Up,
         Self::Down,
         Self::Play,
-        Self::Stop,
+        Self::Pause,
         Self::On,
         Self::Off,
         Self::Recovery,
@@ -60,7 +61,7 @@ impl Icon {
             Self::Up => '\u{e316}',
             Self::Down => '\u{e313}',
             Self::Play => '\u{e037}',
-            Self::Stop => '\u{e047}',
+            Self::Pause => '\u{e034}',
             Self::On => '\u{e9f6}',
             Self::Off => '\u{e9f5}',
             Self::Recovery => '\u{f8cd}',
@@ -229,19 +230,72 @@ fn traced(
         last: point(0.0, 0.0),
     };
     face.outline_glyph(id, &mut outline)?;
-    outline.raster.for_each_pixel(|index, coverage| {
+    covered(&outline.raster, (across, down), plot);
+    Some(())
+}
+
+fn covered(
+    raster: &Rasterizer,
+    (across, down): (Span, Span),
+    plot: &mut impl FnMut(usize, usize, u8),
+) {
+    raster.for_each_pixel(|index, coverage| {
         let x = across.start + i64::try_from(index % across.length).unwrap_or(i64::MAX);
         let y = down.start + i64::try_from(index / across.length).unwrap_or(i64::MAX);
         if let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y)) {
             plot(x, y, level(coverage));
         }
     });
+}
+
+pub(crate) fn ring(
+    square: Square,
+    thickness: usize,
+    share: (i64, i64),
+    mut plot: impl FnMut(usize, usize, u8),
+) {
+    let _ = drawn_ring(square, thickness, share, &mut plot);
+}
+
+fn drawn_ring(
+    square: Square,
+    thickness: usize,
+    (part, whole): (i64, i64),
+    plot: &mut impl FnMut(usize, usize, u8),
+) -> Option<()> {
+    let part = part.min(whole);
+    if part <= 0 || 2 * thickness > square.size {
+        return None;
+    }
+    let size = i64::try_from(square.size).ok()?;
+    let across = span(i64::try_from(square.centre2).ok()? - size, 2 * size, 2)?;
+    let down = span(i64::try_from(square.middle2).ok()? - size, 2 * size, 2)?;
+    let outer = ratio(size, 2)?;
+    let inner = outer - ratio(i64::try_from(thickness).ok()?, 1)?;
+    let steps = (RING_STEPS * part + whole - 1) / whole;
+    let turn = std::f32::consts::TAU * ratio(part, whole)?;
+    let (left, top) = (across.offset + outer, down.offset + outer);
+    let along = |radius: f32, step: i64| {
+        let (sin, cos) = (turn * ratio(step, steps)?).sin_cos();
+        Some(point(left + radius * sin, top - radius * cos))
+    };
+    let path = (0..=steps)
+        .map(|step| along(outer, step))
+        .chain((0..=steps).rev().map(|step| along(inner, step)))
+        .collect::<Option<Vec<_>>>()?;
+    let mut raster = Rasterizer::new(across.length, down.length);
+    let mut last = *path.last()?;
+    for &next in &path {
+        raster.draw_line(last, next);
+        last = next;
+    }
+    covered(&raster, (across, down), plot);
     Some(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Align, Icon, Place, Square, icon, rasterise};
+    use super::{Align, Icon, Place, Square, icon, rasterise, ring};
 
     const FIGURES: &str = "0123456789:%-";
 
@@ -406,5 +460,44 @@ mod tests {
         });
         assert_ne!(found, Vec::new());
         assert!(found.iter().all(|&(x, y)| x < 48 && y < 48));
+    }
+
+    fn drawn_ring(share: (i64, i64)) -> Vec<(usize, usize)> {
+        let mut found = Vec::new();
+        let square = Square {
+            centre2: 200,
+            middle2: 200,
+            size: 96,
+        };
+        ring(square, 8, share, |x, y, alpha| {
+            if alpha > 127 {
+                found.push((x, y));
+            }
+        });
+        found
+    }
+
+    #[test]
+    fn an_empty_ring_draws_nothing() {
+        assert_eq!(drawn_ring((0, 180)), Vec::new());
+    }
+
+    #[test]
+    fn a_full_ring_is_a_band_around_the_square() {
+        let full = drawn_ring((180, 180));
+        assert!(full.contains(&(100, 54)));
+        assert!(full.contains(&(54, 100)));
+        assert!(full.contains(&(145, 100)));
+        assert!(full.contains(&(100, 145)));
+        assert!(!full.contains(&(100, 100)));
+        assert!(!full.contains(&(100, 70)));
+    }
+
+    #[test]
+    fn a_half_ring_runs_clockwise_from_the_top_down_the_right() {
+        let half = drawn_ring((90, 180));
+        assert!(half.contains(&(145, 100)));
+        assert!(!half.contains(&(54, 100)));
+        assert!(half.iter().all(|&(x, _)| x >= 99));
     }
 }

@@ -35,7 +35,7 @@ ICONS: Final[Mapping[str, int]] = {
     "keyboard_arrow_up": 0xE316,
     "keyboard_arrow_down": 0xE313,
     "play_arrow": 0xE037,
-    "stop": 0xE047,
+    "pause": 0xE034,
     "toggle_on": 0xE9F6,
     "toggle_off": 0xE9F5,
     "build": 0xF8CD,
