@@ -255,13 +255,11 @@ fn played(
     stopping: &AtomicBool,
 ) -> Result<(), HardwareError> {
     let mut at = 0;
+    let mut unscaled = Vec::new();
     let mut period = Vec::new();
     while !stopping.load(Ordering::Acquire) {
-        pcm::scaled(
-            pcm::period(samples, at),
-            gain.load(Ordering::Relaxed),
-            &mut period,
-        );
+        pcm::period(samples, at, &mut unscaled);
+        pcm::scaled(&unscaled, gain.load(Ordering::Relaxed), &mut period);
         match written(pcm, &period) {
             Ok(0) => return Err(refused(pcm::DEVICE, "wrote no frames".to_owned())),
             Ok(frames) => at = pcm::next(samples, at, frames),
