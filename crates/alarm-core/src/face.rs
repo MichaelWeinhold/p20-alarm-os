@@ -8,7 +8,6 @@ use crate::time::{Countdown, SECONDS_PER_DAY, TimeOfDay, Weekday};
 pub const BACKGROUND: Colour = Colour(0x00_0000);
 pub const FOREGROUND: Colour = Colour(0xff_ffff);
 pub const WARNING: Colour = Colour(0xff_3b30);
-pub const RINGING: Colour = Colour(0xff_9f0a);
 pub const DIM: Colour = Colour(0x63_6366);
 pub const ACCENT: Gradient = Gradient {
     from: Colour(0x57_a2f3),
@@ -292,11 +291,9 @@ fn mixed(over: Colour, under: Colour, alpha: u8) -> Colour {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Layout {
     unit: usize,
-    clock: (usize, usize),
     status_unit: usize,
     symbol: (usize, usize),
     alarm_unit: usize,
-    alarm: (usize, usize),
     tab_unit: usize,
     bar_top: usize,
 }
@@ -327,11 +324,9 @@ fn layout(size: Size) -> Option<Layout> {
     }
     Some(Layout {
         unit,
-        clock: ((size.width - UNITS_ACROSS * unit) / 2, top),
         status_unit,
         symbol: (size.width - unit - SYMBOL_UNITS * status_unit, unit),
         alarm_unit,
-        alarm: ((size.width - UNITS_ACROSS * alarm_unit) / 2, alarm_top),
         tab_unit,
         bar_top,
     })
@@ -453,6 +448,58 @@ fn dial(size: Size, layout: &Layout) -> Option<Dial> {
         centre: size.width / 2,
         top,
         controls: top + (RING_UNITS + CONTROL_GAP_UNITS) * unit,
+    })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Halo {
+    unit: usize,
+    centre: usize,
+    top: usize,
+    power: usize,
+}
+
+impl Halo {
+    fn size(self) -> usize {
+        RING_UNITS * self.unit
+    }
+
+    fn figure(self) -> usize {
+        self.unit * 3 / 4
+    }
+
+    fn small(self) -> usize {
+        self.unit / 3
+    }
+
+    fn clock(self) -> usize {
+        (self.top + self.size() / 2).saturating_sub(DIGIT_HEIGHT_UNITS * self.figure() / 2)
+    }
+
+    fn rung(self) -> usize {
+        self.clock() + DIGIT_HEIGHT_UNITS * self.figure() + self.unit / 2
+    }
+
+    fn icon(self) -> usize {
+        ICON_UNITS * self.unit / 2
+    }
+}
+
+fn halo(size: Size, layout: &Layout) -> Option<Halo> {
+    let unit = layout.unit;
+    let ring = RING_UNITS * unit;
+    let gap = CONTROL_GAP_UNITS * unit;
+    let icon = ICON_UNITS * unit / 2;
+    let room = size.height.checked_sub(ring + gap + icon)?;
+    if ring > size.width {
+        return None;
+    }
+    let top = room / 2;
+    Some(Halo {
+        unit,
+        centre: size.width / 2,
+        top,
+        power: top + ring + gap,
     })
 }
 
@@ -1095,6 +1142,79 @@ fn running_stage(frame: &mut Frame, dial: Dial, running: Running) {
     }
 }
 
+fn ringing_screen(frame: &mut Frame, halo: Halo, face: &Face) {
+    let unit = halo.unit;
+    let size = halo.size();
+    let square = Square {
+        centre2: 2 * halo.centre,
+        middle2: 2 * halo.top + size,
+        size,
+    };
+    let left = halo.centre.saturating_sub(size / 2);
+    glyph::ring(square, unit / 2, (1, 1), |x, y, _, arc| {
+        let colour = ACCENT.at(
+            x.saturating_sub(left) + y.saturating_sub(halo.top),
+            2 * size,
+        );
+        frame.blend(x, y, colour, arc);
+    });
+    let figure = halo.figure();
+    let clock = halo.clock();
+    let icon = if face.rung.is_some() {
+        Icon::Timer
+    } else {
+        Icon::Alarm
+    };
+    let symbol = halo.icon();
+    centred(
+        frame,
+        icon,
+        (
+            2 * halo.centre,
+            (2 * clock).saturating_sub(2 * unit + symbol),
+        ),
+        symbol,
+        Ink::Accent,
+    );
+    time(
+        frame,
+        (halo.centre.saturating_sub(UNITS_ACROSS * figure / 2), clock),
+        figure,
+        Some(face.time),
+        FOREGROUND,
+    );
+    let small = halo.small();
+    match (face.rung, face.rang) {
+        (Some(rung), _) => figures(
+            frame,
+            (
+                halo.centre.saturating_sub(COUNTDOWN_UNITS * small / 2),
+                halo.rung(),
+            ),
+            small,
+            &of_countdown(rung),
+            DIM,
+        ),
+        (None, rang) => time(
+            frame,
+            (
+                halo.centre.saturating_sub(UNITS_ACROSS * small / 2),
+                halo.rung(),
+            ),
+            small,
+            rang,
+            DIM,
+        ),
+    }
+    centred(
+        frame,
+        Icon::Power,
+        (2 * halo.centre, 2 * halo.power + symbol),
+        symbol,
+        Ink::Flat(DIM),
+    );
+}
+
 fn timer_screen(frame: &mut Frame, layout: &Layout, sheet: Sheet, face: &Face) {
     match (face.running, dial(frame.size(), layout)) {
         (Some(running), Some(dial)) => running_stage(frame, dial, running),
@@ -1153,12 +1273,10 @@ fn volume_panel(frame: &mut Frame, unit: usize, volume: Option<Volume>) {
 
 #[must_use]
 pub fn render(size: Size, face: &Face) -> Frame {
-    let background = if face.ringing { RINGING } else { BACKGROUND };
-    let mut frame = Frame::filled(size, background);
+    let mut frame = Frame::filled(size, BACKGROUND);
     let Some(layout) = layout(size) else {
         return frame;
     };
-    let digits = if face.ringing { BACKGROUND } else { FOREGROUND };
     let picker = sheet(size, &layout, Arrangement::Picker);
     let board = board(size, &layout);
     let shown = match face.screen {
@@ -1170,7 +1288,7 @@ pub fn render(size: Size, face: &Face) -> Frame {
         let status = if face.battery.level == Level::Low {
             WARNING
         } else {
-            digits
+            FOREGROUND
         };
         battery_symbol(
             &mut frame,
@@ -1181,26 +1299,8 @@ pub fn render(size: Size, face: &Face) -> Frame {
         );
     }
     if face.ringing {
-        time(
-            &mut frame,
-            layout.clock,
-            layout.unit,
-            Some(face.time),
-            digits,
-        );
-        let unit = layout.alarm_unit;
-        match (face.rung, face.rang) {
-            (Some(rung), _) => {
-                let left = (size.width.saturating_sub(COUNTDOWN_UNITS * unit)) / 2;
-                figures(
-                    &mut frame,
-                    (left, layout.alarm.1),
-                    unit,
-                    &of_countdown(rung),
-                    digits,
-                );
-            }
-            (None, rang) => time(&mut frame, layout.alarm, unit, rang, digits),
+        if let Some(halo) = halo(size, &layout) {
+            ringing_screen(&mut frame, halo, face);
         }
         volume_panel(&mut frame, layout.unit, face.volume);
         return frame;
@@ -1403,11 +1503,10 @@ mod tests {
         height: 2280,
     };
 
-    const PALETTE: [(Colour, char); 5] = [
+    const PALETTE: [(Colour, char); 4] = [
         (BACKGROUND, '.'),
         (FOREGROUND, '#'),
         (WARNING, '!'),
-        (RINGING, '~'),
         (DIM, ':'),
     ];
 
@@ -1711,7 +1810,7 @@ mod tests {
     }
 
     #[test]
-    fn a_ringing_alarm_turns_the_face_amber() -> Outcome {
+    fn a_ringing_alarm_shows_the_halo_as_recorded() -> Outcome {
         let frame = render(SMALL, &face(true, true, charged(64)?)?);
         assert_eq!(
             picture(&frame),
@@ -1838,7 +1937,7 @@ mod tests {
     }
 
     #[test]
-    fn a_ringing_timer_shows_its_length_in_amber_as_recorded() -> Outcome {
+    fn a_ringing_timer_shows_its_length_inside_the_halo_as_recorded() -> Outcome {
         let rung = Face {
             rung: Some(Countdown::new(0, 12, 5)?),
             ..timer(None, true)?
@@ -1947,12 +2046,31 @@ mod tests {
     }
 
     #[test]
-    fn a_ringing_alarm_takes_the_whole_panel_with_no_bar() -> Outcome {
+    fn a_ringing_alarm_draws_no_bar_below_the_halo() -> Outcome {
         let frame = render(PANEL, &face(true, true, charged(64)?)?);
+        let halo = halo(PANEL, &layout(PANEL).ok_or("no layout")?).ok_or("no halo")?;
         assert!(
-            (PANEL.height * 9 / 10..PANEL.height)
-                .all(|y| frame.row(y).iter().all(|&colour| colour == RINGING))
+            (halo.power + halo.icon()..PANEL.height)
+                .all(|y| frame.row(y).iter().all(|&colour| colour == BACKGROUND))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn the_halo_is_a_closed_ring_in_the_accent_on_black() -> Outcome {
+        let frame = render(PANEL, &face(true, true, charged(64)?)?);
+        let halo = halo(PANEL, &layout(PANEL).ok_or("no layout")?).ok_or("no halo")?;
+        let (size, band) = (halo.size(), halo.unit / 4);
+        let (left, middle) = (halo.centre - size / 2, halo.top + size / 2);
+        for (x, y) in [
+            (halo.centre, halo.top + band),
+            (halo.centre, halo.top + size - band),
+            (left + band, middle),
+            (left + size - band, middle),
+        ] {
+            assert!(solid(frame.row(y)[x]));
+        }
+        assert_eq!(frame.row(middle)[left + size / 8], BACKGROUND);
         Ok(())
     }
 
@@ -1987,7 +2105,11 @@ mod tests {
                 },
             );
             let filled = (0..SHEET.height)
-                .flat_map(|y| frame.row(y).iter().copied())
+                .flat_map(|y| {
+                    frame.row(y)[half..(VOLUME_HALVES + 1) * half]
+                        .iter()
+                        .copied()
+                })
                 .filter(|&pixel| solid(pixel))
                 .count();
             assert_eq!(filled, rows * half);
@@ -2004,13 +2126,21 @@ mod tests {
 
     #[test]
     fn a_ringing_face_with_no_alarm_rung_shows_dashes() -> Outcome {
-        let none = render(SMALL, &face(false, true, charged(64)?)?);
-        let some = render(SMALL, &face(true, true, charged(64)?)?);
+        let none = render(PANEL, &face(false, true, charged(64)?)?);
+        let some = render(PANEL, &face(true, true, charged(64)?)?);
+        let halo = halo(PANEL, &layout(PANEL).ok_or("no layout")?).ok_or("no halo")?;
+        let rung = halo.rung()..halo.rung() + DIGIT_HEIGHT_UNITS * halo.small();
         assert_ne!(none, some);
+        for y in 0..PANEL.height {
+            if !rung.contains(&y) {
+                assert_eq!(none.row(y), some.row(y));
+            }
+        }
+        let inside = halo.centre - halo.size() / 4..halo.centre + halo.size() / 4;
         assert!(
-            lit(&none)
-                .iter()
-                .all(|&(_, _, colour)| colour != FOREGROUND)
+            rung.flat_map(|y| none.row(y)[inside.clone()].iter().copied())
+                .filter(|&colour| colour != BACKGROUND)
+                .all(|colour| blended(colour, DIM))
         );
         Ok(())
     }
@@ -2043,12 +2173,12 @@ mod tests {
                 width: 1,
                 height: 1,
             },
-            RINGING,
+            WARNING,
         );
         frame.blend(0, 0, BACKGROUND, 0);
-        assert_eq!(frame.row(0), [RINGING]);
+        assert_eq!(frame.row(0), [WARNING]);
         frame.blend(0, 0, BACKGROUND, 0x80);
-        assert_eq!(frame.row(0), [Colour(0x7f_4f04)]);
+        assert_eq!(frame.row(0), [Colour(0x7f_1d17)]);
         frame.blend(0, 0, FOREGROUND, u8::MAX);
         assert_eq!(frame.row(0), [FOREGROUND]);
         frame.blend(1, 0, BACKGROUND, u8::MAX);
@@ -2066,7 +2196,7 @@ mod tests {
         assert!(![ACCENT.from, ACCENT.to].contains(&middle));
         assert!(accented(ACCENT.from) && accented(ACCENT.to));
         assert!(
-            [FOREGROUND, DIM, WARNING, RINGING]
+            [FOREGROUND, DIM, WARNING]
                 .into_iter()
                 .all(|colour| !accented(colour) && !accented(mixed(colour, BACKGROUND, 0x80)))
         );
