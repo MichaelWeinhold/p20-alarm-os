@@ -2441,3 +2441,18 @@ ten presses from 144.67 s, at 149.27 s; the panel lit for each at 116.75 s, 132.
 154.48 s, with no `hisi_pm_enter` between, and Power ended each ring. A press at 95.43 s
 had woken the suspend begun at 45.10 s and lit the panel at 96.17 s. The image was left
 on the phone.
+
+## 2026-11-26 — the lit icons in a blue-to-purple accent, for issue 121
+
+**`alarmd` at `553b7c8` is 635816 bytes**, sha256
+`0d9316ed8077d97375124c4d03bcbb6be23f6e40668125b1b55434cc7d816a47`, 784 bytes more than
+issue 117's. From TWRP 3.7.0_9-0 it was copied over `/init` on `system`, replacing issue
+117's `a859af31…b236`. `init.rom` still hashed `e8e2768e…78ef`, `misc`'s first 32 bytes
+read zero, and the RTC read 1795690033 against the Mac's 1795690038, before `adb reboot`
+at 10:47:20 UTC.
+
+**Every lit icon runs from blue `#57a2f3` to purple `#6e41d2`, and the end colours stay.**
+The operator saw the open tab on all three screens, the alarm's `+`, the timer's play and
+stop, and the settings switch drawn in the accent, each dim one in grey, the figures in
+white and a marked cross in red, and judged the two end colours right on the panel. No
+photos were taken. The image was left on the phone.
