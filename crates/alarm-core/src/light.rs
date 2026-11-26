@@ -5,6 +5,7 @@ use crate::time::UnixSeconds;
 
 pub const LIT_CHOICES: [i64; 5] = [10, 30, 60, 120, 300];
 pub const LIT_SECONDS: i64 = LIT_CHOICES[0];
+pub const QUIET_SECONDS: i64 = 2;
 
 #[must_use]
 pub fn next_lit_seconds(seconds: i64) -> i64 {
@@ -18,6 +19,7 @@ pub fn next_lit_seconds(seconds: i64) -> i64 {
 pub struct Light {
     seconds: i64,
     until: Option<UnixSeconds>,
+    pressed: Option<UnixSeconds>,
     screen: Screen,
 }
 
@@ -27,6 +29,7 @@ impl Light {
         Self {
             seconds,
             until: None,
+            pressed: None,
             screen: Screen::Alarm,
         }
     }
@@ -62,6 +65,19 @@ impl Light {
             .map(|until| until.0.saturating_sub(now.0).max(1).unsigned_abs())
     }
 
+    #[must_use]
+    pub fn settling(&self, now: UnixSeconds) -> Option<u64> {
+        self.pressed
+            .map(|pressed| {
+                pressed
+                    .0
+                    .saturating_add(QUIET_SECONDS)
+                    .saturating_sub(now.0)
+            })
+            .filter(|&left| left > 0)
+            .map(i64::unsigned_abs)
+    }
+
     pub fn tick(&mut self, now: UnixSeconds, ring: Ring) {
         if ring == Ring::Ringing {
             self.relit(now);
@@ -72,6 +88,9 @@ impl Light {
     }
 
     pub fn heard(&mut self, event: InputEvent, ring: Ring, now: UnixSeconds) {
+        if event == InputEvent::Press(Key::Power) {
+            self.pressed = Some(now);
+        }
         match (self.lit(), event, ring) {
             (true, InputEvent::Press(Key::Power), Ring::Quiet) => self.darken(),
             (true, _, _) | (false, InputEvent::Press(Key::Power), _) => self.relit(now),
@@ -127,6 +146,20 @@ mod tests {
         assert_eq!(light.seconds_left(at(30)), Some(10));
         light.tick(at(40), Ring::Quiet);
         assert!(!light.lit());
+    }
+
+    #[test]
+    fn power_settles_for_its_quiet_seconds_after_each_press_and_nothing_else_does() {
+        let mut light = Light::lit_at(START, LIT_SECONDS);
+        light.heard(TOUCH, Ring::Quiet, at(1));
+        light.heard(VOLUME, Ring::Quiet, at(1));
+        assert_eq!(light.settling(at(1)), None);
+        light.heard(POWER, Ring::Quiet, at(3));
+        light.heard(POWER, Ring::Quiet, at(4));
+        assert_eq!(
+            [4, 5, 6].map(|second| light.settling(at(second))),
+            [Some(2), Some(1), None]
+        );
     }
 
     #[test]

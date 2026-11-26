@@ -144,6 +144,7 @@ pub struct Sleep<W, S, P> {
 
 enum Rest {
     Awake,
+    Settling(u64),
     Armed(UnixSeconds),
     Disarmed,
     PoweredOff(Option<UnixSeconds>),
@@ -175,12 +176,16 @@ fn powered_off(
 fn suspended(
     clock: &impl Clock,
     ringer: &Ringer,
+    light: &Light,
     cable_in: Result<bool, HardwareError>,
     sleep: &mut Sleep<impl WakeAlarm, impl Suspend, impl PowerOff>,
     log: &mut Vec<String>,
 ) -> Result<Rest, HardwareError> {
     let now = clock.now()?;
     sleep.window.dark(now);
+    if let Some(left) = light.settling(now) {
+        return Ok(Rest::Settling(left));
+    }
     let until = match sleep.window.answer(now, ringer.held(), ringer.next()) {
         Answer::Suspend(at) if at > now => Some(at),
         Answer::PowerOff => {
@@ -218,8 +223,9 @@ pub fn rest(
         };
     }
     let mut log = Vec::new();
-    let (line, wait_seconds) = match suspended(clock, ringer, cable_in, sleep, &mut log) {
+    let (line, wait_seconds) = match suspended(clock, ringer, light, cable_in, sleep, &mut log) {
         Ok(Rest::Awake) => (None, wait_seconds),
+        Ok(Rest::Settling(left)) => (None, wait_seconds.min(left)),
         Ok(Rest::Armed(at)) => (
             Some(kmsg::line(&format!(
                 "resumed from a suspend armed for {}",
@@ -478,7 +484,7 @@ mod tests {
     use alarm_core::face::{
         Face, Field, Frame, RINGING, Row, Screen, Size, Target, WARNING, render,
     };
-    use alarm_core::input::Key;
+    use alarm_core::input::{InputEvent, Key};
     use alarm_core::light::LIT_SECONDS;
     use alarm_core::ringer::Ring;
     use alarm_core::settings::{RECORD_BYTES, SLOT_BYTES, Slot};
@@ -1247,6 +1253,30 @@ mod tests {
             }
         );
         assert_eq!(resting.armed(), Some([Some(ends)].as_slice()));
+        assert_eq!(resting.suspends(), Some(1));
+        Ok(())
+    }
+
+    #[test]
+    fn a_press_that_darkens_the_panel_suspends_only_once_power_is_quiet()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ringer = ringer()?;
+        let mut resting = Resting::new();
+        let mut light = Light::lit_at(at(19, 37, 0).now()?, LIT_SECONDS);
+        light.heard(
+            InputEvent::Press(Key::Power),
+            Ring::Quiet,
+            at(19, 37, 30).now()?,
+        );
+        let pressed = resting.rest(&at(19, 37, 30), &ringer, &light);
+        let settling = resting.rest(&at(19, 37, 31), &ringer, &light);
+        assert_eq!(resting.suspends(), Some(0));
+        assert_eq!(
+            (pressed.wait_seconds, settling.wait_seconds),
+            (2, 1),
+            "{pressed:?} {settling:?}"
+        );
+        resting.rest(&at(19, 37, 32), &ringer, &light);
         assert_eq!(resting.suspends(), Some(1));
         Ok(())
     }
