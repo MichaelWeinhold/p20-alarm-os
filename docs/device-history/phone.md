@@ -2638,3 +2638,37 @@ at 16:48:34 UTC. A timer rang `Carbon.wav` from a suspend at 485.38 s and was st
 497.65 s, 12.27 s: past the end of its first round three times. `console-ramoops-0` read no
 `Oops` and no `Kernel panic`, and `alarmd` went on to `rebooting into recovery` at
 502.59 s. The operator heard it ring as intended.
+
+## 2026-11-26 — the alarm sound chosen on the settings screen, for issue 86
+
+`Carbon.wav` was converted from the ROM's `Carbon.ogg` (99766 bytes, sha256
+`ce04cf92…6b96`) and pushed from TWRP by `scripts/alarm_sound.py`: 646032 bytes, sha256
+`3816c418c2abed8af8a2e3a9e27ec1daaad70d7bd6eaf286635cc63131fe6e3d` read back, the 12 files
+beside it unchanged. The `/init` it replaced, `24a2450f…c057`, 673728 bytes, is kept at
+`~/p20-backups/init-alarmd-24a2450f-before-86`.
+
+**A version-7 record loads with `ringtone.wav`.** Before the first boot, slot 0 read version
+7, sequence 42, and slot 1 version 7, sequence 43. `alarmd` at `dcc9de6` logged `settings
+loaded`, `2 alarm sounds listed` and `alarm sound ringtone.wav loaded` at 13.80 s, and its
+first state line `sound off ringtone.wav`. Choosing `Carbon.wav` on the list logged `sound
+off Carbon.wav` and `alarm sound Carbon.wav loaded` at 125.90 s, and choosing back
+`ringtone.wav loaded` at 127.34 s. Its ring panicked the kernel at the end of the sound's
+first round, before the panel went off and so before any save: issue 137.
+
+**The record holds the name, and the next boot loads it.** On the boot after the panic the
+operator turned sound and vibration on with `ringtone.wav` chosen; `settings saved` came
+at 232.62 s, and slot 0 read version 8, sequence 44, 53 bytes, ending in the length byte
+12 and `ringtone.wav`. The next boot loaded `ringtone.wav` at 13.80 s, and its first state
+line, at 30.83 s when the operator chose `Carbon.wav`, read sound and vibration on as
+saved.
+
+**`Carbon.wav` chosen, saved and rung.** Under `alarmd` at `9f3b0509…9543` (issue 137's
+section has the build), `Carbon.wav` was chosen and `settings saved` came at 406.18 s and
+418.37 s: slot 1 read version 8, sequence 47, its name `Carbon.wav` behind the length byte
+10, sound and vibration on. A timer rang it from a suspend at 485.38 s with sound and vibration
+on, and the operator reported `Carbon.wav` ringing as intended and, from an earlier run,
+the choice kept over a reboot. No photos were taken.
+
+**Not read off the phone:** a page turn, which needs more than six sounds, and a name cut to
+its row. The host covers both in `face-settings-sounds-more.txt` and `fitted`'s tests. The
+phone was left in TWRP with `9f3b0509…9543` on `/init`.
