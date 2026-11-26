@@ -6,6 +6,7 @@ use crate::face::{
 use crate::hardware::{Clock, Display, HardwareError, Input};
 use crate::input::{InputEvent, Key};
 use crate::light::{LIT_SECONDS, Light, next_lit_seconds};
+use crate::sound::Volume;
 use crate::time::{Countdown, TimeOfDay, UnixSeconds, UtcOffset};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -47,6 +48,7 @@ pub struct Ringer {
     marked: Option<usize>,
     power_off: bool,
     lit_seconds: i64,
+    volume: Volume,
     recovery_marked: bool,
     recovery: bool,
     timers: Vec<Countdown>,
@@ -101,6 +103,7 @@ impl Ringer {
             marked: None,
             power_off: true,
             lit_seconds: LIT_SECONDS,
+            volume: Volume::LOUDEST,
             recovery_marked: false,
             recovery: false,
             timers: Vec::new(),
@@ -172,6 +175,15 @@ impl Ringer {
 
     pub fn set_lit_seconds(&mut self, lit_seconds: i64) {
         self.lit_seconds = lit_seconds;
+    }
+
+    #[must_use]
+    pub fn volume(&self) -> Volume {
+        self.volume
+    }
+
+    pub fn set_volume(&mut self, volume: Volume) {
+        self.volume = volume;
     }
 
     #[must_use]
@@ -301,9 +313,13 @@ impl Ringer {
     }
 
     pub fn pressed(&mut self, key: Key) {
-        if key == Key::Power {
-            self.ring = Ring::Quiet;
-            self.rung = None;
+        match key {
+            Key::Power => {
+                self.ring = Ring::Quiet;
+                self.rung = None;
+            }
+            Key::VolumeUp => self.volume = self.volume.up(),
+            Key::VolumeDown => self.volume = self.volume.down(),
         }
     }
 
@@ -415,6 +431,7 @@ impl Ringer {
                 .running
                 .map(|run| Countdown::of(run.ends.0.saturating_sub(now.0))),
             rung: self.rung.filter(|_| self.ring != Ring::Ringing),
+            volume: None,
         }
     }
 }
@@ -435,7 +452,10 @@ pub fn show(
     }
     display.light(light.lit())?;
     if light.lit() {
-        let face = ringer.face(now, offset, battery, light.screen());
+        let face = Face {
+            volume: light.volume_shown().then_some(ringer.volume()),
+            ..ringer.face(now, offset, battery, light.screen())
+        };
         let frame = render(display.size(), &face);
         display.show(&frame)?;
     }
@@ -940,6 +960,97 @@ mod tests {
         {}
         assert_eq!(ringer, Ringer::new(TimeOfDay::new(7, 0)?));
         assert!(!light.lit());
+        Ok(())
+    }
+
+    #[test]
+    fn the_volume_keys_step_the_volume_and_stop_at_either_end()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut ringer = ringer(7, 0)?;
+        assert_eq!(ringer.volume(), Volume::LOUDEST);
+        let down = [InputEvent::Press(Key::VolumeDown); 3];
+        drain(&mut FakeInput::with(&[&down]), &clock, &mut ringer)?;
+        assert_eq!(ringer.volume().level(), 12);
+        drain(&mut FakeInput::with(&[&VOLUME]), &clock, &mut ringer)?;
+        assert_eq!(ringer.volume().level(), 12);
+        let up = [InputEvent::Press(Key::VolumeUp); 20];
+        drain(&mut FakeInput::with(&[&up]), &clock, &mut ringer)?;
+        assert_eq!(ringer.volume(), Volume::LOUDEST);
+        let down = [InputEvent::Press(Key::VolumeDown); 20];
+        drain(&mut FakeInput::with(&[&down]), &clock, &mut ringer)?;
+        assert_eq!(ringer.volume(), Volume::QUIETEST);
+        Ok(())
+    }
+
+    #[test]
+    fn a_volume_key_on_a_dark_panel_changes_nothing() -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut ringer = ringer(7, 0)?;
+        let mut light = Light::dark(LIT_SECONDS);
+        drain_lit(
+            &mut FakeInput::with(&[&VOLUME, &[InputEvent::Press(Key::VolumeDown)]]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        assert_eq!(ringer, Ringer::new(TimeOfDay::new(7, 0)?));
+        assert_eq!(light, Light::dark(LIT_SECONDS));
+        Ok(())
+    }
+
+    #[test]
+    fn a_volume_key_during_a_ring_steps_the_volume_and_leaves_it_ringing()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut ringer = ringer(7, 0)?;
+        drain(&mut FakeInput::with(&[&FIRST]), &clock, &mut ringer)?;
+        clock.pass(60);
+        ringer.tick(clock.now()?, UtcOffset::UTC);
+        let mut light = Light::dark(LIT_SECONDS);
+        light.tick(clock.now()?, ringer.ring());
+        drain_lit(
+            &mut FakeInput::with(&[&[InputEvent::Press(Key::VolumeDown)]]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        assert_eq!(ringer.ring(), Ring::Ringing);
+        assert_eq!(ringer.volume(), Volume::LOUDEST.down());
+        assert!(light.volume_shown());
+        Ok(())
+    }
+
+    #[test]
+    fn the_volume_shows_on_the_face_after_a_key_and_is_gone_three_seconds_later()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut ringer = ringer(7, 0)?;
+        let mut light = Light::lit_at(clock.now()?, LIT_SECONDS);
+        drain_lit(
+            &mut FakeInput::with(&[&[InputEvent::Press(Key::VolumeDown)]]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        let mut display = FakeDisplay::default();
+        for _ in 0..2 {
+            show(
+                &clock,
+                UtcOffset::UTC,
+                &mut ringer,
+                &mut light,
+                Gauge::UNREAD,
+                &mut display,
+            )?;
+            clock.pass(3);
+        }
+        let face = ringer.face(clock.now()?, UtcOffset::UTC, Gauge::UNREAD, Screen::Alarm);
+        let shown = Face {
+            volume: Some(Volume::LOUDEST.down()),
+            ..face.clone()
+        };
+        assert_eq!(display.shown, [render(PANEL, &shown), render(PANEL, &face)]);
         Ok(())
     }
 

@@ -6,6 +6,7 @@ use crate::time::UnixSeconds;
 pub const LIT_CHOICES: [i64; 5] = [10, 30, 60, 120, 300];
 pub const LIT_SECONDS: i64 = LIT_CHOICES[0];
 pub const QUIET_SECONDS: i64 = 2;
+pub const VOLUME_SECONDS: i64 = 3;
 
 #[must_use]
 pub fn next_lit_seconds(seconds: i64) -> i64 {
@@ -20,6 +21,7 @@ pub struct Light {
     seconds: i64,
     until: Option<UnixSeconds>,
     pressed: Option<UnixSeconds>,
+    volume: Option<UnixSeconds>,
     screen: Screen,
 }
 
@@ -30,6 +32,7 @@ impl Light {
             seconds,
             until: None,
             pressed: None,
+            volume: None,
             screen: Screen::Alarm,
         }
     }
@@ -66,6 +69,17 @@ impl Light {
     }
 
     #[must_use]
+    pub fn volume_shown(&self) -> bool {
+        self.volume.is_some()
+    }
+
+    #[must_use]
+    pub fn volume_left(&self, now: UnixSeconds) -> Option<u64> {
+        self.volume
+            .map(|until| until.0.saturating_sub(now.0).max(1).unsigned_abs())
+    }
+
+    #[must_use]
     pub fn settling(&self, now: UnixSeconds) -> Option<u64> {
         self.pressed
             .map(|pressed| {
@@ -85,11 +99,17 @@ impl Light {
         } else if self.until.is_some_and(|until| now >= until) {
             self.darken();
         }
+        if self.volume.is_some_and(|until| now >= until) {
+            self.volume = None;
+        }
     }
 
     pub fn heard(&mut self, event: InputEvent, ring: Ring, now: UnixSeconds) {
         if event == InputEvent::Press(Key::Power) {
             self.pressed = Some(now);
+        }
+        if self.lit() && matches!(event, InputEvent::Press(Key::VolumeUp | Key::VolumeDown)) {
+            self.volume = Some(UnixSeconds(now.0.saturating_add(VOLUME_SECONDS)));
         }
         match (self.lit(), event, ring) {
             (true, InputEvent::Press(Key::Power), Ring::Quiet) => self.darken(),
@@ -100,6 +120,7 @@ impl Light {
 
     fn darken(&mut self) {
         self.until = None;
+        self.volume = None;
         self.screen = Screen::Alarm;
     }
 
@@ -181,6 +202,35 @@ mod tests {
         light.heard(TOUCH, Ring::Quiet, at(30));
         light.heard(VOLUME, Ring::Quiet, at(31));
         assert_eq!(light, dark());
+    }
+
+    #[test]
+    fn a_volume_key_on_a_lit_panel_shows_the_volume_for_three_seconds_after_the_last() {
+        let mut light = Light::lit_at(START, LIT_SECONDS);
+        assert!(!light.volume_shown());
+        light.heard(VOLUME, Ring::Quiet, at(1));
+        assert_eq!(light.volume_left(at(1)), Some(3));
+        light.heard(InputEvent::Press(Key::VolumeUp), Ring::Quiet, at(3));
+        light.heard(TOUCH, Ring::Quiet, at(4));
+        light.tick(at(5), Ring::Quiet);
+        assert_eq!(light.volume_left(at(5)), Some(1));
+        light.tick(at(6), Ring::Quiet);
+        assert!(!light.volume_shown());
+        assert_eq!(light.volume_left(at(6)), None);
+        assert!(light.lit());
+    }
+
+    #[test]
+    fn the_volume_shows_while_a_ring_holds_the_panel_lit_and_goes_when_the_panel_does() {
+        let mut light = dark();
+        light.heard(VOLUME, Ring::Ringing, at(1));
+        assert!(!light.volume_shown());
+        light.tick(at(2), Ring::Ringing);
+        light.heard(VOLUME, Ring::Ringing, at(2));
+        assert!(light.volume_shown());
+        light.heard(POWER, Ring::Quiet, at(3));
+        assert!(!light.lit());
+        assert!(!light.volume_shown());
     }
 
     #[test]

@@ -1,5 +1,6 @@
 use crate::battery::{Gauge, Level};
 use crate::glyph::{self, Align, Icon, Place, Square};
+use crate::sound::Volume;
 use crate::time::{Countdown, TimeOfDay};
 
 pub const BACKGROUND: Colour = Colour(0x00_0000);
@@ -39,6 +40,9 @@ const BARS: [usize; 3] = [150, 359, 568];
 const BAR_WIDTH: usize = 164;
 const BAR_TOP: usize = 350;
 const BAR_HEIGHT: usize = 260;
+const VOLUME_HALVES: usize = 4;
+const VOLUME_ICON_HALVES: usize = 3;
+const VOLUME_TRACK_HALVES: usize = 24;
 
 pub const SAVED_ALARMS: usize = 4;
 pub const SAVED_TIMERS: usize = 4;
@@ -113,6 +117,7 @@ pub struct Face {
     pub countdown: Countdown,
     pub left: Option<Countdown>,
     pub rung: Option<Countdown>,
+    pub volume: Option<Volume>,
 }
 
 impl Face {
@@ -692,6 +697,38 @@ fn bar(frame: &mut Frame, layout: &Layout, current: Screen) {
     }
 }
 
+fn volume_panel(frame: &mut Frame, unit: usize, volume: Option<Volume>) {
+    let Some(volume) = volume else {
+        return;
+    };
+    let half = (unit / 2).max(1);
+    let width = VOLUME_HALVES * half;
+    let height = (VOLUME_ICON_HALVES + VOLUME_TRACK_HALVES + 3) * half;
+    let size = frame.size();
+    if width + half > size.width || height > size.height {
+        return;
+    }
+    let top = (size.height - height) / 2;
+    frame.fill(half, top, width, height, BACKGROUND);
+    let centre = half + width / 2;
+    let icon = VOLUME_ICON_HALVES * half;
+    centred(
+        frame,
+        Icon::Volume,
+        (2 * centre, 2 * (top + half) + icon),
+        icon,
+        Ink::Flat(FOREGROUND),
+    );
+    let track = VOLUME_TRACK_HALVES * half;
+    let track_top = top + (VOLUME_ICON_HALVES + 2) * half;
+    let left = centre - half / 2;
+    frame.fill(left, track_top, half, track, DIM);
+    let filled = track * usize::from(volume.level()) / usize::from(Volume::LOUDEST.level());
+    for row in track - filled..track {
+        frame.fill(left, track_top + row, half, 1, ACCENT.at(row, track));
+    }
+}
+
 #[must_use]
 pub fn render(size: Size, face: &Face) -> Frame {
     let background = if face.ringing { RINGING } else { BACKGROUND };
@@ -728,6 +765,7 @@ pub fn render(size: Size, face: &Face) -> Frame {
             |rung| Some(of_countdown(rung)),
         );
         figures(&mut frame, layout.alarm, layout.alarm_unit, rang, digits);
+        volume_panel(&mut frame, layout.unit, face.volume);
         return frame;
     }
     match (face.screen, sheet) {
@@ -737,6 +775,7 @@ pub fn render(size: Size, face: &Face) -> Frame {
         _ => {}
     }
     bar(&mut frame, &layout, face.screen);
+    volume_panel(&mut frame, layout.unit, face.volume);
     frame
 }
 
@@ -928,6 +967,7 @@ mod tests {
             countdown: Countdown::default(),
             left: None,
             rung: None,
+            volume: None,
         })
     }
 
@@ -1174,6 +1214,52 @@ mod tests {
             (PANEL.height * 9 / 10..PANEL.height)
                 .all(|y| frame.row(y).iter().all(|&colour| colour == RINGING))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn the_volume_shows_at_the_left_edge_over_a_ringing_face_as_recorded() -> Outcome {
+        let frame = render(
+            SHEET,
+            &Face {
+                volume: Volume::new(10),
+                ..face(Some(0), true, charged(80)?)?
+            },
+        );
+        assert_eq!(
+            picture(&frame),
+            include_str!("../testdata/face-volume-ringing.txt")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn the_volume_fills_its_track_to_its_level_and_changes_nothing_else() -> Outcome {
+        let ringing = face(Some(0), true, charged(80)?)?;
+        let plain = render(SHEET, &ringing);
+        let half = layout(SHEET).ok_or("no layout")?.unit / 2;
+        let track = VOLUME_TRACK_HALVES * half;
+        for (level, rows) in [(1, track / 15), (5, track / 3), (15, track)] {
+            let frame = render(
+                SHEET,
+                &Face {
+                    volume: Volume::new(level),
+                    ..ringing.clone()
+                },
+            );
+            let filled = (0..SHEET.height)
+                .flat_map(|y| frame.row(y).iter().copied())
+                .filter(|&pixel| solid(pixel))
+                .count();
+            assert_eq!(filled, rows * half);
+            for y in 0..SHEET.height {
+                for (x, (&before, &after)) in plain.row(y).iter().zip(frame.row(y)).enumerate() {
+                    if x < half || x >= half + VOLUME_HALVES * half {
+                        assert_eq!(after, before);
+                    }
+                }
+            }
+        }
         Ok(())
     }
 

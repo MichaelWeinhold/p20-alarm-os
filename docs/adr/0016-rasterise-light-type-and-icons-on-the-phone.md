@@ -1,7 +1,7 @@
 # 16. Rasterise light type and icons on the phone
 
 - **Status:** Accepted; D2 amended for the figure height by issue 104, D3 for the battery
-  glyph by issue 105
+  glyph by issue 105, for the recovery row by issue 118 and for the volume by issue 110
 - **Date:** 2026-11-23
 - **Issue:** #95
 
@@ -114,6 +114,9 @@ the battery is about 61 by 32 pixels on the panel, the size of a phone's own.
 
 **Amended by issue 118**: `build` and `restart_alt` join the subset for the settings
 screen's recovery row, sixteen icons in 3 336 bytes.
+
+**Amended by issue 110**: `volume_up` joins the subset for the volume panel, seventeen
+icons in 3 468 bytes.
 
 ### D4. The subsets are made by a host script, `scripts/subset_fonts.py`
 

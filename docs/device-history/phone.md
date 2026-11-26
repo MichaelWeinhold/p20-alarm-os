@@ -2456,3 +2456,26 @@ The operator saw the open tab on all three screens, the alarm's `+`, the timer's
 stop, and the settings switch drawn in the accent, each dim one in grey, the figures in
 white and a marked cross in red, and judged the two end colours right on the panel. No
 photos were taken. The image was left on the phone.
+
+## 2026-11-26 — the volume keys set the ring's volume, for issue 110
+
+**`alarmd` at `0084fd9` is 637672 bytes**, sha256
+`709c4f44bb6d30b9700515b8dd76959bb78559ae862555ec3f2f4f549aec9adb`, 1 856 bytes more than
+issue 121's. From TWRP 3.7.0_9-0 it was copied over `/init` on `system`, replacing issue
+121's `0d9316ed…6a47`. `init.rom` still hashed `e8e2768e…78ef`, `misc`'s first 32 bytes
+read zero, and the RTC read 1795691564 against the Mac's 1795691568, before `adb reboot`
+at 11:12:49 UTC.
+
+**The volume keys show the panel at the left edge and move its fill, ringing or not.** The
+operator saw the panel and its fill follow each key on a lit panel, and heard a ring grow
+quieter and louder as it played. The first boot loaded the version-4 record at 15, and
+the first key logged `volume 14` at 29.18 s; quiet, the keys stepped it to 6. A 5 s timer
+rang from about 40.7 s, and the keys took it to 1 by 42.21 s, to 15 by 49.39 s and back to
+4, with no log line between `volume 1` and `volume 15` other than the steps. Power ended
+the ring at 64.95 s at volume 5. `settings saved` came at 99.98 s, before the recovery row's
+reboot.
+
+**The level survives a reboot.** `reserved4`'s first slot read version 5, sequence 34, 26
+bytes, its volume byte 5; the second kept the version-4 slot, sequence 33. After
+`adb reboot` at 11:15:35 UTC, the first Volume Down on the lit panel showed 4 and logged
+`volume 4` at 40.98 s. The image was left on the phone.

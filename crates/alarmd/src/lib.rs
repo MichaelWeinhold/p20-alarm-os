@@ -10,6 +10,8 @@ use alarm_core::light::Light;
 use alarm_core::ringer::{Ringer, show};
 use alarm_core::settings::{self, Choices, SetAlarm};
 use alarm_core::sound::Sound;
+#[cfg(test)]
+use alarm_core::sound::Volume;
 use alarm_core::time::{Countdown, TimeOfDay, UnixSeconds, UtcOffset, seconds_to_next_minute};
 use alarm_core::vibration::Vibration;
 use alarm_core::warning::Warning;
@@ -63,7 +65,7 @@ pub fn minute(
                     ends.0.saturating_sub(now.0).max(1).unsigned_abs()
                 }
             });
-            [light.seconds_left(now), timer]
+            [light.seconds_left(now), light.volume_left(now), timer]
                 .into_iter()
                 .flatten()
                 .fold(seconds_to_next_minute(now), u64::min)
@@ -93,7 +95,7 @@ pub fn pulse(
     let mut log = Vec::new();
     let ring = ringer.ring();
     if let Ok(speaker) = &mut buzz.speaker
-        && let Err(error) = buzz.sound.tick(ring, speaker)
+        && let Err(error) = buzz.sound.tick(ring, ringer.volume(), speaker)
     {
         log.push(kmsg::failure("driving the speaker", &error));
     }
@@ -314,6 +316,7 @@ pub fn choices(ringer: &Ringer, offset: UtcOffset, window_seconds: i64) -> Choic
             .collect(),
         timers: ringer.timers().to_vec(),
         lit_seconds: ringer.lit_seconds(),
+        volume: ringer.volume(),
     }
 }
 
@@ -363,6 +366,7 @@ pub fn restored(
     );
     ringer.set_power_off(loaded.power_off);
     ringer.set_lit_seconds(loaded.lit_seconds);
+    ringer.set_volume(loaded.volume);
     ringer.set_timers(loaded.timers.clone());
     if let Some(armed) = armed {
         match clock.now() {
@@ -457,6 +461,7 @@ pub fn change(before: &Ringer, after: &Ringer) -> Option<String> {
             ringer.ring(),
             ringer.power_off(),
             ringer.lit_seconds(),
+            ringer.volume(),
             ringer.timers().to_vec(),
             ringer.running_until(),
         )
@@ -472,10 +477,11 @@ pub fn change(before: &Ringer, after: &Ringer) -> Option<String> {
             .running_until()
             .map_or_else(|| "none".to_owned(), |ends| ends.0.to_string());
         kmsg::line(&format!(
-            "alarms [{}], active {active}, {:?}, power-off {power}, lit {} s, timers [{}], running until {running}",
+            "alarms [{}], active {active}, {:?}, power-off {power}, lit {} s, volume {}, timers [{}], running until {running}",
             alarms.join(", "),
             after.ring(),
             after.lit_seconds(),
+            after.volume().level(),
             timers.join(", ")
         ))
     })
@@ -587,17 +593,24 @@ mod tests {
     struct FakeSpeaker {
         starts: u32,
         stops: u32,
+        volumes: Vec<Volume>,
         refusing: bool,
     }
 
     impl Speaker for FakeSpeaker {
-        fn start(&mut self) -> Result<(), HardwareError> {
+        fn start(&mut self, volume: Volume) -> Result<(), HardwareError> {
             self.starts += 1;
+            self.volumes.push(volume);
             if self.refusing {
                 Err(refused("speaker"))
             } else {
                 Ok(())
             }
+        }
+
+        fn set_volume(&mut self, volume: Volume) -> Result<(), HardwareError> {
+            self.volumes.push(volume);
+            Ok(())
         }
 
         fn stop(&mut self) -> Result<(), HardwareError> {
@@ -862,6 +875,7 @@ mod tests {
             countdown: Countdown::default(),
             left: None,
             rung: None,
+            volume: None,
         })
     }
 
@@ -1046,7 +1060,7 @@ mod tests {
         assert_eq!(
             change(&before, &after),
             Some(kmsg::line(
-                "alarms [07:00], active 07:00, Quiet, power-off on, lit 10 s, timers [], running until none"
+                "alarms [07:00], active 07:00, Quiet, power-off on, lit 10 s, volume 15, timers [], running until none"
             ))
         );
         Ok(())
@@ -1066,7 +1080,7 @@ mod tests {
         assert_eq!(
             change(&before, &after),
             Some(kmsg::line(
-                "alarms [07:00], active none, Quiet, power-off off, lit 10 s, timers [], running until none"
+                "alarms [07:00], active none, Quiet, power-off off, lit 10 s, volume 15, timers [], running until none"
             ))
         );
         Ok(())
@@ -1080,7 +1094,7 @@ mod tests {
         assert_eq!(
             change(&before, &started),
             Some(kmsg::line(&format!(
-                "alarms [07:00], active none, Quiet, power-off on, lit 10 s, timers [00:45], running until {}",
+                "alarms [07:00], active none, Quiet, power-off on, lit 10 s, volume 15, timers [00:45], running until {}",
                 after(&clock, 45)?.0
             )))
         );
@@ -1876,7 +1890,7 @@ mod tests {
         assert_eq!(
             change(&started.ringer, &ringer),
             Some(kmsg::line(
-                "alarms [07:00], active none, Quiet, power-off on, lit 30 s, timers [], running until none"
+                "alarms [07:00], active none, Quiet, power-off on, lit 30 s, volume 15, timers [], running until none"
             ))
         );
         let current = choices(&ringer, berlin()?, WINDOW_SECONDS);
@@ -1888,6 +1902,33 @@ mod tests {
         let rebooted = boot(&mut settings, &at(20, 0, 0))?;
         assert_eq!(rebooted.ringer.lit_seconds(), 30);
         assert_eq!(rebooted.saved.lit_seconds, 30);
+        Ok(())
+    }
+
+    #[test]
+    fn a_stepped_volume_is_logged_saved_and_survives_a_reboot()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(19, 37, 30);
+        let mut settings = Ok(FakeSettings::blank());
+        let mut started = boot(&mut settings, &clock)?;
+        assert_eq!(started.ringer.volume(), Volume::LOUDEST);
+        let mut ringer = started.ringer.clone();
+        ringer.pressed(Key::VolumeDown);
+        ringer.pressed(Key::VolumeDown);
+        assert_eq!(
+            change(&started.ringer, &ringer),
+            Some(kmsg::line(
+                "alarms [07:00], active none, Quiet, power-off on, lit 10 s, volume 13, timers [], running until none"
+            ))
+        );
+        let current = choices(&ringer, berlin()?, WINDOW_SECONDS);
+        assert_eq!(
+            persisted(&mut settings, &mut started.saved, current),
+            Some(kmsg::line("settings saved"))
+        );
+        let rebooted = boot(&mut settings, &at(20, 0, 0))?;
+        assert_eq!(rebooted.ringer.volume().level(), 13);
+        assert_eq!(rebooted.saved.volume.level(), 13);
         Ok(())
     }
 
@@ -2206,7 +2247,7 @@ mod tests {
     }
 
     #[test]
-    fn a_volume_key_leaves_the_speaker_and_the_vibrator_on()
+    fn a_volume_key_turns_the_ringing_speaker_down_and_leaves_the_vibrator_on()
     -> Result<(), Box<dyn std::error::Error>> {
         let clock = at(7, 0, 0);
         let mut ringer = ringing_at(&clock)?;
@@ -2220,6 +2261,7 @@ mod tests {
         assert!(buzz.vibration.pulsing());
         let speaker = buzz.speaker.as_ref().map_err(Clone::clone)?;
         assert_eq!((speaker.starts, speaker.stops), (1, 0));
+        assert_eq!(speaker.volumes, [Volume::LOUDEST, Volume::LOUDEST.down()]);
         Ok(())
     }
 

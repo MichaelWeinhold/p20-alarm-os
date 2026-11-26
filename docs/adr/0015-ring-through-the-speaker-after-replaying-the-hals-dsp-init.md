@@ -1,6 +1,7 @@
 # 15. Ring through the speaker after replaying the HAL's DSP init
 
-- **Status:** Accepted; D1 amended with the wait after the replay by issue 92
+- **Status:** Accepted; D1 amended with the wait after the replay by issue 92, D2 with the
+  volume by issue 110
 - **Date:** 2026-11-21
 - **Issue:** #14
 - **Amends:** ADR 0014, D2
@@ -73,6 +74,10 @@ the draw after a ring checks that this is enough.
 `CLASSD_VOLTAGE_CONFIG` refuses its value under every `/init` and is skipped. The speaker
 sounded without it. The volume is the route's and the DSP's as recorded; a volume setting
 is not decided here.
+
+**Amended by issue 110**: the volume is set by scaling the samples before each write, 3 dB
+a step from unity, so the route and the DSP's block stay as recorded and neither changes
+at runtime.
 
 ### D3. A sound is a WAV file, PCM 16-bit, 48000 Hz, stereo, converted on the host
 
