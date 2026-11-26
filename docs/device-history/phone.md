@@ -2672,3 +2672,48 @@ the choice kept over a reboot. No photos were taken.
 **Not read off the phone:** a page turn, which needs more than six sounds, and a name cut to
 its row. The host covers both in `face-settings-sounds-more.txt` and `fitted`'s tests. The
 phone was left in TWRP with `9f3b0509…9543` on `/init`.
+
+## 2026-11-26 — a ring that ramps up to the set volume, for issue 135
+
+**`reserved4` held version 8 before the update.** Read from TWRP, slot 0 was version 8,
+sequence 46, and slot 1 version 8, sequence 47, 51 bytes, ending in the length byte 10
+and `Carbon.wav`.
+
+**`alarmd` at `273e7ad` is 691904 bytes**, sha256
+`5cfeb8d13513f472287488f85193dbaf924ca84558dc5d98928fe9ba79069b43`. From TWRP 3.7.0_9-0 it
+was copied over `/init` on `system`, replacing issue 86's `9f3b0509…9543`, kept at
+`~/p20-backups/init-alarmd-9f3b0509-before-135`. `init.rom` still hashed `e8e2768e…78ef`,
+`misc`'s first 32 bytes were zeroed, and the RTC read 1795728369 against the Mac's
+1795728373, before `adb reboot` at 21:26:19 UTC.
+
+**A version-8 record loads with the ramp off, and a save writes version 9.** The boot
+logged `settings loaded` at 13.69 s and `alarm sound Carbon.wav loaded` at 13.81 s. Three
+timers rang at volume 15: 296.78 s to 299.90 s, 313.10 s to 332.30 s, and 345.59 s to
+392.10 s. This build's state line named no ramp, so the log does not say which ring was
+ramped. The recovery row's `settings saved` at 514.64 s left slot 0 at version 9,
+sequence 48, 55 bytes, ending in `ringtone.wav` and the ramp length `78 00`, 120 s.
+
+**`alarmd` with the ramp in its state line is 691744 bytes**, sha256
+`6da77e754ddf6dac05f88b5f07f18ae4957ce2722138b5cbea8409ba25d7b595`, copied over `/init`
+the same way and replacing `5cfeb8d1…9b43`, kept at
+`~/p20-backups/init-alarmd-5cfeb8d1-first-135`: `init.rom` unchanged, `misc` zeroed, the
+RTC 1795728994 against 1795728999, and `adb reboot` at 21:36:42 UTC.
+
+**The length survives a reboot, and a tap steps it.** The first state line, at 86.34 s,
+read `ramp 120 s`. Taps on the row logged `ramp 300 s`, `ramp off`, `ramp 15 s` and `ramp
+30 s` between 214.52 s and 216.05 s. They logged it round from `ramp 30 s` to `ramp off`
+again between 260.42 s and 261.68 s, and through every length back to `ramp off` between
+275.42 s and 276.83 s.
+
+**A 0:30 ramp at volume 15, and the ramp off.** With `ramp 30 s`, a `00:00:10` timer rang
+from a suspend at 239.41 s and was stopped at 258.97 s, 19.6 s in, before the top step.
+With `ramp off`, the next one ended at about 268.5 s and Power stopped it at 270.69 s. The
+operator reported the ramped ring starting barely audible and reaching full volume about
+30 s in, which can only have been the first boot's 46.5 s ring. They reported the ramp
+off ringing at full volume at once, and the row as drawn. `settings saved` came at 277.59
+s, before the recovery row's reboot. `console-ramoops-0` read no `Kernel panic` in either
+boot. No photos were taken.
+
+**Not read off the phone:** a volume key during the ramp, and the climb's steps one by one;
+the host covers both, in `ringer`'s and `alarmd`'s ramp tests. The phone was left in TWRP
+with `6da77e75…b595` on `/init`.

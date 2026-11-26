@@ -7,6 +7,7 @@ use alarm_core::hardware::{
     Settings, Sounds, Speaker, Suspend, Vibrator, WakeAlarm,
 };
 use alarm_core::light::Light;
+use alarm_core::ramp::RAMP_OFF;
 use alarm_core::ringer::{Ring, Ringer, show};
 use alarm_core::settings::{self, Choices};
 #[cfg(test)]
@@ -491,6 +492,7 @@ pub fn change(before: &Ringer, after: &Ringer) -> Option<String> {
             ringer.power_off(),
             ringer.lit_seconds(),
             ringer.volume(),
+            ringer.ramp_seconds(),
             ringer.outputs(),
             ringer.sound().cloned(),
             ringer.timers().to_vec(),
@@ -508,6 +510,10 @@ pub fn change(before: &Ringer, after: &Ringer) -> Option<String> {
         )
     };
     let switched = |on: bool| if on { "on" } else { "off" };
+    let ramp = match after.ramp_seconds() {
+        RAMP_OFF => "off".to_owned(),
+        seconds => format!("{seconds} s"),
+    };
     (state(before) != state(after)).then(|| {
         let alarms: Vec<String> = after
             .alarms()
@@ -531,7 +537,7 @@ pub fn change(before: &Ringer, after: &Ringer) -> Option<String> {
             (None, None) => "none".to_owned(),
         };
         kmsg::line(&format!(
-            "alarms [{}], next {next}, {:?}, power-off {}, lit {} s, volume {}, sound {} {}, vibration {}, timers [{}], running {running}",
+            "alarms [{}], next {next}, {:?}, power-off {}, lit {} s, volume {}, ramp {ramp}, sound {} {}, vibration {}, timers [{}], running {running}",
             alarms.join(", "),
             after.ring(),
             switched(after.power_off()),
@@ -1164,7 +1170,7 @@ mod tests {
         assert_eq!(
             change(&before, &after),
             Some(kmsg::line(&format!(
-                "alarms [07:00 MTWTFSS on], next {}, Quiet, power-off on, lit 10 s, volume 15, sound on none, vibration on, timers [], running none",
+                "alarms [07:00 MTWTFSS on], next {}, Quiet, power-off on, lit 10 s, volume 15, ramp off, sound on none, vibration on, timers [], running none",
                 at(7, 0, 0).now()?.0
             )))
         );
@@ -1185,7 +1191,7 @@ mod tests {
         assert_eq!(
             change(&before, &after),
             Some(kmsg::line(
-                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off off, lit 10 s, volume 15, sound on none, vibration on, timers [], running none"
+                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off off, lit 10 s, volume 15, ramp off, sound on none, vibration on, timers [], running none"
             ))
         );
         Ok(())
@@ -1199,7 +1205,7 @@ mod tests {
         assert_eq!(
             change(&before, &started),
             Some(kmsg::line(&format!(
-                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off on, lit 10 s, volume 15, sound on none, vibration on, timers [00:00:45], running until {}",
+                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off on, lit 10 s, volume 15, ramp off, sound on none, vibration on, timers [00:00:45], running until {}",
                 after(&clock, 45)?.0
             )))
         );
@@ -1268,7 +1274,7 @@ mod tests {
         assert_eq!(
             change(&running, &paused),
             Some(kmsg::line(
-                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off on, lit 10 s, volume 15, sound on none, vibration on, timers [00:00:45], running paused 00:00:45"
+                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off on, lit 10 s, volume 15, ramp off, sound on none, vibration on, timers [00:00:45], running paused 00:00:45"
             ))
         );
         Ok(())
@@ -1298,7 +1304,7 @@ mod tests {
         assert_eq!(
             change(&running, &paused),
             Some(kmsg::line(
-                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off on, lit 10 s, volume 15, sound on none, vibration on, timers [01:00:05], running paused 01:00:05"
+                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off on, lit 10 s, volume 15, ramp off, sound on none, vibration on, timers [01:00:05], running paused 01:00:05"
             ))
         );
         Ok(())
@@ -2082,7 +2088,7 @@ mod tests {
         assert_eq!(
             change(&started.ringer, &ringer),
             Some(kmsg::line(
-                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off on, lit 10 s, volume 15, sound off none, vibration off, timers [], running none"
+                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off on, lit 10 s, volume 15, ramp off, sound off none, vibration off, timers [], running none"
             ))
         );
         let current = choices(&ringer, berlin()?, WINDOW_SECONDS);
@@ -2110,7 +2116,7 @@ mod tests {
         assert_eq!(
             change(&started.ringer, &ringer),
             Some(kmsg::line(
-                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off on, lit 10 s, volume 15, sound on Carbon.wav, vibration on, timers [], running none"
+                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off on, lit 10 s, volume 15, ramp off, sound on Carbon.wav, vibration on, timers [], running none"
             ))
         );
         let current = choices(&ringer, berlin()?, WINDOW_SECONDS);
@@ -2141,7 +2147,7 @@ mod tests {
         assert_eq!(
             change(&started.ringer, &ringer),
             Some(kmsg::line(
-                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off on, lit 30 s, volume 15, sound on none, vibration on, timers [], running none"
+                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off on, lit 30 s, volume 15, ramp off, sound on none, vibration on, timers [], running none"
             ))
         );
         let current = choices(&ringer, berlin()?, WINDOW_SECONDS);
@@ -2153,6 +2159,41 @@ mod tests {
         let rebooted = boot(&mut settings, &at(20, 0, 0))?;
         assert_eq!(rebooted.ringer.lit_seconds(), 30);
         assert_eq!(rebooted.saved.lit_seconds, 30);
+        Ok(())
+    }
+
+    #[test]
+    fn a_stepped_ramp_is_logged_saved_and_survives_a_reboot()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(19, 37, 30);
+        let mut settings = Ok(FakeSettings::blank());
+        let mut started = boot(&mut settings, &clock)?;
+        assert_eq!(started.ringer.ramp_seconds(), RAMP_OFF);
+        let mut ringer = started.ringer.clone();
+        for _ in 0..2 {
+            ringer.touched(
+                Target::Ramp,
+                Screen::Settings,
+                0,
+                clock.now()?,
+                UtcOffset::UTC,
+            );
+        }
+        assert_eq!(
+            change(&started.ringer, &ringer),
+            Some(kmsg::line(
+                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off on, lit 10 s, volume 15, ramp 30 s, sound on none, vibration on, timers [], running none"
+            ))
+        );
+        let current = choices(&ringer, berlin()?, WINDOW_SECONDS);
+        assert_eq!(current.ramp_seconds, 30);
+        assert_eq!(
+            persisted(&mut settings, &mut started.saved, current),
+            Some(kmsg::line("settings saved"))
+        );
+        let rebooted = boot(&mut settings, &at(20, 0, 0))?;
+        assert_eq!(rebooted.ringer.ramp_seconds(), 30);
+        assert_eq!(rebooted.saved.ramp_seconds, 30);
         Ok(())
     }
 
@@ -2169,7 +2210,7 @@ mod tests {
         assert_eq!(
             change(&started.ringer, &ringer),
             Some(kmsg::line(
-                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off on, lit 10 s, volume 13, sound on none, vibration on, timers [], running none"
+                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off on, lit 10 s, volume 13, ramp off, sound on none, vibration on, timers [], running none"
             ))
         );
         let current = choices(&ringer, berlin()?, WINDOW_SECONDS);
