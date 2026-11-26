@@ -2428,3 +2428,16 @@ suspended about 2 s later, armed for it. `[hisi_soc_rtc_interrupt]RTC Interrupt 
 474.51 s came before `hisi_pm_enter ++` at 474.85 s, and the phone slept until a press at
 487.82 s; the timer rang at 490.19 s. A second 5 s timer, armed about 2 s ahead, woke on
 time at 510.59 s. `alarmd` since stays awake for a wake due within 5 s.
+
+**`alarmd` at `4650b91` is 635032 bytes**, sha256
+`a859af311e4183cef531e96959ff66bddc6fa0fd1024fcfae361c41dd79bb236`, copied over `/init` in
+the same way, replacing `74b28416…3aad`, before `adb reboot` at 10:02:47 UTC.
+
+**A timer due within 5 s of the panel going off rings on time.** The operator started a
+5 s timer and pressed Power at once, twice, then a 10 s timer followed by a run of quick
+presses, and used the recovery row; pstore held the boot. The timers were set at
+111.45 s, 126.63 s and 144.26 s; Power darkened the panel at 112.53 s, 128.31 s and, after
+ten presses from 144.67 s, at 149.27 s; the panel lit for each at 116.75 s, 132.52 s and
+154.48 s, with no `hisi_pm_enter` between, and Power ended each ring. A press at 95.43 s
+had woken the suspend begun at 45.10 s and lit the panel at 96.17 s. The image was left
+on the phone.
