@@ -465,7 +465,14 @@ pub fn change(before: &Ringer, after: &Ringer) -> Option<String> {
         )
     };
     let clock = |time: TimeOfDay| format!("{:02}:{:02}", time.hour(), time.minute());
-    let length = |timer: Countdown| format!("{:02}:{:02}", timer.minutes(), timer.seconds());
+    let length = |timer: Countdown| {
+        format!(
+            "{:02}:{:02}:{:02}",
+            timer.hours(),
+            timer.minutes(),
+            timer.seconds()
+        )
+    };
     let switched = |on: bool| if on { "on" } else { "off" };
     (state(before) != state(after)).then(|| {
         let alarms: Vec<String> = after
@@ -1127,7 +1134,7 @@ mod tests {
         assert_eq!(
             change(&before, &started),
             Some(kmsg::line(&format!(
-                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off on, lit 10 s, volume 15, sound on, vibration on, timers [00:45], running until {}",
+                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off on, lit 10 s, volume 15, sound on, vibration on, timers [00:00:45], running until {}",
                 after(&clock, 45)?.0
             )))
         );
@@ -1196,7 +1203,37 @@ mod tests {
         assert_eq!(
             change(&running, &paused),
             Some(kmsg::line(
-                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off on, lit 10 s, volume 15, sound on, vibration on, timers [00:45], running paused 00:45"
+                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off on, lit 10 s, volume 15, sound on, vibration on, timers [00:00:45], running paused 00:00:45"
+            ))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_timer_of_an_hour_or_more_is_logged_with_its_hours()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(6, 0, 0);
+        let mut running = ringer()?;
+        running.set_timers(vec![Countdown::new(1, 0, 5)?]);
+        running.touched(
+            Target::Play(0),
+            Screen::Timer,
+            0,
+            clock.now()?,
+            UtcOffset::UTC,
+        );
+        let mut paused = running.clone();
+        paused.touched(
+            Target::Pause,
+            Screen::Timer,
+            0,
+            clock.now()?,
+            UtcOffset::UTC,
+        );
+        assert_eq!(
+            change(&running, &paused),
+            Some(kmsg::line(
+                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off on, lit 10 s, volume 15, sound on, vibration on, timers [01:00:05], running paused 01:00:05"
             ))
         );
         Ok(())
