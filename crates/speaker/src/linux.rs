@@ -10,17 +10,18 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use alarm_core::hardware::{HardwareError, Speaker};
-use alarm_core::sound::{UNITY_GAIN, Volume};
+use alarm_core::hardware::{HardwareError, Sounds, Speaker};
+use alarm_core::sound::{SoundName, UNITY_GAIN, Volume};
 
 use crate::control::{self, ELEM_INFO, ELEM_LIST, ELEM_WRITE, ENUMERATED, ID_BYTES, Info, Write};
 use crate::dsp::{self, Message};
 use crate::pcm::{self, DROP, HW_FREE, HW_PARAMS, PREPARE, WRITEI_FRAMES};
 use crate::route::{self, Control, Route};
 use crate::wav::{self, FRAME_BYTES};
-use crate::{CONTROL, DSP_INIT, HIFI_MISC, PCM, ROUTE, SOUND};
+use crate::{CONTROL, DSP_INIT, HIFI_MISC, PCM, ROUTE, SOUNDS, listed, path};
 
 const HIFI: &str = "hifi_misc";
+const SOUND: &str = "alarm sound";
 const MOST_ELEMENTS: u32 = 4_096;
 const SMALLEST_REPLY: usize = 4;
 const EINTR: i32 = 4;
@@ -308,7 +309,7 @@ fn device(path: &str, device: &'static str) -> Result<File, HardwareError> {
 
 pub struct AlsaSpeaker {
     writes: Writes,
-    samples: Arc<[u8]>,
+    samples: Option<Arc<[u8]>>,
     gain: Arc<AtomicU32>,
     control: File,
     pcm: Arc<File>,
@@ -321,7 +322,10 @@ impl fmt::Debug for AlsaSpeaker {
         formatter
             .debug_struct("AlsaSpeaker")
             .field("controls", &self.writes.ring.len())
-            .field("sample_bytes", &self.samples.len())
+            .field(
+                "sample_bytes",
+                &self.samples.as_ref().map(|samples| samples.len()),
+            )
             .field("playing", &self.playing.is_some())
             .finish_non_exhaustive()
     }
@@ -333,8 +337,6 @@ impl AlsaSpeaker {
         let route = String::from_utf8(read(ROUTE, "speaker-route.tsv")?)
             .map_err(|error| refused("speaker-route.tsv", error.to_string()))?;
         let route = route::parse(&route)?;
-        let sound = read(SOUND, "alarm sound")?;
-        let samples = Arc::from(wav::samples(&sound)?);
         let hifi = device(HIFI_MISC, HIFI)?;
         let control = device(CONTROL, control::DEVICE)?;
         let writes = resolved(&control, &route)?;
@@ -345,7 +347,7 @@ impl AlsaSpeaker {
         let pcm = Arc::new(device(PCM, pcm::DEVICE)?);
         Ok(Self {
             writes,
-            samples,
+            samples: None,
             gain: Arc::new(AtomicU32::new(UNITY_GAIN)),
             control,
             pcm,
@@ -356,21 +358,25 @@ impl AlsaSpeaker {
 }
 
 impl Speaker for AlsaSpeaker {
+    fn load(&mut self, sound: &SoundName) -> Result<(), HardwareError> {
+        let bytes = read(&path(sound), SOUND)?;
+        self.samples = Some(Arc::from(wav::samples(&bytes)?));
+        Ok(())
+    }
+
     fn start(&mut self, volume: Volume) -> Result<(), HardwareError> {
         self.gain.store(volume.gain(), Ordering::Relaxed);
         if self.playing.is_some() {
             return Ok(());
         }
+        let Some(samples) = &self.samples else {
+            return Err(refused(SOUND, "none loaded".to_owned()));
+        };
+        let samples = Arc::clone(samples);
         thread::sleep(SETTLE.saturating_sub(self.replayed.elapsed()));
         let started = set(&self.control, &self.writes.ring)
             .and_then(|()| prepared(&self.pcm))
-            .and_then(|()| {
-                playing(
-                    Arc::clone(&self.pcm),
-                    Arc::clone(&self.samples),
-                    Arc::clone(&self.gain),
-                )
-            });
+            .and_then(|()| playing(Arc::clone(&self.pcm), samples, Arc::clone(&self.gain)));
         match started {
             Ok(playing) => {
                 self.playing = Some(playing);
@@ -401,5 +407,24 @@ impl Speaker for AlsaSpeaker {
         let freed = plain(&self.pcm, HW_FREE).map_err(|error| failed(pcm::DEVICE, &error));
         let reset = set(&self.control, &self.writes.after);
         played.and(dropped).and(freed).and(reset)
+    }
+}
+
+#[derive(Debug)]
+pub struct AlarmSounds;
+
+impl Sounds for AlarmSounds {
+    fn list(&self) -> Result<Vec<SoundName>, HardwareError> {
+        let entries = fs::read_dir(SOUNDS).map_err(|error| failed(SOUND, &error))?;
+        let mut names = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|error| failed(SOUND, &error))?;
+            if entry.file_type().is_ok_and(|kind| kind.is_file())
+                && let Ok(name) = entry.file_name().into_string()
+            {
+                names.push(name);
+            }
+        }
+        Ok(listed(names.iter().map(String::as_str)))
     }
 }

@@ -61,8 +61,8 @@ def sources(tmp_path: Path) -> list[str]:
     return [str(inter), str(symbols)]
 
 
-def test_the_committed_subset_maps_exactly_the_figures_and_the_letters() -> None:
-    wanted = code_points("0123456789:%- ADFMSTWadehilmnorstuy")
+def test_the_committed_subset_maps_exactly_the_figures_the_letters_and_a_sound_name() -> None:
+    wanted = code_points("0123456789:%-._ ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
     assert mapped(TTFont(FONTS / INTER.name)) == wanted
 
 
@@ -84,7 +84,7 @@ def test_the_committed_subset_is_an_instance_with_no_hinting_or_layout(wanted: S
 
 
 def test_subset_keeps_only_the_wanted_code_points(tmp_path: Path) -> None:
-    source = variable(tmp_path / "fake.ttf", INTER.text + "bq")
+    source = variable(tmp_path / "fake.ttf", INTER.text + "+!")
     made = loaded(subset(source, INTER))
     assert mapped(made) == code_points(INTER.text)
     assert "fvar" not in made

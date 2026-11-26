@@ -452,7 +452,7 @@ mod tests {
 
     #[test]
     fn a_character_outside_the_subset_draws_nothing() {
-        assert_eq!(plotted('Q', place(42, Align::Baseline)), Vec::new());
+        assert_eq!(plotted('+', place(42, Align::Baseline)), Vec::new());
     }
 
     #[test]
@@ -538,8 +538,8 @@ mod tests {
 
     #[test]
     fn a_character_outside_the_subset_neither_draws_nor_moves_the_pen() {
-        assert_eq!(width("MQ", 30), width("M", 30));
-        assert_eq!(written("MQ", 30), written("M", 30));
+        assert_eq!(width("M+", 30), width("M", 30));
+        assert_eq!(written("M+", 30), written("M", 30));
     }
 
     fn drawn_icon(shown: Icon, size: usize) -> Vec<(usize, usize, u8)> {

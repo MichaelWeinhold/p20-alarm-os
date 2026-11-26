@@ -85,6 +85,14 @@ The format is #14's: whether `alarmd` decodes Vorbis on the phone or the host co
 sound to PCM before D3's push. Neither changes D2, since both fit `system` many times
 over.
 
+**Amended by issue 86**: the record is version 8, the name after the outputs. A name is
+`A`–`Z`, `a`–`z`, `0`–`9`, `.`, `_` and `-`, starts with a letter or a figure and ends in
+`.wav`; a length of 0 is no sound chosen, and so is a blank record. A version-7 or older
+record loads with `ringtone.wav` chosen, the file those versions played, so an upgrade
+rings as it did. The settings screen lists the names under `/system/media/audio/alarms`
+that the rule takes, read once at start-up, and `alarmd` loads the chosen file at
+start-up and again whenever the choice changes.
+
 ## Rejected alternatives
 
 **Sounds in a file on `userdata`.** It has the room, but it is an ext4 shared with

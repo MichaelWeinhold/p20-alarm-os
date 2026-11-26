@@ -122,7 +122,7 @@ mod tests {
     use alarm_core::alarm::{Alarm, Weekdays};
     use alarm_core::ringer::Outputs;
     use alarm_core::settings::{Choices, SetAlarm, load, save};
-    use alarm_core::sound::Volume;
+    use alarm_core::sound::{SoundName, Volume};
     use alarm_core::time::{Countdown, TimeOfDay, UtcOffset};
 
     use super::*;
@@ -178,6 +178,7 @@ mod tests {
             lit_seconds: 30,
             volume: Volume::LOUDEST,
             outputs: Outputs::BOTH,
+            sound: SoundName::new("ringtone.wav"),
         })
     }
 
