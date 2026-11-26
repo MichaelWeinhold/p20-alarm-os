@@ -66,8 +66,8 @@ def test_the_committed_subset_maps_exactly_the_figures_the_letters_and_a_sound_n
     assert mapped(TTFont(FONTS / INTER.name)) == wanted
 
 
-def test_the_committed_icons_map_exactly_the_twenty_one_symbols() -> None:
-    assert len(ICONS) == 21
+def test_the_committed_icons_map_exactly_the_twenty_two_symbols() -> None:
+    assert len(ICONS) == 22
     assert mapped(TTFont(FONTS / SYMBOLS.name)) == set(ICONS.values())
 
 

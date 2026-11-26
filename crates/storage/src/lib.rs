@@ -179,6 +179,7 @@ mod tests {
             volume: Volume::LOUDEST,
             outputs: Outputs::BOTH,
             sound: SoundName::new("ringtone.wav"),
+            ramp_seconds: 30,
         })
     }
 

@@ -7,6 +7,7 @@ use crate::face::{
 use crate::hardware::{Clock, Display, HardwareError, Input};
 use crate::input::{InputEvent, Key};
 use crate::light::{LIT_SECONDS, Light, next_lit_seconds};
+use crate::ramp::{RAMP_OFF, Ramp, next_ramp_seconds};
 use crate::settings::SetAlarm;
 use crate::sound::{SoundName, Volume};
 use crate::time::{Countdown, TimeOfDay, UnixSeconds, UtcOffset, Weekday, day_of_month, local_day};
@@ -93,6 +94,8 @@ pub struct Ringer {
     power_off: bool,
     lit_seconds: i64,
     volume: Volume,
+    ramp_seconds: i64,
+    ramp: Option<Ramp>,
     outputs: Outputs,
     sound: Option<SoundName>,
     sounds: Vec<SoundName>,
@@ -155,6 +158,8 @@ impl Ringer {
             power_off: true,
             lit_seconds: LIT_SECONDS,
             volume: Volume::LOUDEST,
+            ramp_seconds: RAMP_OFF,
+            ramp: None,
             outputs: Outputs::BOTH,
             sound: None,
             sounds: Vec::new(),
@@ -255,6 +260,25 @@ impl Ringer {
 
     pub fn set_volume(&mut self, volume: Volume) {
         self.volume = volume;
+    }
+
+    #[must_use]
+    pub fn heard(&self) -> Volume {
+        self.ramp.map_or(self.volume, Ramp::volume)
+    }
+
+    #[must_use]
+    pub fn ramp_seconds(&self) -> i64 {
+        self.ramp_seconds
+    }
+
+    pub fn set_ramp_seconds(&mut self, ramp_seconds: i64) {
+        self.ramp_seconds = ramp_seconds;
+    }
+
+    #[must_use]
+    pub fn ramp_left(&self, now: UnixSeconds) -> Option<u64> {
+        self.ramp.and_then(|ramp| ramp.seconds_left(now))
     }
 
     #[must_use]
@@ -487,6 +511,7 @@ impl Ringer {
     }
 
     pub fn tick(&mut self, now: UnixSeconds, offset: UtcOffset) {
+        let was_ringing = self.ring() == Ring::Ringing;
         if let Some(next) = self.next
             && now >= next
         {
@@ -501,10 +526,18 @@ impl Ringer {
             self.rung = Some(run.length);
         }
         if self.ring() == Ring::Ringing {
+            if !was_ringing {
+                self.ramp = Ramp::start(now, self.ramp_seconds, self.volume);
+            }
+            if let Some(ramp) = &mut self.ramp {
+                ramp.tick(now);
+            }
             self.marked = None;
             self.recovery_marked = false;
             self.draft = None;
             self.listing = None;
+        } else {
+            self.ramp = None;
         }
     }
 
@@ -513,9 +546,16 @@ impl Ringer {
             Key::Power => {
                 self.ring = Ring::Quiet;
                 self.rung = None;
+                self.ramp = None;
             }
-            Key::VolumeUp => self.volume = self.volume.up(),
-            Key::VolumeDown => self.volume = self.volume.down(),
+            Key::VolumeUp => {
+                self.volume = self.heard().up();
+                self.ramp = None;
+            }
+            Key::VolumeDown => {
+                self.volume = self.heard().down();
+                self.ramp = None;
+            }
         }
     }
 
@@ -595,6 +635,7 @@ impl Ringer {
             }
             Target::Close => self.listing = None,
             Target::Vibration => self.outputs.vibration = !self.outputs.vibration,
+            Target::Ramp => self.ramp_seconds = next_ramp_seconds(self.ramp_seconds),
             Target::Recovery if recovery_marked => self.recovery = true,
             Target::Recovery => self.recovery_marked = true,
             Target::Add
@@ -668,6 +709,7 @@ impl Ringer {
             screen,
             power_off: self.power_off,
             lit_seconds: self.lit_seconds,
+            ramp_seconds: self.ramp_seconds,
             outputs: self.outputs,
             recovery_marked: self.recovery_marked,
             timers: self.timers.clone(),
@@ -705,7 +747,7 @@ pub fn show(
     display.light(light.lit())?;
     if light.lit() {
         let face = Face {
-            volume: light.volume_shown().then_some(ringer.volume()),
+            volume: light.volume_shown().then_some(ringer.heard()),
             ..ringer.face(now, offset, battery, light.screen())
         };
         let frame = render(display.size(), &face);
@@ -780,13 +822,14 @@ mod tests {
     const OPEN_FIRST: [InputEvent; 2] = tap(300, 1000);
     const OPEN_SECOND: [InputEvent; 2] = tap(300, 1184);
     const BLANK: [InputEvent; 2] = tap(540, 400);
-    const BELOW_SETTINGS: [InputEvent; 2] = tap(540, 1800);
+    const BELOW_SETTINGS: [InputEvent; 2] = tap(540, 2050);
     const POWER_OFF: [InputEvent; 2] = tap(540, 800);
     const LIT_TIME: [InputEvent; 2] = tap(540, 1000);
     const SOUND: [InputEvent; 2] = tap(540, 1180);
     const SOUND_LIST: [InputEvent; 2] = tap(540, 1364);
     const VIBRATION: [InputEvent; 2] = tap(540, 1548);
-    const RECOVERY: [InputEvent; 2] = tap(540, 1732);
+    const RAMP: [InputEvent; 2] = tap(540, 1732);
+    const RECOVERY: [InputEvent; 2] = tap(540, 1920);
     const ALARM_TAB: [InputEvent; 2] = tap(180, 2200);
     const TIMER_TAB: [InputEvent; 2] = tap(540, 2200);
     const SETTINGS_TAB: [InputEvent; 2] = tap(900, 2200);
@@ -1375,6 +1418,146 @@ mod tests {
         assert_eq!(ringer.ring(), Ring::Ringing);
         assert_eq!(ringer.volume(), Volume::LOUDEST.down());
         assert!(light.volume_shown());
+        Ok(())
+    }
+
+    fn ringing_ramped(
+        ramp_seconds: i64,
+    ) -> Result<(FakeClock, Ringer), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut ringer = ringer(7, 0)?;
+        ringer.set_ramp_seconds(ramp_seconds);
+        drain(&mut FakeInput::with(&[&FIRST]), &clock, &mut ringer)?;
+        clock.pass(60);
+        ringer.tick(clock.now()?, UtcOffset::UTC);
+        assert_eq!(ringer.ring(), Ring::Ringing);
+        Ok((clock, ringer))
+    }
+
+    #[test]
+    fn a_ring_without_a_ramp_is_heard_at_the_set_volume_at_once()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (clock, ringer) = ringing_ramped(RAMP_OFF)?;
+        assert_eq!(ringer.heard(), Volume::LOUDEST);
+        assert_eq!(ringer.ramp_left(clock.now()?), None);
+        Ok(())
+    }
+
+    #[test]
+    fn a_ramped_ring_starts_at_the_quietest_and_reaches_the_set_volume_after_its_length()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (clock, mut ringer) = ringing_ramped(30)?;
+        assert_eq!(ringer.heard(), Volume::QUIETEST);
+        assert_eq!(ringer.volume(), Volume::LOUDEST);
+        assert_eq!(ringer.ramp_left(clock.now()?), Some(3));
+        let mut before = ringer.heard();
+        for _ in 0..30 {
+            clock.pass(1);
+            ringer.tick(clock.now()?, UtcOffset::UTC);
+            assert!(ringer.heard() >= before);
+            before = ringer.heard();
+        }
+        assert_eq!(ringer.heard(), Volume::LOUDEST);
+        assert_eq!(ringer.ramp_left(clock.now()?), None);
+        assert_eq!(ringer.volume(), Volume::LOUDEST);
+        Ok(())
+    }
+
+    #[test]
+    fn a_ramp_tops_out_at_a_lowered_set_volume() -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut ringer = ringer(7, 0)?;
+        ringer.set_ramp_seconds(15);
+        let down = [InputEvent::Press(Key::VolumeDown); 5];
+        drain(&mut FakeInput::with(&[&FIRST, &down]), &clock, &mut ringer)?;
+        clock.pass(60);
+        ringer.tick(clock.now()?, UtcOffset::UTC);
+        assert_eq!(ringer.heard(), Volume::QUIETEST);
+        clock.pass(15);
+        ringer.tick(clock.now()?, UtcOffset::UTC);
+        assert_eq!(ringer.heard().level(), 10);
+        Ok(())
+    }
+
+    #[test]
+    fn a_volume_key_during_the_ramp_ends_it_and_steps_from_the_level_heard()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (clock, mut ringer) = ringing_ramped(60)?;
+        clock.pass(30);
+        ringer.tick(clock.now()?, UtcOffset::UTC);
+        let heard = ringer.heard();
+        assert!(heard > Volume::QUIETEST && heard < Volume::LOUDEST);
+        let mut light = always();
+        drain_lit(
+            &mut FakeInput::with(&[&[InputEvent::Press(Key::VolumeUp)]]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        assert_eq!(ringer.ring(), Ring::Ringing);
+        assert_eq!(ringer.volume(), heard.up());
+        assert_eq!(ringer.heard(), heard.up());
+        assert_eq!(ringer.ramp_left(clock.now()?), None);
+        clock.pass(60);
+        ringer.tick(clock.now()?, UtcOffset::UTC);
+        assert_eq!(ringer.heard(), heard.up());
+        Ok(())
+    }
+
+    #[test]
+    fn a_stopped_ring_drops_its_ramp_and_the_next_ring_ramps_from_the_quietest_again()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (clock, mut ringer) = ringing_ramped(60)?;
+        clock.pass(45);
+        ringer.tick(clock.now()?, UtcOffset::UTC);
+        assert!(ringer.heard() > Volume::QUIETEST);
+        let mut light = always();
+        drain_lit(
+            &mut FakeInput::with(&[&[InputEvent::Press(Key::Power)]]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        assert_ne!(ringer.ring(), Ring::Ringing);
+        assert_eq!(ringer.heard(), Volume::LOUDEST);
+        assert_eq!(ringer.ramp_left(clock.now()?), None);
+        clock.pass(86_400 - 45);
+        ringer.tick(clock.now()?, UtcOffset::UTC);
+        assert_eq!(ringer.ring(), Ring::Ringing);
+        assert_eq!(ringer.heard(), Volume::QUIETEST);
+        Ok(())
+    }
+
+    #[test]
+    fn a_tap_on_the_ramp_row_steps_its_length_and_back_to_off()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut ringer = ringer(7, 0)?;
+        let mut light = always();
+        drain_lit(
+            &mut FakeInput::with(&[&SETTINGS_TAB]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        let mut seen = Vec::new();
+        for _ in 0..6 {
+            drain_lit(
+                &mut FakeInput::with(&[&RAMP]),
+                &clock,
+                &mut ringer,
+                &mut light,
+            )?;
+            let face = ringer.face(
+                clock.now()?,
+                UtcOffset::UTC,
+                Gauge::UNREAD,
+                Screen::Settings,
+            );
+            assert_eq!(face.ramp_seconds, ringer.ramp_seconds());
+            seen.push(ringer.ramp_seconds());
+        }
+        assert_eq!(seen, [15, 30, 60, 120, 300, RAMP_OFF]);
         Ok(())
     }
 

@@ -67,10 +67,15 @@ pub fn minute(
                     ends.0.saturating_sub(now.0).max(1).unsigned_abs()
                 }
             });
-            [light.seconds_left(now), light.volume_left(now), timer]
-                .into_iter()
-                .flatten()
-                .fold(seconds_to_next_minute(now), u64::min)
+            [
+                light.seconds_left(now),
+                light.volume_left(now),
+                ringer.ramp_left(now),
+                timer,
+            ]
+            .into_iter()
+            .flatten()
+            .fold(seconds_to_next_minute(now), u64::min)
         }
         Err(error) => {
             log.push(kmsg::failure("showing the time", &error));
@@ -111,7 +116,7 @@ pub fn pulse(
         }
         if let Err(error) = buzz
             .sound
-            .tick(only(ringer.outputs().sound), ringer.volume(), speaker)
+            .tick(only(ringer.outputs().sound), ringer.heard(), speaker)
         {
             log.push(kmsg::failure("driving the speaker", &error));
         }
@@ -329,6 +334,7 @@ pub fn choices(ringer: &Ringer, offset: UtcOffset, window_seconds: i64) -> Choic
         volume: ringer.volume(),
         outputs: ringer.outputs(),
         sound: ringer.sound().cloned(),
+        ramp_seconds: ringer.ramp_seconds(),
     }
 }
 
@@ -382,6 +388,7 @@ pub fn restored(
     ringer.set_volume(loaded.volume);
     ringer.set_outputs(loaded.outputs);
     ringer.set_sound(loaded.sound.clone());
+    ringer.set_ramp_seconds(loaded.ramp_seconds);
     ringer.set_timers(loaded.timers.clone());
     if ringer.alarms().iter().any(|set| set.armed) {
         match clock.now() {
@@ -965,6 +972,7 @@ mod tests {
             screen: Screen::Alarm,
             power_off: true,
             lit_seconds: LIT_SECONDS,
+            ramp_seconds: 0,
             outputs: Outputs::BOTH,
             recovery_marked: false,
             timers: Vec::new(),
@@ -2505,6 +2513,44 @@ mod tests {
         let speaker = buzz.speaker.as_ref().map_err(Clone::clone)?;
         assert_eq!((speaker.starts, speaker.stops), (1, 0));
         assert_eq!(speaker.volumes, [Volume::LOUDEST, Volume::LOUDEST.down()]);
+        Ok(())
+    }
+
+    #[test]
+    fn a_ramped_ring_starts_the_speaker_at_the_quietest_and_wakes_for_each_step()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut ringer = ringer()?;
+        ringer.set_ramp_seconds(15);
+        ringer.set_sound(ringtone());
+        let before = UnixSeconds(at(7, 0, 0).now()?.0 - 60);
+        ringer.touched(Target::Switch(0), Screen::Alarm, 0, before, UtcOffset::UTC);
+        let mut battery: Result<FakeBattery, HardwareError> =
+            Err(HardwareError::Absent("Battery/capacity"));
+        let mut buzz = buzz(Ok(FakeVibrator::default()));
+        let mut light = lit();
+        let mut display = FakeDisplay::default();
+        let mut steps = Vec::new();
+        for second in [0, 2, 15] {
+            let clock = at(7, 0, second);
+            let step = minute(
+                &clock,
+                UtcOffset::UTC,
+                &mut battery,
+                &mut ringer,
+                &mut light,
+                &mut display,
+            );
+            steps.push(step.wait_seconds);
+            pulse(&clock, &ringer, &mut buzz, step.wait_seconds);
+        }
+        assert_eq!(ringer.ring(), Ring::Ringing);
+        assert_eq!(steps[..2], [2, 1]);
+        let speaker = buzz.speaker.as_ref().map_err(Clone::clone)?;
+        assert_eq!((speaker.starts, speaker.stops), (1, 0));
+        assert_eq!(
+            speaker.volumes,
+            [Volume::QUIETEST, Volume::QUIETEST.up(), Volume::LOUDEST]
+        );
         Ok(())
     }
 

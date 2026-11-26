@@ -138,6 +138,9 @@ vibration row, eighteen icons in 3 712 bytes.
 **Amended by issue 127**: `add_circle` for the alarm screen's add, and `check` and
 `delete` for its editor, join the subset, 21 icons in 4 064 bytes.
 
+**Amended by issue 135**: `trending_up` joins the subset for the settings screen's
+ramp-up row, 22 icons in 4 124 bytes.
+
 ### D4. The subsets are made by a host script, `scripts/subset_fonts.py`
 
 It instances and subsets with `fontTools`, a dev dependency by ADR 0001, D7, from the

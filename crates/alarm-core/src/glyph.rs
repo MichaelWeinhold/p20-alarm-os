@@ -24,6 +24,7 @@ pub(crate) enum Icon {
     Restart,
     Volume,
     Vibration,
+    Ramp,
     AddCircle,
     Check,
     Delete,
@@ -31,7 +32,7 @@ pub(crate) enum Icon {
 
 impl Icon {
     #[cfg(test)]
-    const ALL: [Self; 21] = [
+    const ALL: [Self; 22] = [
         Self::Alarm,
         Self::Timer,
         Self::Settings,
@@ -50,6 +51,7 @@ impl Icon {
         Self::Restart,
         Self::Volume,
         Self::Vibration,
+        Self::Ramp,
         Self::AddCircle,
         Self::Check,
         Self::Delete,
@@ -75,6 +77,7 @@ impl Icon {
             Self::Restart => '\u{f053}',
             Self::Volume => '\u{e050}',
             Self::Vibration => '\u{e62d}',
+            Self::Ramp => '\u{e8e5}',
             Self::AddCircle => '\u{e147}',
             Self::Check => '\u{e5ca}',
             Self::Delete => '\u{e872}',

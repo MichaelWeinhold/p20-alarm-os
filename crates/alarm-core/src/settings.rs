@@ -1,6 +1,7 @@
 use crate::alarm::{Alarm, Weekdays};
 use crate::hardware::{HardwareError, Settings};
 use crate::light::{LIT_CHOICES, LIT_SECONDS};
+use crate::ramp::{RAMP_CHOICES, RAMP_OFF};
 use crate::ringer::Outputs;
 use crate::sound::{LONGEST_NAME, SoundName, Volume};
 use crate::time::{Countdown, TimeOfDay, UtcOffset};
@@ -8,7 +9,7 @@ use crate::time::{Countdown, TimeOfDay, UtcOffset};
 pub const RECORD_BYTES: usize = 2 * SLOT_BYTES;
 pub const SLOT_BYTES: usize = 4096;
 pub const MAGIC: [u8; 8] = *b"P20ALRM\0";
-pub const VERSION: u32 = 8;
+pub const VERSION: u32 = 9;
 pub const FIRST_VERSION: u32 = 1;
 const UNTIMED_VERSION: u32 = 2;
 const UNLIT_VERSION: u32 = 3;
@@ -16,6 +17,7 @@ const UNVOLUMED_VERSION: u32 = 4;
 const UNTOGGLED_VERSION: u32 = 5;
 const MINUTE_TIMED_VERSION: u32 = 6;
 const UNNAMED_VERSION: u32 = 7;
+const UNRAMPED_VERSION: u32 = 8;
 pub const PLAYED_BEFORE: &str = "ringtone.wav";
 pub const LARGEST_PAYLOAD: usize = SLOT_BYTES - HEADER_BYTES - CRC_BYTES;
 
@@ -27,6 +29,7 @@ const ALARM_BYTES: usize = 4;
 const TIMER_BYTES: usize = 3;
 const MINUTE_TIMER_BYTES: usize = 2;
 const LIT_BYTES: usize = 2;
+const RAMP_BYTES: usize = 2;
 const DEVICE: &str = "settings";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -69,6 +72,7 @@ pub struct Choices {
     pub volume: Volume,
     pub outputs: Outputs,
     pub sound: Option<SoundName>,
+    pub ramp_seconds: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -116,6 +120,12 @@ fn payload(choices: &Choices) -> Result<Vec<u8>, HardwareError> {
         .ok()
         .filter(|_| LIT_CHOICES.contains(&choices.lit_seconds))
         .ok_or_else(|| refused(format!("a lit time of {} s", choices.lit_seconds)))?;
+    let ramp = u16::try_from(choices.ramp_seconds)
+        .ok()
+        .filter(|_| {
+            choices.ramp_seconds == RAMP_OFF || RAMP_CHOICES.contains(&choices.ramp_seconds)
+        })
+        .ok_or_else(|| refused(format!("a ramp of {} s", choices.ramp_seconds)))?;
     let mut bytes = Vec::with_capacity(
         CHOICES_BYTES
             + ALARM_BYTES * choices.alarms.len()
@@ -123,7 +133,8 @@ fn payload(choices: &Choices) -> Result<Vec<u8>, HardwareError> {
             + TIMER_BYTES * choices.timers.len()
             + LIT_BYTES
             + 4
-            + LONGEST_NAME,
+            + LONGEST_NAME
+            + RAMP_BYTES,
     );
     bytes.extend_from_slice(&offset.to_le_bytes());
     bytes.extend_from_slice(&window.to_le_bytes());
@@ -152,6 +163,7 @@ fn payload(choices: &Choices) -> Result<Vec<u8>, HardwareError> {
         .ok_or_else(|| refused(format!("a sound name of {} bytes", name.len())))?;
     bytes.push(length);
     bytes.extend_from_slice(name.as_bytes());
+    bytes.extend_from_slice(&ramp.to_le_bytes());
     Ok(bytes)
 }
 
@@ -295,6 +307,14 @@ fn choices(payload: &[u8], version: u32) -> Option<Choices> {
         };
         (sound, rest)
     };
+    let (ramp_seconds, rest) = if version <= UNRAMPED_VERSION {
+        (RAMP_OFF, rest)
+    } else {
+        let (ramp, rest) = rest.split_first_chunk::<RAMP_BYTES>()?;
+        let ramp = i64::from(u16::from_le_bytes(*ramp));
+        let chosen = ramp == RAMP_OFF || RAMP_CHOICES.contains(&ramp);
+        (chosen.then_some(ramp)?, rest)
+    };
     if !rest.is_empty() {
         return None;
     }
@@ -308,6 +328,7 @@ fn choices(payload: &[u8], version: u32) -> Option<Choices> {
         volume,
         outputs,
         sound,
+        ramp_seconds,
     })
 }
 
@@ -437,13 +458,21 @@ mod tests {
                 vibration: true,
             },
             sound: SoundName::new("Carbon.wav"),
+            ramp_seconds: 60,
+        })
+    }
+
+    fn unramped(hour: u8, minute: u8) -> Result<Choices, TimeError> {
+        Ok(Choices {
+            ramp_seconds: RAMP_OFF,
+            ..choices_at(hour, minute)?
         })
     }
 
     fn unnamed(hour: u8, minute: u8) -> Result<Choices, TimeError> {
         Ok(Choices {
             sound: SoundName::new(PLAYED_BEFORE),
-            ..choices_at(hour, minute)?
+            ..unramped(hour, minute)?
         })
     }
 
@@ -486,8 +515,8 @@ mod tests {
         let choices = choices_at(6, 45)?;
         let slot = encode(&choices, 7)?;
         assert_eq!(&slot[..8], b"P20ALRM\0");
-        assert_eq!(slot[8..12], 8_u32.to_le_bytes());
-        assert_eq!(slot[12..16], 34_u32.to_le_bytes());
+        assert_eq!(slot[8..12], 9_u32.to_le_bytes());
+        assert_eq!(slot[12..16], 36_u32.to_le_bytes());
         assert_eq!(slot[16..24], 7_u64.to_le_bytes());
         assert_eq!(
             slot[24..48],
@@ -497,8 +526,9 @@ mod tests {
             ]
         );
         assert_eq!(&slot[48..58], b"Carbon.wav");
-        assert_eq!(slot[58..62], crc32(&slot[..58]).to_le_bytes());
-        assert!(slot[62..].iter().all(|&byte| byte == 0));
+        assert_eq!(slot[58..60], [60, 0]);
+        assert_eq!(slot[60..64], crc32(&slot[..60]).to_le_bytes());
+        assert!(slot[64..].iter().all(|&byte| byte == 0));
         Ok(())
     }
 
@@ -511,7 +541,7 @@ mod tests {
         assert_eq!(load(&mut record)?, Some(untimed(6, 45)?));
         save(&mut record, &choices_at(6, 45)?)?;
         assert_eq!(record.saved, [Slot::Second]);
-        assert_eq!(record.bytes[SLOT_BYTES + 8], 8);
+        assert_eq!(record.bytes[SLOT_BYTES + 8], 9);
         assert_eq!(load(&mut record)?, Some(choices_at(6, 45)?));
         Ok(())
     }
@@ -544,7 +574,7 @@ mod tests {
         lit.extend_from_slice(&[30, 0]);
         assert_eq!(decode(&framed_as(UNLIT_VERSION, &lit, 0)?), None);
         save(&mut record, &choices_at(6, 45)?)?;
-        assert_eq!(record.bytes[SLOT_BYTES + 8], 8);
+        assert_eq!(record.bytes[SLOT_BYTES + 8], 9);
         assert_eq!(load(&mut record)?, Some(choices_at(6, 45)?));
         Ok(())
     }
@@ -562,7 +592,7 @@ mod tests {
         volumed.push(13);
         assert_eq!(decode(&framed_as(UNVOLUMED_VERSION, &volumed, 0)?), None);
         save(&mut record, &choices_at(6, 45)?)?;
-        assert_eq!(record.bytes[SLOT_BYTES + 8], 8);
+        assert_eq!(record.bytes[SLOT_BYTES + 8], 9);
         assert_eq!(load(&mut record)?, Some(choices_at(6, 45)?));
         Ok(())
     }
@@ -584,7 +614,7 @@ mod tests {
         toggled.extend_from_slice(&[0, 1]);
         assert_eq!(decode(&framed_as(UNTOGGLED_VERSION, &toggled, 0)?), None);
         save(&mut record, &choices_at(6, 45)?)?;
-        assert_eq!(record.bytes[SLOT_BYTES + 8], 8);
+        assert_eq!(record.bytes[SLOT_BYTES + 8], 9);
         assert_eq!(load(&mut record)?, Some(choices_at(6, 45)?));
         Ok(())
     }
@@ -609,7 +639,7 @@ mod tests {
             assert_eq!(decode(&framed_as(MINUTE_TIMED_VERSION, &broken, 0)?), None);
         }
         save(&mut record, &loaded)?;
-        assert_eq!(record.bytes[SLOT_BYTES + 8], 8);
+        assert_eq!(record.bytes[SLOT_BYTES + 8], 9);
         assert_eq!(load(&mut record)?, Some(loaded));
         Ok(())
     }
@@ -628,8 +658,36 @@ mod tests {
         named.push(0);
         assert_eq!(decode(&framed_as(UNNAMED_VERSION, &named, 0)?), None);
         save(&mut record, &choices_at(6, 45)?)?;
-        assert_eq!(record.bytes[SLOT_BYTES + 8], 8);
+        assert_eq!(record.bytes[SLOT_BYTES + 8], 9);
         assert_eq!(load(&mut record)?, Some(choices_at(6, 45)?));
+        Ok(())
+    }
+
+    #[test]
+    fn an_eighth_version_slot_loads_with_the_ramp_off() -> Result<(), Box<dyn std::error::Error>> {
+        let mut record = FakeRecord::blank();
+        let full = payload(&choices_at(6, 45)?)?;
+        let eighth = &full[..full.len() - RAMP_BYTES];
+        record.put(Slot::First, &framed_as(UNRAMPED_VERSION, eighth, 2)?);
+        assert_eq!(load(&mut record)?, Some(unramped(6, 45)?));
+        assert_eq!(decode(&framed_as(UNRAMPED_VERSION, &full, 0)?), None);
+        save(&mut record, &choices_at(6, 45)?)?;
+        assert_eq!(record.bytes[SLOT_BYTES + 8], 9);
+        assert_eq!(load(&mut record)?, Some(choices_at(6, 45)?));
+        Ok(())
+    }
+
+    #[test]
+    fn every_ramp_length_and_off_round_trip() -> Result<(), Box<dyn std::error::Error>> {
+        let mut record = FakeRecord::blank();
+        for ramp_seconds in std::iter::once(RAMP_OFF).chain(RAMP_CHOICES) {
+            let choices = Choices {
+                ramp_seconds,
+                ..choices_at(6, 45)?
+            };
+            save(&mut record, &choices)?;
+            assert_eq!(load(&mut record)?, Some(choices));
+        }
         Ok(())
     }
 
@@ -862,6 +920,9 @@ mod tests {
             (30, b' '),
             (33, b'W'),
             (33, 0xff),
+            (34, 45),
+            (34, 1),
+            (35, 1),
         ] {
             let mut payload = good.clone();
             payload[at] = value;
@@ -884,10 +945,14 @@ mod tests {
         bad.push(good[..22].to_vec());
         bad.push(good[..23].to_vec());
         bad.push(good[..33].to_vec());
+        bad.push(good[..34].to_vec());
+        bad.push(good[..35].to_vec());
         let mut unsuffixed = good[..30].to_vec();
+        unsuffixed.extend_from_slice(&good[34..]);
         unsuffixed[23] = 6;
         bad.push(unsuffixed);
         let mut unnamed = good[..24].to_vec();
+        unnamed.extend_from_slice(&good[34..]);
         unnamed[23] = 0;
         assert!(decode(&framed(&unnamed, 0)?).is_some());
         let mut zero = good.clone();
@@ -905,7 +970,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let slot = encode(&choices_at(6, 45)?, 0)?;
         let mut version = slot;
-        version[8] = 9;
+        version[8] = 10;
         let mut magic = slot;
         magic[0] = b'Q';
         let mut length = slot;
@@ -947,7 +1012,11 @@ mod tests {
         unlisted.lit_seconds = 45;
         let mut huge = choices_at(7, 1)?;
         huge.lit_seconds = i64::from(u16::MAX) + 30;
-        for choices in [window, many, zero, unlisted, huge] {
+        let mut ramp = choices_at(7, 1)?;
+        ramp.ramp_seconds = 45;
+        let mut backwards = choices_at(7, 1)?;
+        backwards.ramp_seconds = -15;
+        for choices in [window, many, zero, unlisted, huge, ramp, backwards] {
             assert!(save(&mut record, &choices).is_err());
         }
         assert_eq!(record.saved, []);

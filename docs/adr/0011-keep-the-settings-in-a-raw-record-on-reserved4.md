@@ -2,7 +2,8 @@
 
 - **Status:** Accepted; D2's format raised to version 2 by issue 83, to version 3 by
   issue 81, to version 4 by issue 97, to version 5 by issue 110, to version 6 by
-  issue 115, and to version 7 by issue 128
+  issue 115, to version 7 by issue 128, to version 8 by issue 86, and to version 9 by
+  issue 135
 - **Date:** 2026-11-13
 - **Issue:** #30
 
@@ -54,7 +55,7 @@ slot is little-endian:
 | Offset | Bytes | Field |
 |---|---|---|
 | 0 | 8 | magic, `P20ALRM\0` |
-| 8 | 4 | format version, `7` |
+| 8 | 4 | format version, `9` |
 | 12 | 4 | payload length, at most 4068 |
 | 16 | 8 | sequence number |
 | 24 | n | payload |
@@ -77,6 +78,8 @@ part of the format version, and a change to it raises the version.
 | 13 + 4 n + 3 m | 1 | the ring's volume, `1` to `15`; absent before version 5 |
 | 14 + 4 n + 3 m | 1 | the ring's sound, `1` on and `0` off; absent before version 6 |
 | 15 + 4 n + 3 m | 1 | the ring's vibration, `1` on and `0` off; absent before version 6 |
+| 16 + 4 n + 3 m | 1 + k | the chosen sound's name: its length k, then its bytes, ADR 0014's rule; absent before version 8 |
+| 17 + 4 n + 3 m + k | 2 | how long a ring ramps up, in seconds: `0` off, or `15`, `30`, `60`, `120` or `300`; absent before version 9 |
 
 A version-1 slot still loads, with the toggle on, and the next save writes the current
 version. Version 1 is the same payload without the toggle byte. Amended by issue 83.
@@ -91,6 +94,9 @@ without either. Amended by issue 115.
 A version-3 to version-6 slot loads each timer's minutes and seconds as the same length
 in hours, minutes and seconds, `75:00` as `1:15:00`; those versions store a timer in two
 bytes, minutes `0` to `99` and seconds. Amended by issue 128.
+A version-8 slot loads with the ramp off, so an upgrade rings at once at its volume as
+it did; version 8 is the payload without the ramp length. A ramped ring starts at volume
+`1` and steps up to the saved volume over that length. Amended by issue 135.
 
 Encoding, decoding and choosing a slot live in `alarm-core`, tested on the host with
 fakes (architecture rule 1). The adapter only reads and writes the 8192 bytes. The CRC is

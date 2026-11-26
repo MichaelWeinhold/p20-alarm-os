@@ -6,6 +6,7 @@ mod glyph;
 pub mod hardware;
 pub mod input;
 pub mod light;
+pub mod ramp;
 pub mod ringer;
 pub mod schedule;
 pub mod settings;
