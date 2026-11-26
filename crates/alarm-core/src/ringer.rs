@@ -103,19 +103,20 @@ pub struct Ringer {
 }
 
 fn stepped(picked: Picked, field: Field, steps: i64) -> Picked {
-    let modulo = match (picked, field) {
-        (Picked::Alarm(_), Field::Left) => 24,
-        (Picked::Timer(_), Field::Left) => i64::from(Countdown::LONGEST.minutes()) + 1,
-        (_, Field::Right) => 60,
+    let modulo = match field {
+        Field::Hours => 24,
+        Field::Minutes | Field::Seconds => 60,
     };
     let Ok(step) = i8::try_from(steps.rem_euclid(modulo)) else {
         return picked;
     };
     match (picked, field) {
-        (Picked::Alarm(time), Field::Left) => Picked::Alarm(time.stepped_hour(step)),
-        (Picked::Alarm(time), Field::Right) => Picked::Alarm(time.stepped_minute(step)),
-        (Picked::Timer(timer), Field::Left) => Picked::Timer(timer.stepped_minutes(step)),
-        (Picked::Timer(timer), Field::Right) => Picked::Timer(timer.stepped_seconds(step)),
+        (Picked::Alarm(time), Field::Hours) => Picked::Alarm(time.stepped_hour(step)),
+        (Picked::Alarm(time), Field::Minutes) => Picked::Alarm(time.stepped_minute(step)),
+        (Picked::Alarm(_), Field::Seconds) => picked,
+        (Picked::Timer(timer), Field::Hours) => Picked::Timer(timer.stepped_hours(step)),
+        (Picked::Timer(timer), Field::Minutes) => Picked::Timer(timer.stepped_minutes(step)),
+        (Picked::Timer(timer), Field::Seconds) => Picked::Timer(timer.stepped_seconds(step)),
     }
 }
 
@@ -721,10 +722,12 @@ mod tests {
     const ALARM_TAB: [InputEvent; 2] = tap(180, 2200);
     const TIMER_TAB: [InputEvent; 2] = tap(540, 2200);
     const SETTINGS_TAB: [InputEvent; 2] = tap(900, 2200);
-    const TIMER_MINUTES_ABOVE: [InputEvent; 2] = tap(200, 220);
-    const TIMER_MINUTES_BELOW: [InputEvent; 2] = tap(200, 600);
-    const TIMER_SECONDS_ABOVE: [InputEvent; 2] = tap(450, 220);
-    const TIMER_SECONDS_BELOW: [InputEvent; 2] = tap(450, 600);
+    const TIMER_HOURS_ABOVE: [InputEvent; 2] = tap(140, 220);
+    const TIMER_HOURS_BELOW: [InputEvent; 2] = tap(140, 600);
+    const TIMER_MINUTES_ABOVE: [InputEvent; 2] = tap(300, 220);
+    const TIMER_MINUTES_BELOW: [InputEvent; 2] = tap(300, 600);
+    const TIMER_SECONDS_ABOVE: [InputEvent; 2] = tap(470, 220);
+    const TIMER_SECONDS_BELOW: [InputEvent; 2] = tap(470, 600);
     const TIMER_ADD: [InputEvent; 2] = tap(700, 400);
     const TIMER_FIRST: [InputEvent; 2] = tap(300, 820);
     const PLAY_FIRST: [InputEvent; 2] = tap(700, 820);
@@ -841,7 +844,7 @@ mod tests {
     fn countdowns(timers: &[(u8, u8)]) -> Result<Vec<Countdown>, TimeError> {
         timers
             .iter()
-            .map(|&(minutes, seconds)| Countdown::new(minutes, seconds))
+            .map(|&(minutes, seconds)| Countdown::new(0, minutes, seconds))
             .collect()
     }
 
@@ -1429,13 +1432,13 @@ mod tests {
             ringer.timers(),
             countdowns(&[(0, 5), (1, 30), (3, 0), (9, 0)])?
         );
-        assert_eq!(ringer.countdown(), Countdown::new(0, 5)?);
+        assert_eq!(ringer.countdown(), Countdown::new(0, 0, 5)?);
         assert_eq!(timed(&[])?.countdown(), Countdown::default());
         Ok(())
     }
 
     #[test]
-    fn the_timer_wheels_step_minutes_and_seconds_and_wrap_within_each()
+    fn the_timer_wheels_step_hours_minutes_and_seconds_and_wrap_within_each()
     -> Result<(), Box<dyn std::error::Error>> {
         let clock = FakeClock::at(12, 0, 0);
         let mut ringer = timed(&[])?;
@@ -1447,18 +1450,23 @@ mod tests {
             &[&TIMER_TAB, &TIMER_MINUTES_BELOW, &TIMER_SECONDS_BELOW],
             &mut ringer,
         )?;
+        assert_eq!(ringer.countdown(), Countdown::new(0, 59, 59)?);
+        on(&[&TIMER_HOURS_BELOW], &mut ringer)?;
         assert_eq!(ringer.countdown(), Countdown::LONGEST);
         on(
             &[
+                &TIMER_HOURS_ABOVE,
                 &TIMER_MINUTES_ABOVE,
                 &TIMER_SECONDS_ABOVE,
                 &TIMER_SECONDS_ABOVE,
             ],
             &mut ringer,
         )?;
-        assert_eq!(ringer.countdown(), Countdown::new(0, 1)?);
-        on(&[&drag(200, 400, &[400 - 3 * PITCH])], &mut ringer)?;
-        assert_eq!(ringer.countdown(), Countdown::new(3, 1)?);
+        assert_eq!(ringer.countdown(), Countdown::new(0, 0, 1)?);
+        on(&[&drag(300, 400, &[400 - 3 * PITCH])], &mut ringer)?;
+        assert_eq!(ringer.countdown(), Countdown::new(0, 3, 1)?);
+        on(&[&drag(140, 400, &[400 - 2 * PITCH])], &mut ringer)?;
+        assert_eq!(ringer.countdown(), Countdown::new(2, 3, 1)?);
         Ok(())
     }
 
@@ -1586,8 +1594,8 @@ mod tests {
         assert_eq!(
             face.running,
             Some(Running {
-                left: Countdown::new(4, 59)?,
-                length: Countdown::new(5, 0)?,
+                left: Countdown::new(0, 4, 59)?,
+                length: Countdown::new(0, 5, 0)?,
                 paused: false,
             })
         );
@@ -1602,7 +1610,7 @@ mod tests {
         assert_eq!(light.screen(), Screen::Timer);
         let face = ringer.face(clock.now()?, UtcOffset::UTC, Gauge::UNREAD, Screen::Timer);
         assert!(face.ringing);
-        assert_eq!(face.rung, Some(Countdown::new(5, 0)?));
+        assert_eq!(face.rung, Some(Countdown::new(0, 5, 0)?));
         drain_lit(
             &mut FakeInput::with(&[&VOLUME, &PLAY_FIRST]),
             &clock,
@@ -1638,7 +1646,7 @@ mod tests {
         on(&[&TIMER_TAB, &PLAY_FIRST], &mut ringer)?;
         clock.pass(30);
         on(&[&PAUSE], &mut ringer)?;
-        assert_eq!(ringer.paused(), Some(Countdown::new(1, 0)?));
+        assert_eq!(ringer.paused(), Some(Countdown::new(0, 1, 0)?));
         assert_eq!(ringer.running_until(), None);
         assert_eq!(ringer.held(), Ring::Paused);
         assert_eq!(ringer.stage(Screen::Timer), Stage::Running);
@@ -1649,8 +1657,8 @@ mod tests {
         assert_eq!(
             face.running,
             Some(Running {
-                left: Countdown::new(1, 0)?,
-                length: Countdown::new(1, 30)?,
+                left: Countdown::new(0, 1, 0)?,
+                length: Countdown::new(0, 1, 30)?,
                 paused: true,
             })
         );
@@ -1717,7 +1725,7 @@ mod tests {
         clock.pass(10);
         on(&[&PAUSE, &ALARM_TAB, &TIMER_TAB], &mut ringer)?;
         assert_eq!(ringer.stage(Screen::Timer), Stage::Running);
-        assert_eq!(ringer.paused(), Some(Countdown::new(1, 20)?));
+        assert_eq!(ringer.paused(), Some(Countdown::new(0, 1, 20)?));
         on(&[&CLOSE, &SETTINGS_TAB, &TIMER_TAB], &mut ringer)?;
         assert_eq!(ringer.stage(Screen::Timer), Stage::List);
         Ok(())
@@ -2135,12 +2143,16 @@ mod tests {
             drain_lit(&mut FakeInput::with(gestures), &clock, ringer, &mut light)
         };
         on(&[&TIMER_TAB, &TIMER_MINUTES_ABOVE], &mut timer)?;
-        assert_eq!(timer.countdown(), Countdown::new(1, 0)?);
+        assert_eq!(timer.countdown(), Countdown::new(0, 1, 0)?);
         on(&[&TIMER_SECONDS_ABOVE], &mut timer)?;
-        assert_eq!(timer.countdown(), Countdown::new(1, 1)?);
+        assert_eq!(timer.countdown(), Countdown::new(0, 1, 1)?);
         on(&[&TIMER_MINUTES_BELOW, &TIMER_MINUTES_BELOW], &mut timer)?;
-        assert_eq!(timer.countdown(), Countdown::new(99, 1)?);
+        assert_eq!(timer.countdown(), Countdown::new(0, 59, 1)?);
         on(&[&TIMER_SECONDS_BELOW, &TIMER_SECONDS_BELOW], &mut timer)?;
+        assert_eq!(timer.countdown(), Countdown::new(0, 59, 59)?);
+        on(&[&TIMER_HOURS_ABOVE], &mut timer)?;
+        assert_eq!(timer.countdown(), Countdown::new(1, 59, 59)?);
+        on(&[&TIMER_HOURS_BELOW, &TIMER_HOURS_BELOW], &mut timer)?;
         assert_eq!(timer.countdown(), Countdown::LONGEST);
         Ok(())
     }

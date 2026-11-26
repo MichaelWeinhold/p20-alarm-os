@@ -4,7 +4,7 @@ pub const SECONDS_PER_DAY: i64 = 86_400;
 const SECONDS_PER_MINUTE: i64 = 60;
 const SECONDS_PER_HOUR: i64 = 3_600;
 const LARGEST_OFFSET: i32 = 18 * 3_600;
-const COUNTDOWN_MINUTES: u8 = 100;
+const COUNTDOWN_HOURS: u8 = 24;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct UnixSeconds(pub i64);
@@ -14,7 +14,7 @@ pub enum TimeError {
     Hour(u8),
     Minute(u8),
     Offset(i32),
-    Countdown(u8, u8),
+    Countdown(u8, u8, u8),
 }
 
 impl fmt::Display for TimeError {
@@ -28,10 +28,10 @@ impl fmt::Display for TimeError {
                     "UTC offset {seconds}s is beyond ±{LARGEST_OFFSET}s"
                 )
             }
-            Self::Countdown(minutes, seconds) => {
+            Self::Countdown(hours, minutes, seconds) => {
                 write!(
                     formatter,
-                    "countdown {minutes}:{seconds:02} is not in 00:00..=99:59"
+                    "countdown {hours}:{minutes:02}:{seconds:02} is not in 00:00:00..=23:59:59"
                 )
             }
         }
@@ -100,30 +100,42 @@ impl TimeOfDay {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Countdown {
+    hours: u8,
     minutes: u8,
     seconds: u8,
 }
 
 impl Countdown {
     pub const LONGEST: Self = Self {
-        minutes: COUNTDOWN_MINUTES - 1,
+        hours: COUNTDOWN_HOURS - 1,
+        minutes: 59,
         seconds: 59,
     };
 
-    pub fn new(minutes: u8, seconds: u8) -> Result<Self, TimeError> {
-        if minutes >= COUNTDOWN_MINUTES || seconds > 59 {
-            return Err(TimeError::Countdown(minutes, seconds));
+    pub fn new(hours: u8, minutes: u8, seconds: u8) -> Result<Self, TimeError> {
+        if hours >= COUNTDOWN_HOURS || minutes > 59 || seconds > 59 {
+            return Err(TimeError::Countdown(hours, minutes, seconds));
         }
-        Ok(Self { minutes, seconds })
+        Ok(Self {
+            hours,
+            minutes,
+            seconds,
+        })
     }
 
     #[must_use]
     pub fn of(seconds: i64) -> Self {
         let seconds = seconds.clamp(0, Self::LONGEST.total());
         Self {
-            minutes: u8::try_from(seconds / SECONDS_PER_MINUTE).unwrap_or(0),
+            hours: u8::try_from(seconds / SECONDS_PER_HOUR).unwrap_or(0),
+            minutes: u8::try_from(seconds % SECONDS_PER_HOUR / SECONDS_PER_MINUTE).unwrap_or(0),
             seconds: u8::try_from(seconds % SECONDS_PER_MINUTE).unwrap_or(0),
         }
+    }
+
+    #[must_use]
+    pub fn hours(self) -> u8 {
+        self.hours
     }
 
     #[must_use]
@@ -138,7 +150,9 @@ impl Countdown {
 
     #[must_use]
     pub fn total(self) -> i64 {
-        i64::from(self.minutes) * SECONDS_PER_MINUTE + i64::from(self.seconds)
+        i64::from(self.hours) * SECONDS_PER_HOUR
+            + i64::from(self.minutes) * SECONDS_PER_MINUTE
+            + i64::from(self.seconds)
     }
 
     #[must_use]
@@ -147,18 +161,26 @@ impl Countdown {
     }
 
     #[must_use]
+    pub fn stepped_hours(self, step: i8) -> Self {
+        Self {
+            hours: wrapped(self.hours, step, i16::from(COUNTDOWN_HOURS)),
+            ..self
+        }
+    }
+
+    #[must_use]
     pub fn stepped_minutes(self, step: i8) -> Self {
         Self {
-            minutes: wrapped(self.minutes, step, i16::from(COUNTDOWN_MINUTES)),
-            seconds: self.seconds,
+            minutes: wrapped(self.minutes, step, 60),
+            ..self
         }
     }
 
     #[must_use]
     pub fn stepped_seconds(self, step: i8) -> Self {
         Self {
-            minutes: self.minutes,
             seconds: wrapped(self.seconds, step, 60),
+            ..self
         }
     }
 }
@@ -355,35 +377,62 @@ mod tests {
     }
 
     #[test]
-    fn a_countdown_past_99_59_is_refused() {
-        assert_eq!(Countdown::new(100, 0), Err(TimeError::Countdown(100, 0)));
-        assert_eq!(Countdown::new(5, 60), Err(TimeError::Countdown(5, 60)));
-        assert_eq!(Countdown::new(99, 59), Ok(Countdown::LONGEST));
+    fn a_countdown_past_23_59_59_is_refused() {
+        assert_eq!(
+            Countdown::new(24, 0, 0),
+            Err(TimeError::Countdown(24, 0, 0))
+        );
+        assert_eq!(
+            Countdown::new(0, 60, 0),
+            Err(TimeError::Countdown(0, 60, 0))
+        );
+        assert_eq!(
+            Countdown::new(0, 5, 60),
+            Err(TimeError::Countdown(0, 5, 60))
+        );
+        assert_eq!(Countdown::new(23, 59, 59), Ok(Countdown::LONGEST));
     }
 
     #[test]
     fn a_countdown_counts_its_seconds_and_is_read_back_from_them() -> Result<(), TimeError> {
-        assert_eq!(Countdown::new(5, 30)?.total(), 330);
-        assert_eq!(Countdown::of(330), Countdown::new(5, 30)?);
+        assert_eq!(Countdown::new(0, 5, 30)?.total(), 330);
+        assert_eq!(Countdown::new(1, 15, 0)?.total(), 4_500);
+        assert_eq!(Countdown::of(330), Countdown::new(0, 5, 30)?);
+        assert_eq!(Countdown::of(4_500), Countdown::new(1, 15, 0)?);
         assert_eq!(Countdown::of(-4), Countdown::default());
         assert!(Countdown::of(0).is_zero());
-        assert_eq!(Countdown::of(6_000), Countdown::LONGEST);
+        assert_eq!(Countdown::of(SECONDS_PER_DAY), Countdown::LONGEST);
+        Ok(())
+    }
+
+    #[test]
+    fn a_countdown_orders_by_its_length() -> Result<(), TimeError> {
+        assert!(Countdown::new(0, 59, 59)? < Countdown::new(1, 0, 0)?);
+        assert!(Countdown::new(1, 0, 59)? < Countdown::new(1, 1, 0)?);
         Ok(())
     }
 
     #[test]
     fn a_countdown_step_wraps_within_its_own_field() -> Result<(), TimeError> {
         assert_eq!(
-            Countdown::new(99, 59)?.stepped_minutes(1),
-            Countdown::new(0, 59)?
+            Countdown::new(23, 59, 59)?.stepped_hours(1),
+            Countdown::new(0, 59, 59)?
         );
         assert_eq!(
-            Countdown::new(0, 0)?.stepped_minutes(-1),
-            Countdown::new(99, 0)?
+            Countdown::new(0, 0, 0)?.stepped_hours(-1),
+            Countdown::new(23, 0, 0)?
         );
         assert_eq!(
-            Countdown::new(3, 59)?.stepped_seconds(1),
-            Countdown::new(3, 0)?
+            Countdown::new(2, 59, 59)?.stepped_minutes(1),
+            Countdown::new(2, 0, 59)?
+        );
+        assert_eq!(
+            Countdown::new(2, 0, 0)?.stepped_minutes(-1),
+            Countdown::new(2, 59, 0)?
+        );
+        assert_eq!(
+            Countdown::new(2, 3, 59)?.stepped_seconds(1),
+            Countdown::new(2, 3, 0)?
         );
         Ok(())
     }

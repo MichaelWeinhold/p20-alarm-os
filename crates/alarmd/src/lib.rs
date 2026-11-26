@@ -848,7 +848,7 @@ mod tests {
 
     fn running_at(clock: &FixedClock, seconds: u8) -> Result<Ringer, Box<dyn std::error::Error>> {
         let mut ringer = ringer()?;
-        ringer.set_timers(vec![Countdown::new(0, seconds)?]);
+        ringer.set_timers(vec![Countdown::new(0, 0, seconds)?]);
         ringer.touched(
             Target::Play(0),
             Screen::Timer,
@@ -1226,7 +1226,7 @@ mod tests {
             after.lifted();
         }
         after.touched(
-            Target::Wheel(Field::Left, Row::Picked),
+            Target::Wheel(Field::Hours, Row::Picked),
             Screen::Alarm,
             500,
             at(6, 0, 0).now()?,
@@ -1247,11 +1247,11 @@ mod tests {
         let mut ringer = started.ringer.clone();
         for target in [
             Target::Add,
-            Target::Wheel(Field::Left, Row::Above),
+            Target::Wheel(Field::Hours, Row::Above),
             Target::Done,
             Target::Add,
-            Target::Wheel(Field::Left, Row::Above),
-            Target::Wheel(Field::Left, Row::Above),
+            Target::Wheel(Field::Hours, Row::Above),
+            Target::Wheel(Field::Hours, Row::Above),
             Target::Day(Weekday::Thursday),
             Target::Done,
             Target::Switch(0),
@@ -1293,14 +1293,14 @@ mod tests {
         let mut settings = Ok(FakeSettings::blank());
         let mut started = boot(&mut settings, &clock)?;
         let mut ringer = started.ringer.clone();
-        ringer.set_timers(vec![Countdown::new(12, 5)?, Countdown::new(3, 0)?]);
+        ringer.set_timers(vec![Countdown::new(0, 12, 5)?, Countdown::new(0, 3, 0)?]);
         let current = choices(&ringer, berlin()?, WINDOW_SECONDS);
         assert_eq!(current.timers, ringer.timers());
         persisted(&mut settings, &mut started.saved, current);
 
         let rebooted = boot(&mut settings, &at(20, 0, 0))?;
         assert_eq!(rebooted.ringer.timers(), ringer.timers());
-        assert_eq!(rebooted.ringer.countdown(), Countdown::new(3, 0)?);
+        assert_eq!(rebooted.ringer.countdown(), Countdown::new(0, 3, 0)?);
         assert_eq!(rebooted.ringer.running_until(), None);
         Ok(())
     }
