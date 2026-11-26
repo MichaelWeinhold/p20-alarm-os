@@ -120,6 +120,7 @@ mod tests {
     use std::path::PathBuf;
 
     use alarm_core::alarm::{Alarm, Weekdays};
+    use alarm_core::ringer::Outputs;
     use alarm_core::settings::{Choices, SetAlarm, load, save};
     use alarm_core::sound::Volume;
     use alarm_core::time::{Countdown, TimeOfDay, UtcOffset};
@@ -176,6 +177,7 @@ mod tests {
             timers: vec![Countdown::new(3, 0)?],
             lit_seconds: 30,
             volume: Volume::LOUDEST,
+            outputs: Outputs::BOTH,
         })
     }
 

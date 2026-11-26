@@ -19,6 +19,19 @@ pub enum Ring {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Outputs {
+    pub sound: bool,
+    pub vibration: bool,
+}
+
+impl Outputs {
+    pub const BOTH: Self = Self {
+        sound: true,
+        vibration: true,
+    };
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Picked {
     Alarm(TimeOfDay),
     Timer(Countdown),
@@ -73,6 +86,7 @@ pub struct Ringer {
     power_off: bool,
     lit_seconds: i64,
     volume: Volume,
+    outputs: Outputs,
     recovery_marked: bool,
     recovery: bool,
     timers: Vec<Countdown>,
@@ -128,6 +142,7 @@ impl Ringer {
             power_off: true,
             lit_seconds: LIT_SECONDS,
             volume: Volume::LOUDEST,
+            outputs: Outputs::BOTH,
             recovery_marked: false,
             recovery: false,
             timers: Vec::new(),
@@ -234,6 +249,15 @@ impl Ringer {
 
     pub fn set_volume(&mut self, volume: Volume) {
         self.volume = volume;
+    }
+
+    #[must_use]
+    pub fn outputs(&self) -> Outputs {
+        self.outputs
+    }
+
+    pub fn set_outputs(&mut self, outputs: Outputs) {
+        self.outputs = outputs;
     }
 
     #[must_use]
@@ -439,6 +463,8 @@ impl Ringer {
             Target::Remove(index) if index < self.alarms.len() => self.marked = Some(index),
             Target::PowerOff => self.power_off = !self.power_off,
             Target::LitTime => self.lit_seconds = next_lit_seconds(self.lit_seconds),
+            Target::Sound => self.outputs.sound = !self.outputs.sound,
+            Target::Vibration => self.outputs.vibration = !self.outputs.vibration,
             Target::Recovery if recovery_marked => self.recovery = true,
             Target::Recovery => self.recovery_marked = true,
             Target::Remove(_)
@@ -493,6 +519,7 @@ impl Ringer {
             screen,
             power_off: self.power_off,
             lit_seconds: self.lit_seconds,
+            outputs: self.outputs,
             recovery_marked: self.recovery_marked,
             timers: self.timers.clone(),
             countdown: self.countdown,
@@ -597,7 +624,9 @@ mod tests {
     const BLANK: [InputEvent; 2] = tap(540, 400);
     const POWER_OFF: [InputEvent; 2] = tap(540, 800);
     const LIT_TIME: [InputEvent; 2] = tap(540, 1000);
-    const RECOVERY: [InputEvent; 2] = tap(540, 1180);
+    const SOUND: [InputEvent; 2] = tap(540, 1180);
+    const VIBRATION: [InputEvent; 2] = tap(540, 1364);
+    const RECOVERY: [InputEvent; 2] = tap(540, 1548);
     const ALARM_TAB: [InputEvent; 2] = tap(180, 2200);
     const TIMER_TAB: [InputEvent; 2] = tap(540, 2200);
     const SETTINGS_TAB: [InputEvent; 2] = tap(900, 2200);
@@ -1591,6 +1620,54 @@ mod tests {
     }
 
     #[test]
+    fn a_tap_on_the_sound_or_the_vibration_turns_that_one_alone_off_and_on_again()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut ringer = ringer(7, 0)?;
+        drain(&mut FakeInput::with(&[&FIRST]), &clock, &mut ringer)?;
+        assert_eq!(ringer.outputs(), Outputs::BOTH);
+        let armed = ringer.clone();
+        let mut light = always();
+        drain_lit(
+            &mut FakeInput::with(&[&SETTINGS_TAB, &SOUND]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        assert_eq!(
+            ringer.outputs(),
+            Outputs {
+                sound: false,
+                vibration: true,
+            }
+        );
+        drain_lit(
+            &mut FakeInput::with(&[&VIBRATION]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        assert_eq!(
+            ringer.outputs(),
+            Outputs {
+                sound: false,
+                vibration: false,
+            }
+        );
+        assert!(ringer.power_off());
+        assert_eq!(ringer.alarms(), armed.alarms());
+        assert_eq!(ringer.next(), armed.next());
+        drain_lit(
+            &mut FakeInput::with(&[&SOUND, &VIBRATION]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        assert_eq!(ringer, armed);
+        Ok(())
+    }
+
+    #[test]
     fn a_tap_on_the_lit_time_steps_it_through_the_choices_and_round()
     -> Result<(), Box<dyn std::error::Error>> {
         let clock = FakeClock::at(6, 59, 0);
@@ -1670,17 +1747,24 @@ mod tests {
     }
 
     #[test]
-    fn the_face_carries_the_toggle_and_the_lit_time() -> Result<(), Box<dyn std::error::Error>> {
+    fn the_face_carries_the_toggles_and_the_lit_time() -> Result<(), Box<dyn std::error::Error>> {
         let mut ringer = ringer(7, 0)?;
         let now = FakeClock::at(6, 59, 0).now()?;
         let face = ringer.face(now, UtcOffset::UTC, Gauge::UNREAD, Screen::Settings);
         assert!(face.power_off);
         assert_eq!(face.lit_seconds, LIT_SECONDS);
+        assert_eq!(face.outputs, Outputs::BOTH);
+        let silent = Outputs {
+            sound: false,
+            vibration: false,
+        };
         ringer.set_power_off(false);
         ringer.set_lit_seconds(120);
+        ringer.set_outputs(silent);
         let face = ringer.face(now, UtcOffset::UTC, Gauge::UNREAD, Screen::Settings);
         assert!(!face.power_off);
         assert_eq!(face.lit_seconds, 120);
+        assert_eq!(face.outputs, silent);
         Ok(())
     }
 
