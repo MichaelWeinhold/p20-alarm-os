@@ -24,11 +24,12 @@ pub(crate) enum Icon {
     Recovery,
     Restart,
     Volume,
+    Vibration,
 }
 
 impl Icon {
     #[cfg(test)]
-    const ALL: [Self; 17] = [
+    const ALL: [Self; 18] = [
         Self::Alarm,
         Self::Timer,
         Self::Settings,
@@ -46,6 +47,7 @@ impl Icon {
         Self::Recovery,
         Self::Restart,
         Self::Volume,
+        Self::Vibration,
     ];
 
     fn code(self) -> char {
@@ -67,6 +69,7 @@ impl Icon {
             Self::Recovery => '\u{f8cd}',
             Self::Restart => '\u{f053}',
             Self::Volume => '\u{e050}',
+            Self::Vibration => '\u{e62d}',
         }
     }
 }

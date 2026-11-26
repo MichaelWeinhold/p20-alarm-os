@@ -1,8 +1,8 @@
 # 16. Rasterise light type and icons on the phone
 
 - **Status:** Accepted; D2 amended for the figure height by issue 104, D3 for the battery
-  glyph by issue 105, for the recovery row by issue 118, for the volume by issue 110 and
-  for the timer's pause by issue 111
+  glyph by issue 105, for the recovery row by issue 118, for the volume by issue 110, for
+  the timer's pause by issue 111 and for the vibration row by issue 115
 - **Date:** 2026-11-23
 - **Issue:** #95
 
@@ -121,6 +121,9 @@ icons in 3 468 bytes.
 
 **Amended by issue 111**: `pause` joins the subset for the timer's running stage and
 `stop`, which nothing draws any more, leaves it, still seventeen icons, in 3 500 bytes.
+
+**Amended by issue 115**: `vibration` joins the subset for the settings screen's
+vibration row, eighteen icons in 3 712 bytes.
 
 ### D4. The subsets are made by a host script, `scripts/subset_fonts.py`
 

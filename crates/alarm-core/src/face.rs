@@ -1,5 +1,6 @@
 use crate::battery::{Gauge, Level};
 use crate::glyph::{self, Align, Icon, Place, Square};
+use crate::ringer::Outputs;
 use crate::sound::Volume;
 use crate::time::{Countdown, TimeOfDay};
 
@@ -52,7 +53,9 @@ pub const SAVED_TIMERS: usize = 4;
 
 const POWER_OFF_ROW: usize = 0;
 const LIT_ROW: usize = 1;
-const RECOVERY_ROW: usize = 2;
+const SOUND_ROW: usize = 2;
+const VIBRATION_ROW: usize = 3;
+const RECOVERY_ROW: usize = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Colour(pub u32);
@@ -115,6 +118,7 @@ pub struct Face {
     pub screen: Screen,
     pub power_off: bool,
     pub lit_seconds: i64,
+    pub outputs: Outputs,
     pub recovery_marked: bool,
     pub timers: Vec<Countdown>,
     pub countdown: Countdown,
@@ -198,6 +202,8 @@ pub enum Target {
     Close,
     PowerOff,
     LitTime,
+    Sound,
+    Vibration,
     Recovery,
     Tab(Screen),
     Blank,
@@ -618,6 +624,14 @@ fn settings_screen(frame: &mut Frame, sheet: Sheet, face: &Face) {
         Some(of_countdown(Countdown::of(face.lit_seconds))),
         FOREGROUND,
     );
+    for (row, icon, on) in [
+        (SOUND_ROW, Icon::Volume, face.outputs.sound),
+        (VIBRATION_ROW, Icon::Vibration, face.outputs.vibration),
+    ] {
+        let top = sheet.setting_row(row);
+        symbol(frame, icon, (sheet.left, top), unit, Ink::Flat(FOREGROUND));
+        switch(frame, (right, top), unit, on);
+    }
     let top = sheet.setting_row(RECOVERY_ROW);
     let ink = Ink::Flat(if face.recovery_marked {
         WARNING
@@ -970,6 +984,12 @@ pub fn target(size: Size, screen: Screen, stage: Stage, x: usize, y: usize) -> T
         (Screen::Settings, Some(sheet)) if sheet.band(sheet.setting_row(LIT_ROW), y) => {
             Target::LitTime
         }
+        (Screen::Settings, Some(sheet)) if sheet.band(sheet.setting_row(SOUND_ROW), y) => {
+            Target::Sound
+        }
+        (Screen::Settings, Some(sheet)) if sheet.band(sheet.setting_row(VIBRATION_ROW), y) => {
+            Target::Vibration
+        }
         (Screen::Settings, Some(sheet)) if sheet.band(sheet.setting_row(RECOVERY_ROW), y) => {
             Target::Recovery
         }
@@ -1091,6 +1111,7 @@ mod tests {
             screen: Screen::Alarm,
             power_off: true,
             lit_seconds: 10,
+            outputs: Outputs::BOTH,
             recovery_marked: false,
             timers: Vec::new(),
             countdown: Countdown::default(),
@@ -1312,24 +1333,27 @@ mod tests {
     }
 
     #[test]
-    fn the_settings_screen_shows_the_toggle_the_lit_time_and_the_recovery_row_as_recorded()
+    fn the_settings_screen_shows_the_toggles_the_lit_time_and_the_recovery_row_as_recorded()
     -> Outcome {
-        for (power_off, lit_seconds, recovery_marked, recorded) in [
+        for (power_off, lit_seconds, (sound, vibration), recovery_marked, recorded) in [
             (
                 true,
                 10,
+                (true, true),
                 false,
                 include_str!("../testdata/face-settings.txt"),
             ),
             (
                 false,
                 300,
+                (false, true),
                 false,
                 include_str!("../testdata/face-settings-stays.txt"),
             ),
             (
                 true,
                 10,
+                (true, false),
                 true,
                 include_str!("../testdata/face-settings-recovery.txt"),
             ),
@@ -1338,6 +1362,7 @@ mod tests {
                 screen: Screen::Settings,
                 power_off,
                 lit_seconds,
+                outputs: Outputs { sound, vibration },
                 recovery_marked,
                 ..face(Some(0), false, charged(80)?)?
             };
@@ -1355,12 +1380,18 @@ mod tests {
         assert_eq!(settings(0, 909), Target::LitTime);
         assert_eq!(settings(540, 1000), Target::LitTime);
         assert_eq!(settings(1079, 1092), Target::LitTime);
-        assert_eq!(settings(0, 1093), Target::Recovery);
-        assert_eq!(settings(540, 1180), Target::Recovery);
-        assert_eq!(settings(1079, 1276), Target::Recovery);
+        assert_eq!(settings(0, 1093), Target::Sound);
+        assert_eq!(settings(540, 1180), Target::Sound);
+        assert_eq!(settings(1079, 1276), Target::Sound);
+        assert_eq!(settings(0, 1277), Target::Vibration);
+        assert_eq!(settings(540, 1364), Target::Vibration);
+        assert_eq!(settings(1079, 1460), Target::Vibration);
+        assert_eq!(settings(0, 1461), Target::Recovery);
+        assert_eq!(settings(540, 1548), Target::Recovery);
+        assert_eq!(settings(1079, 1644), Target::Recovery);
         assert_eq!(settings(540, 724), Target::Blank);
-        assert_eq!(settings(540, 1277), Target::Blank);
-        assert_eq!(settings(540, 1400), Target::Blank);
+        assert_eq!(settings(540, 1645), Target::Blank);
+        assert_eq!(settings(540, 1800), Target::Blank);
         assert_eq!(
             target(SMALL, Screen::Settings, Stage::List, 50, 20),
             Target::Blank
