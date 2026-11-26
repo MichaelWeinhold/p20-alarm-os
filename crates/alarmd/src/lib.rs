@@ -516,7 +516,7 @@ mod tests {
     use alarm_core::battery::{BatteryReading, ChargeStatus, Health, Percent};
     use alarm_core::boot::Boot;
     use alarm_core::face::{
-        Face, Field, Frame, Listed, RINGING, Row, Screen, Size, Target, WARNING, render,
+        BACKGROUND, Face, Field, Frame, Listed, Row, Screen, Size, Target, WARNING, render,
     };
     use alarm_core::input::{InputEvent, Key};
     use alarm_core::light::LIT_SECONDS;
@@ -535,6 +535,11 @@ mod tests {
         sound: false,
         vibration: false,
     };
+
+    fn haloed(frame: &Frame) -> bool {
+        (SIZE.height * 19 / 20..SIZE.height)
+            .all(|y| frame.row(y).iter().all(|&colour| colour == BACKGROUND))
+    }
 
     struct FixedClock(Result<UnixSeconds, HardwareError>);
 
@@ -1047,8 +1052,7 @@ mod tests {
     }
 
     #[test]
-    fn an_armed_alarm_turns_the_face_amber_at_its_minute() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn an_armed_alarm_shows_the_halo_at_its_minute() -> Result<(), Box<dyn std::error::Error>> {
         let mut battery = battery(55, ChargeStatus::Discharging);
         let mut display = FakeDisplay::default();
         let mut ringer = ringer()?;
@@ -1076,9 +1080,8 @@ mod tests {
             &mut lit(),
             &mut display,
         );
-        let amber = |frame: &Frame| frame.row(0).contains(&RINGING);
         assert_eq!(
-            display.shown.iter().map(amber).collect::<Vec<_>>(),
+            display.shown.iter().map(haloed).collect::<Vec<_>>(),
             [false, true]
         );
         Ok(())
@@ -2468,7 +2471,7 @@ mod tests {
     }
 
     #[test]
-    fn a_ring_with_both_off_turns_the_face_amber_starts_neither_and_power_ends_it()
+    fn a_ring_with_both_off_shows_the_halo_starts_neither_and_power_ends_it()
     -> Result<(), Box<dyn std::error::Error>> {
         let clock = at(7, 0, 0);
         let mut battery = battery(55, ChargeStatus::Discharging);
@@ -2498,9 +2501,8 @@ mod tests {
             &mut display,
         );
         pulse(&at(7, 0, 2), &ringer, &mut buzz, 10);
-        let amber = |frame: &Frame| frame.row(0).contains(&RINGING);
         assert_eq!(
-            display.shown.iter().map(amber).collect::<Vec<_>>(),
+            display.shown.iter().map(haloed).collect::<Vec<_>>(),
             [true, false]
         );
         let speaker = buzz.speaker.as_ref().map_err(Clone::clone)?;
