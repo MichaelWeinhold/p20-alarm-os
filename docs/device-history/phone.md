@@ -2576,3 +2576,44 @@ The operator chose to close the issue on the readings above; the host covers tho
 `two_alarms_due_at_once_ring_once_and_each_is_rearmed_or_disarmed` and
 `every_saved_alarm_is_restored_with_its_days_and_switch_and_the_soonest_rings_next`. No
 photos were taken. The phone was left in TWRP with `f4d6856`'s image on `/init`.
+
+## 2026-11-26 — a timer in hours, minutes and seconds, for issue 128
+
+**`reserved4` held version-6 timers before the update.** Read from TWRP, slot 0 was
+version 6, sequence 40, and slot 1 version 6, sequence 39, both with the timers `00:10` and
+`01:19` in two bytes each.
+
+**`alarmd` at `8ebc158` is 672640 bytes**, sha256
+`298e0e7252f007c9971d1c4a9206e97b7262e4ac4d37334592eb80e7a4890efc`. From TWRP 3.7.0_9-0 it
+was copied over `/init` on `system`, replacing issue 127's `42f18b9a…e603`. `init.rom` still
+hashed `e8e2768e…78ef`, `misc`'s first 32 bytes were zeroed, and the RTC read 1795706486
+against the Mac's 1795706490, before `adb reboot` at 15:21:33 UTC.
+
+**A version-6 slot loads and is saved as version 7.** The boot loaded the settings at
+13.65 s. `00:00:10` played at 135.58 s, 15:23:45 UTC, logged `running until 1795706635`,
+was paused at `00:08` and ended by the X at 138.15 s. `settings saved` came at 153.23 s,
+before the recovery row's reboot: slot 1 then read version 7, sequence 41, 34 bytes, its
+timers `0:00:10` and `0:01:19` in three bytes each. No timer of an hour was added in this
+run, and its log wrote each timer as `MM:SS`, `timers [00:10, 01:19]`; issue 131 logs
+`HH:MM:SS`.
+
+**`alarmd` at `ebcd89d` is 672704 bytes**, sha256
+`d75aef55fdb5ecd15546301eb6ba8636b2fc7a6ae6abe733d08c5dc3ab67aa46`, copied over `/init` the
+same way, replacing `298e0e72…0efc`: `init.rom` unchanged, `misc` zeroed, the RTC
+1795707005 against 1795707009, and `adb reboot` at 15:30:09 UTC.
+
+**A timer set to `1:00:05` on the wheels is saved, sorted, and counts down in hours.** At
+26.30 s the list logged `timers [00:00:10, 00:01:19, 01:00:05]`. `01:00:05` played at
+36.01 s logged `running until 1795710646`, 3605 s on, with 48.76 s at 15:30:54 UTC; paused
+at 41.26 s it logged `running paused 00:59:59`, and the X at 41.99 s `running none`.
+`00:00:10` played at 48.76 s logged `running until 1795707064`, and Power at 61.25 s ended
+its ring, 2.5 s after its end; sound and vibration were off, so no `Ringing` line came, as
+issue 115 found. `settings saved` came at 65.96 s: slot 0 read version 7, sequence 42,
+37 bytes, its timers `0:00:10`, `0:01:19` and `1:00:05`. The operator reported each step
+done on the panel: the old timers listed as `HH:MM:SS`, the three wheels, the ring's time
+left, and the amber screen's `00:00:10`. No photos were taken.
+
+**Not read off the phone:** the hour wheel's wrap from 23 to 00 and the minute wheel's from
+59 to 00. The host covers both in
+`the_timer_wheels_step_hours_minutes_and_seconds_and_wrap_within_each`. The phone was left
+in TWRP with `ebcd89d`'s image on `/init`.
