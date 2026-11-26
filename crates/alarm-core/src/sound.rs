@@ -85,9 +85,18 @@ enum State {
     Failed,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+enum Loaded {
+    #[default]
+    Unread,
+    Ready(SoundName),
+    Unready(Option<SoundName>),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Sound {
     state: State,
+    loaded: Loaded,
 }
 
 impl Sound {
@@ -99,6 +108,31 @@ impl Sound {
     #[must_use]
     pub fn playing(&self) -> bool {
         matches!(self.state, State::Playing(_))
+    }
+
+    pub fn choose(
+        &mut self,
+        chosen: Option<&SoundName>,
+        speaker: &mut impl Speaker,
+    ) -> Option<Result<(), HardwareError>> {
+        let held = match &self.loaded {
+            Loaded::Unread => None,
+            Loaded::Ready(sound) => Some(Some(sound)),
+            Loaded::Unready(sound) => Some(sound.as_ref()),
+        };
+        if held == Some(chosen) {
+            return None;
+        }
+        let Some(sound) = chosen else {
+            self.loaded = Loaded::Unready(None);
+            return Some(Ok(()));
+        };
+        let read = speaker.load(sound);
+        self.loaded = match read {
+            Ok(()) => Loaded::Ready(sound.clone()),
+            Err(_) => Loaded::Unready(Some(sound.clone())),
+        };
+        Some(read)
     }
 
     pub fn tick(
@@ -114,6 +148,7 @@ impl Sound {
             }
             (Ring::Ringing, State::Playing(_) | State::Failed)
             | (Ring::Quiet | Ring::Held(_) | Ring::Paused, State::Quiet) => Ok(()),
+            (Ring::Ringing, State::Quiet) if !matches!(self.loaded, Loaded::Ready(_)) => Ok(()),
             (Ring::Ringing, State::Quiet) => match speaker.start(volume) {
                 Ok(()) => {
                     self.state = State::Playing(volume);
@@ -147,6 +182,7 @@ mod tests {
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum Call {
+        Load(&'static str),
         Start(Volume),
         Volume(Volume),
         Stop,
@@ -179,6 +215,16 @@ mod tests {
     }
 
     impl Speaker for FakeSpeaker {
+        fn load(&mut self, sound: &SoundName) -> Result<(), HardwareError> {
+            let name = match sound.as_str() {
+                "Carbon.wav" => "Carbon.wav",
+                "Argon.wav" => "Argon.wav",
+                _ => "other",
+            };
+            self.calls.push(Call::Load(name));
+            self.answer()
+        }
+
         fn start(&mut self, volume: Volume) -> Result<(), HardwareError> {
             self.calls.push(Call::Start(volume));
             self.answer()
@@ -195,10 +241,75 @@ mod tests {
         }
     }
 
+    fn named(name: &str) -> Result<SoundName, HardwareError> {
+        SoundName::new(name).ok_or(HardwareError::Absent("sound name"))
+    }
+
+    fn ready(speaker: &mut FakeSpeaker) -> Result<Sound, HardwareError> {
+        let mut sound = Sound::quiet();
+        sound
+            .choose(Some(&named("Carbon.wav")?), speaker)
+            .transpose()?;
+        speaker.calls.clear();
+        Ok(sound)
+    }
+
+    #[test]
+    fn the_chosen_sound_is_loaded_once_and_again_only_when_the_choice_changes()
+    -> Result<(), HardwareError> {
+        let mut speaker = FakeSpeaker::default();
+        let mut sound = Sound::quiet();
+        let carbon = named("Carbon.wav")?;
+        let argon = named("Argon.wav")?;
+        assert_eq!(sound.choose(Some(&carbon), &mut speaker), Some(Ok(())));
+        assert_eq!(sound.choose(Some(&carbon), &mut speaker), None);
+        assert_eq!(sound.choose(Some(&argon), &mut speaker), Some(Ok(())));
+        assert_eq!(sound.choose(Some(&argon), &mut speaker), None);
+        assert_eq!(
+            speaker.calls,
+            [Call::Load("Carbon.wav"), Call::Load("Argon.wav")]
+        );
+        sound.tick(Ring::Ringing, LOUDEST, &mut speaker)?;
+        assert!(sound.playing());
+        Ok(())
+    }
+
+    #[test]
+    fn no_sound_chosen_rings_without_the_speaker() -> Result<(), HardwareError> {
+        let mut speaker = FakeSpeaker::default();
+        let mut sound = Sound::quiet();
+        sound.tick(Ring::Ringing, LOUDEST, &mut speaker)?;
+        assert_eq!(sound.choose(None, &mut speaker), Some(Ok(())));
+        assert_eq!(sound.choose(None, &mut speaker), None);
+        sound.tick(Ring::Ringing, LOUDEST, &mut speaker)?;
+        sound.tick(Ring::Quiet, LOUDEST, &mut speaker)?;
+        assert_eq!(speaker.calls, []);
+        assert!(!sound.playing());
+        Ok(())
+    }
+
+    #[test]
+    fn a_sound_that_does_not_load_is_never_started_and_never_swapped_for_another()
+    -> Result<(), HardwareError> {
+        let mut speaker = FakeSpeaker::failing();
+        let mut sound = Sound::quiet();
+        let carbon = named("Carbon.wav")?;
+        assert!(matches!(
+            sound.choose(Some(&carbon), &mut speaker),
+            Some(Err(_))
+        ));
+        assert_eq!(sound.choose(Some(&carbon), &mut speaker), None);
+        speaker.failing = false;
+        sound.tick(Ring::Ringing, LOUDEST, &mut speaker)?;
+        assert!(!sound.playing());
+        assert_eq!(speaker.calls, [Call::Load("Carbon.wav")]);
+        Ok(())
+    }
+
     #[test]
     fn a_quiet_alarm_never_touches_the_speaker() -> Result<(), HardwareError> {
         let mut speaker = FakeSpeaker::default();
-        let mut sound = Sound::quiet();
+        let mut sound = ready(&mut speaker)?;
         sound.tick(Ring::Quiet, LOUDEST, &mut speaker)?;
         sound.tick(HELD, LOUDEST, &mut speaker)?;
         assert_eq!(speaker.calls, []);
@@ -209,7 +320,7 @@ mod tests {
     #[test]
     fn a_ringing_alarm_starts_the_sound_once() -> Result<(), HardwareError> {
         let mut speaker = FakeSpeaker::default();
-        let mut sound = Sound::quiet();
+        let mut sound = ready(&mut speaker)?;
         sound.tick(Ring::Ringing, LOUDEST, &mut speaker)?;
         assert!(sound.playing());
         sound.tick(Ring::Ringing, LOUDEST, &mut speaker)?;
@@ -222,7 +333,7 @@ mod tests {
     fn a_dismissal_stops_the_sound_at_once() -> Result<(), HardwareError> {
         for quiet in [Ring::Quiet, HELD] {
             let mut speaker = FakeSpeaker::default();
-            let mut sound = Sound::quiet();
+            let mut sound = ready(&mut speaker)?;
             sound.tick(Ring::Ringing, LOUDEST, &mut speaker)?;
             sound.tick(quiet, LOUDEST, &mut speaker)?;
             sound.tick(quiet, LOUDEST, &mut speaker)?;
@@ -235,7 +346,7 @@ mod tests {
     #[test]
     fn a_dismissed_alarm_sounds_again_when_it_rings_again() -> Result<(), HardwareError> {
         let mut speaker = FakeSpeaker::default();
-        let mut sound = Sound::quiet();
+        let mut sound = ready(&mut speaker)?;
         sound.tick(Ring::Ringing, LOUDEST, &mut speaker)?;
         sound.tick(Ring::Quiet, LOUDEST, &mut speaker)?;
         sound.tick(Ring::Ringing, LOUDEST, &mut speaker)?;
@@ -244,34 +355,37 @@ mod tests {
     }
 
     #[test]
-    fn a_failing_speaker_is_left_alone_until_the_next_ring() {
-        let mut speaker = FakeSpeaker::failing();
-        let mut sound = Sound::quiet();
+    fn a_failing_speaker_is_left_alone_until_the_next_ring() -> Result<(), HardwareError> {
+        let mut speaker = FakeSpeaker::default();
+        let mut sound = ready(&mut speaker)?;
+        speaker.failing = true;
         assert!(sound.tick(Ring::Ringing, LOUDEST, &mut speaker).is_err());
         assert!(!sound.playing());
         assert_eq!(sound.tick(Ring::Ringing, LOUDEST, &mut speaker), Ok(()));
         assert_eq!(sound.tick(Ring::Quiet, LOUDEST, &mut speaker), Ok(()));
         assert!(sound.tick(Ring::Ringing, LOUDEST, &mut speaker).is_err());
         assert_eq!(speaker.calls, [START, START]);
+        Ok(())
     }
 
     #[test]
-    fn a_failed_stop_still_leaves_the_sound_quiet() {
+    fn a_failed_stop_still_leaves_the_sound_quiet() -> Result<(), HardwareError> {
         let mut speaker = FakeSpeaker::default();
-        let mut sound = Sound::quiet();
+        let mut sound = ready(&mut speaker)?;
         assert_eq!(sound.tick(Ring::Ringing, LOUDEST, &mut speaker), Ok(()));
         speaker.failing = true;
         assert!(sound.tick(Ring::Quiet, LOUDEST, &mut speaker).is_err());
         assert!(!sound.playing());
         assert_eq!(sound.tick(Ring::Quiet, LOUDEST, &mut speaker), Ok(()));
         assert_eq!(speaker.calls, [START, Call::Stop]);
+        Ok(())
     }
 
     #[test]
     fn a_new_volume_reaches_the_speaker_while_it_rings_and_not_while_it_is_quiet()
     -> Result<(), HardwareError> {
         let mut speaker = FakeSpeaker::default();
-        let mut sound = Sound::quiet();
+        let mut sound = ready(&mut speaker)?;
         let quieter = LOUDEST.down();
         sound.tick(Ring::Quiet, quieter, &mut speaker)?;
         sound.tick(Ring::Ringing, LOUDEST, &mut speaker)?;
