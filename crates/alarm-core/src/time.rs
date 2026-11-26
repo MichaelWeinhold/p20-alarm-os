@@ -213,6 +213,21 @@ impl Weekday {
     }
 }
 
+#[must_use]
+pub fn local_day(now: UnixSeconds, offset: UtcOffset) -> i64 {
+    (now.0 + offset.seconds()).div_euclid(SECONDS_PER_DAY)
+}
+
+#[must_use]
+pub fn day_of_month(days_since_epoch: i64) -> u8 {
+    let shifted = days_since_epoch + 719_468;
+    let of_era = shifted.rem_euclid(146_097);
+    let year = (of_era - of_era / 1_460 + of_era / 36_524 - of_era / 146_096) / 365;
+    let of_year = of_era - (365 * year + year / 4 - year / 100);
+    let month = (5 * of_year + 2) / 153;
+    u8::try_from(of_year - (153 * month + 2) / 5 + 1).unwrap_or(1)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct UtcOffset(i32);
 
@@ -250,6 +265,28 @@ mod tests {
     #[test]
     fn a_known_date_has_its_weekday() {
         assert_eq!(Weekday::of_day(20_768), Weekday::Wednesday);
+    }
+
+    #[test]
+    fn a_day_has_its_day_of_the_month() {
+        assert_eq!(day_of_month(0), 1);
+        assert_eq!(day_of_month(20_768), 11);
+        assert_eq!(day_of_month(-1), 31);
+        assert_eq!(day_of_month(11_016), 29);
+        assert_eq!(day_of_month(11_017), 1);
+        assert_eq!(day_of_month(20_784), 27);
+    }
+
+    #[test]
+    fn the_local_day_turns_at_local_midnight() -> Result<(), TimeError> {
+        let late = UnixSeconds(20_768 * SECONDS_PER_DAY + 23 * 3_600 + 30 * 60);
+        assert_eq!(local_day(late, UtcOffset::UTC), 20_768);
+        assert_eq!(local_day(late, UtcOffset::from_seconds(3_600)?), 20_769);
+        assert_eq!(
+            local_day(UnixSeconds(1_800), UtcOffset::from_seconds(-3_600)?),
+            -1
+        );
+        Ok(())
     }
 
     #[test]

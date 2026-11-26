@@ -2534,3 +2534,45 @@ row's reboot at 872.18 s. `reserved4`'s second slot read version 6, sequence 37,
 its volume, sound and vibration bytes 6, 0 and 0; the first kept issue 111's version-5
 slot, sequence 36. After `adb reboot` at 12:42:06 UTC, the operator saw both switches off.
 No photos were taken. The image was left on the phone.
+
+## 2026-11-26 — the alarm screen's ring and list, for issue 127
+
+**The alarm screen draws in 30.9 ms a frame.** A bench outside the repository, sha256
+`468fd992306cd69cef9377be430abd3d056dd8c21d1c55b6898af18cd4acfcb7`, rendered the board at
+1080×2280 with five alarms, four armed and one with its arc, in three runs of 50 frames
+under `taskset 01` from TWRP, cpu0 `performance` at 1709000 kHz: 31.14, 30.89 and 30.86 ms.
+The editor took 15.38 to 15.53 ms. With the ring drawn from its outline the same board took
+82 ms; `c8dbdec` draws the band and the arc analytically, in one pass.
+
+**`alarmd` at `c8dbdec` is 666656 bytes**, sha256
+`ebe4f44bbbbc06d51e661388ff7d9f9a9199c4573a454f80a052041f572e506d`. From TWRP 3.7.0_9-0 it
+was copied over `/init` on `system`, replacing issue 115's `550a4559…6ebc`. `init.rom` still
+hashed `e8e2768e…78ef`, `misc`'s first 32 bytes were zeroed, and the RTC read 1795704504
+against the Mac's 1795704508, before `adb reboot` at 14:48:33 UTC.
+
+**Alarms are armed together, each with its days and its own switch.** A line is logged only
+when a tap changes something. At 55.91 s `alarms [10:26 MTWTFSS on, 12:08 MTWTFSS on,
+15:49 once on, 15:49 MTWTFSS on], next 1795771560` listed a one-off armed beside three
+daily alarms; at 82.36 s `12:08 MTWTF--` was armed for workdays alone, `next 1795777680`,
+Friday 11:08 UTC. At 153.43 s `[10:26 MTWTFSS on, 12:08 MTWTF-- on, 15:53 MTWTFSS on]` gave
+`next 1795704780`, 14:53 UTC that day. The phone `resumed from a suspend armed for
+1795704780` at 271.06 s, and at 278.75 s `15:53 MTWTFSS on` stood with `next 1795791180`,
+the same time on Friday. Sound and vibration were off, so the ring logged no `Ringing`
+line, as issue 115 found.
+
+**The editor's `check` re-armed a saved alarm.** The operator found that opening a disarmed
+alarm and saving it switched it on. `f4d6856` keeps a saved alarm's switch and arms only a
+new one. That `alarmd` is 666640 bytes, sha256
+`42f18b9ab81e9a1cfe8114838ce57d50422a880fc8de8ac806b9070d77ade603`, copied over `/init` the
+same way: `init.rom` unchanged, `misc` zeroed, the RTC 1795705309 against 1795705314, and
+`adb reboot` at 15:01:54 UTC. Its boot loaded the settings at 13.62 s, and at 19.82 s a tap
+logged `[10:26 MTWTFSS off, 12:08 MTWTF-- on, 15:53 MTWTFSS off]`, the three alarms as the
+first boot had left them. The operator reported that a disarmed alarm saved from the editor
+stayed off and that the screen worked as intended.
+
+**Not read off the phone:** a one-off ringing and being disarmed, an alarm on a single
+weekday other than that day, and two armed alarms surviving a reboot together in one log.
+The operator chose to close the issue on the readings above; the host covers those three in
+`two_alarms_due_at_once_ring_once_and_each_is_rearmed_or_disarmed` and
+`every_saved_alarm_is_restored_with_its_days_and_switch_and_the_soonest_rings_next`. No
+photos were taken. The phone was left in TWRP with `f4d6856`'s image on `/init`.

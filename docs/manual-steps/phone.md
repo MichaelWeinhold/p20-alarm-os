@@ -193,9 +193,9 @@ The shell is root: ADR 0005, D4's hard-brick list holds for every `dd` sent to i
 the keys. Never push a file named `recovery`, which asks for TWRP the same way.
 
 **`alarmd`**, `crates/alarmd`, the clock: the local time each minute, the charge held at
-80 %, a bar of alarm, timer and settings tabs. A drag on a wheel sets a time, `+` saves
-it, a tap on a saved alarm makes it active or disarms it, a second tap on its cross, red
-after the first, removes it. A ring turns it amber, pulses the vibrator and loops
+80 %, a bar of alarm, timer and settings tabs. `+` or a tap on an alarm opens the editor,
+its switch arms it; the `check` saves, arming a new alarm and leaving a saved one's switch,
+and a second tap on the `delete` removes it. A ring turns it amber, pulses the vibrator and loops
 `ringtone.wav` on the speaker until Power dismisses it. Try it
 from the debug shell, pushed to `/mnt`, then swap it in as above, `init` alone over the
 debug `/init`. → `docs/device-history/phone.md`, issues 10, 13, 79, 80 and 92.

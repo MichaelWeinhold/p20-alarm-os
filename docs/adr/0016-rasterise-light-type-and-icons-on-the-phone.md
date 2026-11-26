@@ -2,7 +2,8 @@
 
 - **Status:** Accepted; D2 amended for the figure height by issue 104, D3 for the battery
   glyph by issue 105, for the recovery row by issue 118, for the volume by issue 110, for
-  the timer's pause by issue 111 and for the vibration row by issue 115
+  the timer's pause by issue 111 and for the vibration row by issue 115, D2 and D3 for the
+  alarm screen by issue 127
 - **Date:** 2026-11-23
 - **Issue:** #95
 
@@ -91,6 +92,11 @@ centred in the seven-unit cell, which leaves `44` a 0.46-unit gap; the cells and
 do not change. `:` and `-` are centred on the figures' middle, as Inter's case forms
 would place them with the layout features dropped.
 
+**Amended by issue 127**: the alarm screen writes words — the weekday under the clock,
+each alarm's days and how long until it rings — so `ADFMSTWadehilmnorstuy` and the space
+join the subset, renamed `inter-light.ttf`, 5 024 bytes. A line is laid out by the glyphs'
+advance widths with no kerning, which leaves `fontdue`'s reopening condition unmet.
+
 ### D3. The icons are Material Symbols Outlined, drawn the same way
 
 The variable Material Symbols Outlined font is instanced at `FILL=0`, `GRAD=0`, `opsz=48`
@@ -124,6 +130,9 @@ icons in 3 468 bytes.
 
 **Amended by issue 115**: `vibration` joins the subset for the settings screen's
 vibration row, eighteen icons in 3 712 bytes.
+
+**Amended by issue 127**: `add_circle` for the alarm screen's add, and `check` and
+`delete` for its editor, join the subset, 21 icons in 4 064 bytes.
 
 ### D4. The subsets are made by a host script, `scripts/subset_fonts.py`
 
