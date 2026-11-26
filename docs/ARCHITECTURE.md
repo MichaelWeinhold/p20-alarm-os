@@ -50,7 +50,8 @@ crates/
                 the speaker's route set on controlC0, the alarm sound looped on pcmC0D0p
   alarmd/       the binary: opens the adapters, draws the time and the alarms, waits on input
                 until the next minute or until the panel is due off, saves a changed list
-                as the panel goes off, suspends while it is off and Power is quiet, powers off after the
+                as the panel goes off, suspends while it is off and Power is quiet, stays
+                awake instead for a wake due within 5 s (issue 117), powers off after the
                 window off the cable, starts dark on a boot by the alarm, boots the
                 modem with its radio off, pulses the vibrator and sounds the speaker
                 while it rings, blinks the red LED while the battery is low off the

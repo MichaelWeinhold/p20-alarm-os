@@ -2394,3 +2394,37 @@ at 14:55:16 UTC. Its pstore held `rebooting into recovery` as `alarmd`'s last li
 after `panel lit`, and `misc`'s first 32 bytes still read zero: `reboot(2)` into recovery
 writes no BCB. An `adb reboot` from TWRP then brought no TWRP back within 150 s and left
 nothing on USB, `alarmd` running again. The image was left on the phone.
+
+## 2026-11-26 — a press inside a suspend's entry, for issue 117
+
+**In TWRP, a press while the kernel enters a suspend leaves no press able to wake it.**
+With #118's `alarmd` (`2f38bdfe…e35e`) on `/init` and the cable in, a script suspended
+the phone at each new `down` interrupt of Power, `echo mem` with the RTC armed 40 s
+ahead, as `alarmd` does when Power darkens the panel. The operator pressed quickly, about
+five times a second. Suspends 1 to 3 were woken by a press within 1 to 2 s. In suspend
+4, `power key press interrupt!` at 711.16 s and 711.37 s came while the kernel was still
+entering it, were handled as plain interrupts and did not abort it. The `down` counter in
+`/proc/interrupts` then held at 63 through about 39 s of presses, until `wake up irq num:
+78, irq name: RTC0` at 750.51 s. A read of `/sys/power/wakeup_count` blocked on the cable:
+`charge_wakelock` and `usb_wake_lock` were active.
+
+**`alarmd` at `0c039d9` is 634664 bytes**, sha256
+`74b284163341a284e642c55077d6124e01653ea4a881ff614083bce7deee3aad`. From TWRP 3.7.0_9-0 it was copied over `/init` on `system`, replacing issue
+118's `2f38bdfe…e35e`. `init.rom` still hashed `e8e2768e…78ef` and `misc`'s first 32
+bytes read zero before `adb reboot` at 09:48:33 UTC.
+
+**Quick presses no longer hang it, on the cable or off it.** The operator pressed quickly,
+then waited and pressed, on the cable and then off it, and used the recovery row; pstore
+held the boot. A run of 18 presses from 129.42 s to 138.25 s toggled the panel 18 times
+with no suspend between them. Presses woke a suspend and lit the panel at 129.42 s
+(`panel lit` 130.19 s), 317.81 s (318.11 s), 366.34 s (366.64 s), 443.26 s (443.55 s) and
+529.14 s (529.43 s), each before the RTC's armed instant; the last came 10.8 s after Power
+dismissed a ring and darkened the panel at 518.36 s. This kernel printed no `wake up irq`
+line for them.
+
+**The RTC fired inside a suspend's entry once, and its wake was lost.** A 5 s timer
+started at 470.76 s, due at 1795686984; Power darkened the panel at 471.80 s and `alarmd`
+suspended about 2 s later, armed for it. `[hisi_soc_rtc_interrupt]RTC Interrupt Comes` at
+474.51 s came before `hisi_pm_enter ++` at 474.85 s, and the phone slept until a press at
+487.82 s; the timer rang at 490.19 s. A second 5 s timer, armed about 2 s ahead, woke on
+time at 510.59 s. `alarmd` since stays awake for a wake due within 5 s.

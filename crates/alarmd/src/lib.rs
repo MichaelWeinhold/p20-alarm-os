@@ -23,6 +23,7 @@ pub const LOCAL_OFFSET_SECONDS: i32 = 3_600;
 pub const BRIGHTNESS: u32 = 2_000;
 pub const RETRY_SECONDS: u64 = 10;
 pub const WOKEN_SECONDS: u64 = 1;
+pub const SUSPEND_LEAD_SECONDS: i64 = 5;
 pub const ALARM_HOUR: u8 = 7;
 pub const ALARM_MINUTE: u8 = 0;
 
@@ -144,7 +145,7 @@ pub struct Sleep<W, S, P> {
 
 enum Rest {
     Awake,
-    Settling(u64),
+    Waiting(u64),
     Armed(UnixSeconds),
     Disarmed,
     PoweredOff(Option<UnixSeconds>),
@@ -184,10 +185,13 @@ fn suspended(
     let now = clock.now()?;
     sleep.window.dark(now);
     if let Some(left) = light.settling(now) {
-        return Ok(Rest::Settling(left));
+        return Ok(Rest::Waiting(left));
     }
     let until = match sleep.window.answer(now, ringer.held(), ringer.next()) {
-        Answer::Suspend(at) if at > now => Some(at),
+        Answer::Suspend(at) if at.0 > now.0.saturating_add(SUSPEND_LEAD_SECONDS) => Some(at),
+        Answer::Suspend(at) if at > now => {
+            return Ok(Rest::Waiting(at.0.saturating_sub(now.0).unsigned_abs()));
+        }
         Answer::PowerOff => {
             let on_at = ringer.next().map(power_on_at);
             if ringer.power_off() && powered_off(on_at, cable_in, &mut sleep.power, log) {
@@ -225,7 +229,7 @@ pub fn rest(
     let mut log = Vec::new();
     let (line, wait_seconds) = match suspended(clock, ringer, light, cable_in, sleep, &mut log) {
         Ok(Rest::Awake) => (None, wait_seconds),
-        Ok(Rest::Settling(left)) => (None, wait_seconds.min(left)),
+        Ok(Rest::Waiting(left)) => (None, wait_seconds.min(left)),
         Ok(Rest::Armed(at)) => (
             Some(kmsg::line(&format!(
                 "resumed from a suspend armed for {}",
@@ -1277,6 +1281,19 @@ mod tests {
             "{pressed:?} {settling:?}"
         );
         resting.rest(&at(19, 37, 32), &ringer, &light);
+        assert_eq!(resting.suspends(), Some(1));
+        Ok(())
+    }
+
+    #[test]
+    fn a_wake_due_within_the_suspend_lead_stays_awake_until_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(19, 37, 30);
+        let mut resting = Resting::new();
+        let soon = resting.rest(&clock, &running_at(&clock, 3)?, &dark());
+        assert_eq!(resting.suspends(), Some(0));
+        assert_eq!(soon.wait_seconds, 3);
+        resting.rest(&clock, &running_at(&clock, 6)?, &dark());
         assert_eq!(resting.suspends(), Some(1));
         Ok(())
     }
