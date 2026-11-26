@@ -2505,3 +2505,32 @@ pause at 254.57 s logged `running paused 01:15`, and the X at 255.30 s `running 
 operator saw the list at once. `settings saved` came at 273.45 s, before the recovery row's
 reboot. No photos were taken. `misc` was cleared again and the phone rebooted into the
 image at 11:44:17 UTC, where it was left.
+
+## 2026-11-26 — the ring's sound and vibration toggles, for issue 115
+
+**`alarmd` at `84c48b0` is 649656 bytes**, sha256
+`550a45596640bcd5987f7b768aff258f0ac89eef4064ec93dbf46e1217d16ebc`, 1 280 bytes more than
+issue 111's. From TWRP 3.7.0_9-0 it was copied over `/init` on `system`, replacing issue
+111's `0220ee94…6d67`. `init.rom` still hashed `e8e2768e…78ef`, `misc`'s first 32 bytes
+read zero, and the RTC read 1795695953 against the Mac's 1795695957, before `adb reboot`
+at 12:25:58 UTC.
+
+**The settings screen shows a sound row and a vibration row, each turning its output
+alone.** The operator saw both rows with their switches between the lit time and recovery,
+and reported that every toggle worked as it should. A timer with the sound off, started at
+709.04 s, logged `Ringing, … sound off, vibration on` at 717.92 s, and Power at 720.50 s
+ended it. One with the vibration off, started at 722.50 s, rang at about 732.4 s; the
+speaker codec's `hac_gpio_switch` line came at 732.03 s, and Power at 734.24 s ended it. One
+with both off, started at 738.86 s, rang at about 749.4 s with no codec line, the face amber
+alone, and Power at 751.57 s ended it. The sound-off ring opened no codec either.
+
+**A ring that starts and ends within one turn of the loop logs no `Ringing` line.** With the vibrator
+off, no pulse shortens the loop's wait, so the vibration-off and both-off rings began and
+were ended by Power within one turn, and `change` logged only `running until` to
+`running none`. The power key's interrupts and the codec line above date each ring.
+
+**The toggles survive a reboot.** `settings saved` came at 781.95 s, before the recovery
+row's reboot at 872.18 s. `reserved4`'s second slot read version 6, sequence 37, 28 bytes,
+its volume, sound and vibration bytes 6, 0 and 0; the first kept issue 111's version-5
+slot, sequence 36. After `adb reboot` at 12:42:06 UTC, the operator saw both switches off.
+No photos were taken. The image was left on the phone.
