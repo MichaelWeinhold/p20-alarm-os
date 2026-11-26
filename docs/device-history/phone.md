@@ -2617,3 +2617,24 @@ left, and the amber screen's `00:00:10`. No photos were taken.
 59 to 00. The host covers both in
 `the_timer_wheels_step_hours_minutes_and_seconds_and_wrap_within_each`. The phone was left
 in TWRP with `ebcd89d`'s image on `/init`.
+
+## 2026-11-26 — a sound that is not whole periods, for issue 137
+
+**`alarmd` from issue 86's branch at `dcc9de6` panicked the kernel** at the end of
+`Carbon.wav`'s first round. `Carbon.wav` is 646032 bytes, sha256
+`3816c418…6e3d`, 161497 frames: 168 periods of 960 and 217 left over. Its ring began at
+151.30 s (`hisi_pcm_trigger … trigger 1`), and at 154.68 s, 3.37 s on, `dmesg-ramoops-0`
+read `Unable to handle kernel paging request at virtual address ffffff801262c364`,
+`Internal error: Oops: 96000061`, in the `speaker` thread, `PC is at
+__arch_copy_from_user+0x110/0x180`, `LR is at snd_pcm_lib_write_transfer+0xc4/0xf0`, then
+`Kernel panic - not syncing: Fatal exception` and a reboot. `x27` read `0xd9`, 217, and the
+address ends `0x364`, 868 bytes: the short last period had left the kernel copying into its
+buffer 217 frames in. The operator saw it as a reboot right after the dismiss.
+`ringtone.wav`, 1440000 frames, is 1500 whole periods.
+
+**`alarmd` at `9f3b0509…9543`**, 690400 bytes, built from issue 86's branch rebased onto
+this fix, copied over `/init` from TWRP: `init.rom` unchanged, `misc` zeroed, `adb reboot`
+at 16:48:34 UTC. A timer rang `Carbon.wav` from a suspend at 485.38 s and was stopped at
+497.65 s, 12.27 s: past the end of its first round three times. `console-ramoops-0` read no
+`Oops` and no `Kernel panic`, and `alarmd` went on to `rebooting into recovery` at
+502.59 s. The operator heard it ring as intended.
