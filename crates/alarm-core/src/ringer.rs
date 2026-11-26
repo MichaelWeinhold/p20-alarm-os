@@ -2,7 +2,7 @@ use crate::alarm::{Alarm, Weekdays, earliest};
 use crate::battery::Gauge;
 use crate::face::{
     Face, Field, Listed, Listing, Row, Running, SAVED_ALARMS, SAVED_TIMERS, SOUNDS_SHOWN, Screen,
-    Size, Stage, Target, pitch, render, target,
+    Size, Stage, Target, pitch, reach, render, target,
 };
 use crate::hardware::{Clock, Display, HardwareError, Input};
 use crate::input::{InputEvent, Key};
@@ -49,6 +49,14 @@ struct Grab {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct Swipe {
+    from: usize,
+    scroll: usize,
+    target: Target,
+    moved: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct Draft {
     index: Option<usize>,
     alarm: Alarm,
@@ -90,6 +98,8 @@ pub struct Ringer {
     ring: Ring,
     draft: Option<Draft>,
     grab: Option<Grab>,
+    swipe: Option<Swipe>,
+    scroll: usize,
     marked: Option<usize>,
     power_off: bool,
     lit_seconds: i64,
@@ -154,6 +164,8 @@ impl Ringer {
             ring: Ring::Quiet,
             draft: None,
             grab: None,
+            swipe: None,
+            scroll: 0,
             marked: None,
             power_off: true,
             lit_seconds: LIT_SECONDS,
@@ -561,6 +573,8 @@ impl Ringer {
 
     pub fn darkened(&mut self) {
         self.grab = None;
+        self.swipe = None;
+        self.scroll = 0;
         self.marked = None;
         self.recovery_marked = false;
         self.draft = None;
@@ -607,12 +621,22 @@ impl Ringer {
         offset: UtcOffset,
     ) {
         let marked = self.marked.take();
-        let recovery_marked = std::mem::take(&mut self.recovery_marked);
         self.grab = None;
+        self.swipe = None;
         if let Target::Tab(_) = target {
             self.draft = None;
             self.listing = None;
+            self.scroll = 0;
+        } else if screen == Screen::Settings && self.listing.is_none() {
+            self.swipe = Some(Swipe {
+                from: y,
+                scroll: self.scroll,
+                target,
+                moved: false,
+            });
+            return;
         }
+        let recovery_marked = std::mem::take(&mut self.recovery_marked);
         match target {
             Target::Wheel(field, row) => {
                 self.grab = self.picked_on(screen).map(|picked| Grab {
@@ -625,6 +649,12 @@ impl Ringer {
             }
             _ if screen == Screen::Timer => self.touched_timer(target, marked, now),
             _ if screen == Screen::Alarm => self.touched_alarm(target, marked, now, offset),
+            _ => self.touched_setting(target, recovery_marked),
+        }
+    }
+
+    fn touched_setting(&mut self, target: Target, recovery_marked: bool) {
+        match target {
             Target::PowerOff => self.power_off = !self.power_off,
             Target::LitTime => self.lit_seconds = next_lit_seconds(self.lit_seconds),
             Target::Sound => self.outputs.sound = !self.outputs.sound,
@@ -647,16 +677,24 @@ impl Ringer {
             | Target::Day(_)
             | Target::Done
             | Target::Delete
+            | Target::Wheel(..)
             | Target::Tab(_)
             | Target::Blank => {}
         }
     }
 
-    pub fn dragged(&mut self, y: usize, pitch: usize) {
+    pub fn dragged(&mut self, y: usize, pitch: usize, reach: usize) {
+        let pitch = pitch.max(1);
+        if let Some(swipe) = &mut self.swipe {
+            swipe.moved |= 2 * swipe.from.abs_diff(y) >= pitch;
+            if swipe.moved {
+                self.scroll = (swipe.scroll + swipe.from).saturating_sub(y).min(reach);
+            }
+            return;
+        }
         let Some(grab) = &mut self.grab else {
             return;
         };
-        let pitch = pitch.max(1);
         let travel = grab.from.abs_diff(y);
         grab.moved |= 2 * travel >= pitch;
         if !grab.moved {
@@ -669,6 +707,12 @@ impl Ringer {
     }
 
     pub fn lifted(&mut self) {
+        if let Some(swipe) = self.swipe.take() {
+            let recovery_marked = std::mem::take(&mut self.recovery_marked);
+            if !swipe.moved {
+                self.touched_setting(swipe.target, recovery_marked);
+            }
+        }
         if let Some(grab) = self.grab.take()
             && !grab.moved
         {
@@ -723,6 +767,7 @@ impl Ringer {
             volume: None,
             sound: self.sound.clone(),
             listing: self.listing.map(|page| self.listed_page(page)),
+            scroll: self.scroll,
         }
     }
 }
@@ -776,13 +821,13 @@ pub fn listen(
             _ if ring == Ring::Ringing => {}
             InputEvent::Touch { x, y } => {
                 let screen = light.screen();
-                let touched = target(size, screen, ringer.stage(screen), x, y);
+                let touched = target(size, screen, ringer.stage(screen), x, y, ringer.scroll);
                 if let Target::Tab(screen) = touched {
                     light.open(screen);
                 }
                 ringer.touched(touched, light.screen(), y, now, offset);
             }
-            InputEvent::Move { y, .. } => ringer.dragged(y, pitch(size)),
+            InputEvent::Move { y, .. } => ringer.dragged(y, pitch(size), reach(size)),
             InputEvent::Lift => ringer.lifted(),
         }
     }
@@ -2869,6 +2914,108 @@ mod tests {
                 },
             ]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_drag_on_the_settings_screen_scrolls_the_rows_and_stops_at_both_ends()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let now = FakeClock::at(6, 59, 0).now()?;
+        let mut ringer = ringer(7, 0)?;
+        let scroll = |ringer: &Ringer| {
+            ringer
+                .face(now, UtcOffset::UTC, Gauge::UNREAD, Screen::Settings)
+                .scroll
+        };
+        ringer.touched(Target::LitTime, Screen::Settings, 1500, now, UtcOffset::UTC);
+        let mut seen = Vec::new();
+        for y in [1400, 900, 1600, 1450] {
+            ringer.dragged(y, PITCH, 300);
+            seen.push(scroll(&ringer));
+        }
+        ringer.lifted();
+        assert_eq!(seen, [100, 300, 0, 50]);
+        assert_eq!(scroll(&ringer), 50);
+        ringer.touched(Target::LitTime, Screen::Settings, 1000, now, UtcOffset::UTC);
+        ringer.dragged(1100, PITCH, 300);
+        ringer.lifted();
+        assert_eq!(scroll(&ringer), 0);
+        assert_eq!(ringer.lit_seconds(), LIT_SECONDS);
+        Ok(())
+    }
+
+    #[test]
+    fn a_drag_on_a_settings_row_is_not_a_tap_and_a_touch_that_barely_moves_is()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let now = FakeClock::at(6, 59, 0).now()?;
+        for (to, lit_seconds) in [
+            (1000, 30),
+            (978, 30),
+            (977, LIT_SECONDS),
+            (1300, LIT_SECONDS),
+        ] {
+            let mut ringer = ringer(7, 0)?;
+            ringer.touched(Target::LitTime, Screen::Settings, 1000, now, UtcOffset::UTC);
+            ringer.dragged(to, PITCH, 0);
+            ringer.lifted();
+            assert_eq!(ringer.lit_seconds(), lit_seconds, "{to}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rows_that_all_fit_stay_put_under_a_drag_and_the_drag_turns_nothing()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut ringer = ringer(7, 0)?;
+        let before = ringer.clone();
+        let gesture = drag(540, 1000, &[900, 400, 1200]);
+        drain_lit(
+            &mut FakeInput::with(&[&SETTINGS_TAB, &gesture]),
+            &clock,
+            &mut ringer,
+            &mut always(),
+        )?;
+        assert_eq!(ringer, before);
+        Ok(())
+    }
+
+    #[test]
+    fn the_rows_start_at_the_top_again_once_the_tab_is_left_or_the_panel_goes_dark()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let now = FakeClock::at(6, 59, 0).now()?;
+        let mut ringer = ringer(7, 0)?;
+        let scrolled = |ringer: &mut Ringer| {
+            ringer.touched(Target::Sound, Screen::Settings, 1500, now, UtcOffset::UTC);
+            ringer.dragged(1300, PITCH, 300);
+            ringer.lifted();
+            ringer
+                .face(now, UtcOffset::UTC, Gauge::UNREAD, Screen::Settings)
+                .scroll
+        };
+        assert_eq!(scrolled(&mut ringer), 200);
+        ringer.touched(
+            Target::Tab(Screen::Settings),
+            Screen::Settings,
+            2200,
+            now,
+            UtcOffset::UTC,
+        );
+        assert_eq!(
+            ringer
+                .face(now, UtcOffset::UTC, Gauge::UNREAD, Screen::Settings)
+                .scroll,
+            0
+        );
+        assert_eq!(scrolled(&mut ringer), 200);
+        ringer.darkened();
+        assert_eq!(
+            ringer
+                .face(now, UtcOffset::UTC, Gauge::UNREAD, Screen::Settings)
+                .scroll,
+            0
+        );
+        assert!(ringer.outputs().sound);
         Ok(())
     }
 }
