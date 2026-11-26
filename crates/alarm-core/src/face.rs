@@ -7,6 +7,10 @@ pub const FOREGROUND: Colour = Colour(0xff_ffff);
 pub const WARNING: Colour = Colour(0xff_3b30);
 pub const RINGING: Colour = Colour(0xff_9f0a);
 pub const DIM: Colour = Colour(0x63_6366);
+pub const ACCENT: Gradient = Gradient {
+    from: Colour(0x57_a2f3),
+    to: Colour(0x6e_41d2),
+};
 
 const UNITS_ACROSS: usize = 21;
 const DIGIT_UNITS: usize = 4;
@@ -45,6 +49,27 @@ const RECOVERY_ROW: usize = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Colour(pub u32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Gradient {
+    pub from: Colour,
+    pub to: Colour,
+}
+
+impl Gradient {
+    fn at(self, along: usize, span: usize) -> Colour {
+        let step = (along.min(span) * usize::from(u8::MAX))
+            .checked_div(span)
+            .unwrap_or(0);
+        mixed(self.to, self.from, u8::try_from(step).unwrap_or(u8::MAX))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Ink {
+    Flat(Colour),
+    Accent,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Size {
@@ -424,7 +449,13 @@ fn battery_symbol(
     let size = BATTERY_UNITS * unit;
     let centre2 = 2 * x + SYMBOL_UNITS * unit;
     let middle2 = 2 * y + DIGIT_HEIGHT_UNITS * unit;
-    centred(frame, Icon::Battery, (centre2, middle2), size, colour);
+    centred(
+        frame,
+        Icon::Battery,
+        (centre2, middle2),
+        size,
+        Ink::Flat(colour),
+    );
     let bars = match gauge.level {
         Level::Low => 1,
         Level::Middle => 2,
@@ -462,38 +493,60 @@ fn centred(
     icon: Icon,
     (centre2, middle2): (usize, usize),
     size: usize,
-    colour: Colour,
+    ink: Ink,
 ) {
     let square = Square {
         centre2,
         middle2,
         size,
     };
-    glyph::icon(icon, square, |x, y, alpha| frame.blend(x, y, colour, alpha));
+    let left = centre2.saturating_sub(size) / 2;
+    let top = middle2.saturating_sub(size) / 2;
+    glyph::icon(icon, square, |x, y, alpha| {
+        let colour = match ink {
+            Ink::Flat(colour) => colour,
+            Ink::Accent => ACCENT.at(x.saturating_sub(left) + y.saturating_sub(top), 2 * size),
+        };
+        frame.blend(x, y, colour, alpha);
+    });
 }
 
-fn symbol(frame: &mut Frame, icon: Icon, (x, y): (usize, usize), unit: usize, colour: Colour) {
+fn symbol(frame: &mut Frame, icon: Icon, (x, y): (usize, usize), unit: usize, ink: Ink) {
     let size = ICON_UNITS * unit;
-    centred(frame, icon, (2 * x + size, 2 * y + size), size, colour);
+    centred(frame, icon, (2 * x + size, 2 * y + size), size, ink);
 }
 
 fn switch(frame: &mut Frame, (right, y): (usize, usize), unit: usize, on: bool) {
-    let (icon, colour) = if on {
-        (Icon::On, FOREGROUND)
-    } else {
-        (Icon::Off, DIM)
-    };
-    symbol(frame, icon, (right - ICON_UNITS * unit, y), unit, colour);
+    let icon = if on { Icon::On } else { Icon::Off };
+    symbol(
+        frame,
+        icon,
+        (right - ICON_UNITS * unit, y),
+        unit,
+        accent(on),
+    );
 }
 
 fn settings_screen(frame: &mut Frame, sheet: Sheet, face: &Face) {
     let unit = sheet.unit;
     let right = sheet.side + SIDE_UNITS * unit;
     let top = sheet.setting_row(POWER_OFF_ROW);
-    symbol(frame, Icon::Power, (sheet.left, top), unit, FOREGROUND);
+    symbol(
+        frame,
+        Icon::Power,
+        (sheet.left, top),
+        unit,
+        Ink::Flat(FOREGROUND),
+    );
     switch(frame, (right, top), unit, face.power_off);
     let top = sheet.setting_row(LIT_ROW);
-    symbol(frame, Icon::Light, (sheet.left, top), unit, FOREGROUND);
+    symbol(
+        frame,
+        Icon::Light,
+        (sheet.left, top),
+        unit,
+        Ink::Flat(FOREGROUND),
+    );
     figures(
         frame,
         (right - UNITS_ACROSS * unit, top),
@@ -502,18 +555,18 @@ fn settings_screen(frame: &mut Frame, sheet: Sheet, face: &Face) {
         FOREGROUND,
     );
     let top = sheet.setting_row(RECOVERY_ROW);
-    let colour = if face.recovery_marked {
+    let ink = Ink::Flat(if face.recovery_marked {
         WARNING
     } else {
         FOREGROUND
-    };
-    symbol(frame, Icon::Recovery, (sheet.left, top), unit, colour);
+    });
+    symbol(frame, Icon::Recovery, (sheet.left, top), unit, ink);
     symbol(
         frame,
         Icon::Restart,
         (right - ICON_UNITS * unit, top),
         unit,
-        colour,
+        ink,
     );
 }
 
@@ -526,13 +579,17 @@ fn wheels(frame: &mut Frame, sheet: Sheet, picked: (u8, u8)) {
     let size = ICON_UNITS * unit;
     for start in [0, MINUTE_UNITS * unit] {
         let centre2 = 2 * (sheet.left + start) + (2 * DIGIT_UNITS + 1) * unit;
-        centred(frame, Icon::Up, (centre2, above), size, DIM);
-        centred(frame, Icon::Down, (centre2, below), size, DIM);
+        centred(frame, Icon::Up, (centre2, above), size, Ink::Flat(DIM));
+        centred(frame, Icon::Down, (centre2, below), size, Ink::Flat(DIM));
     }
 }
 
 fn shade(on: bool) -> Colour {
     if on { FOREGROUND } else { DIM }
+}
+
+fn accent(on: bool) -> Ink {
+    if on { Ink::Accent } else { Ink::Flat(DIM) }
 }
 
 fn slider(
@@ -550,13 +607,13 @@ fn slider(
         Icon::Add,
         (sheet.side, sheet.wheel_row(Row::Picked)),
         unit,
-        shade(addable),
+        accent(addable),
     );
     for (index, &(entry, on)) in entries.iter().take(SAVED_ALARMS).enumerate() {
         let top = sheet.list_row(index);
         figures(frame, (sheet.left, top), unit, Some(entry), shade(on));
         let mark = if marked == Some(index) { WARNING } else { DIM };
-        symbol(frame, Icon::Close, (sheet.side, top), unit, mark);
+        symbol(frame, Icon::Close, (sheet.side, top), unit, Ink::Flat(mark));
     }
 }
 
@@ -594,10 +651,15 @@ fn timer_screen(frame: &mut Frame, layout: &Layout, sheet: Sheet, face: &Face) {
     let left = face.left.map(of_countdown);
     figures(frame, readout, unit, left, shade(left.is_some()));
     if left.is_some() {
-        symbol(frame, Icon::Stop, control, unit, FOREGROUND);
+        symbol(frame, Icon::Stop, control, unit, Ink::Accent);
     } else {
-        let colour = shade(!face.countdown.is_zero());
-        symbol(frame, Icon::Play, control, unit, colour);
+        symbol(
+            frame,
+            Icon::Play,
+            control,
+            unit,
+            accent(!face.countdown.is_zero()),
+        );
     }
     let entries: Vec<_> = face
         .timers
@@ -620,13 +682,12 @@ fn bar(frame: &mut Frame, layout: &Layout, current: Screen) {
     let top = layout.bar_top + TAB_MARGIN_UNITS * layout.tab_unit;
     for (index, screen) in Screen::ALL.into_iter().enumerate() {
         let centre = width * (2 * index + 1) / (2 * Screen::ALL.len());
-        let colour = if screen == current { FOREGROUND } else { DIM };
         centred(
             frame,
             screen.icon(),
             (2 * centre, 2 * top + across),
             across,
-            colour,
+            accent(screen == current),
         );
     }
 }
@@ -752,6 +813,8 @@ pub fn target(size: Size, screen: Screen, x: usize, y: usize) -> Target {
 mod tests {
     use super::*;
     use crate::battery::{ChargeLimit, Percent};
+    use std::collections::HashSet;
+    use std::sync::OnceLock;
 
     type Outcome = Result<(), Box<dyn std::error::Error>>;
 
@@ -785,10 +848,15 @@ mod tests {
     }
 
     fn nearest(colour: Colour) -> char {
-        PALETTE
+        let flat = PALETTE
             .into_iter()
             .min_by_key(|&(palette, _)| distance(colour, palette))
-            .map_or('.', |(_, character)| character)
+            .map_or('.', |(_, character)| character);
+        if flat != '.' && accented(colour) {
+            '*'
+        } else {
+            flat
+        }
     }
 
     fn blended(pixel: Colour, colour: Colour) -> bool {
@@ -802,6 +870,24 @@ mod tests {
         (guess.saturating_sub(1)..=guess + 2)
             .filter_map(|alpha| u8::try_from(alpha).ok())
             .any(|alpha| alpha > 0 && mixed(colour, BACKGROUND, alpha) == pixel)
+    }
+
+    fn accented(pixel: Colour) -> bool {
+        static SHADES: OnceLock<HashSet<Colour>> = OnceLock::new();
+        SHADES
+            .get_or_init(|| {
+                (0..=u8::MAX)
+                    .map(|step| ACCENT.at(usize::from(step), usize::from(u8::MAX)))
+                    .flat_map(|colour| {
+                        (1..=u8::MAX).map(move |alpha| mixed(colour, BACKGROUND, alpha))
+                    })
+                    .collect()
+            })
+            .contains(&pixel)
+    }
+
+    fn solid(pixel: Colour) -> bool {
+        (0..=u8::MAX).any(|step| ACCENT.at(usize::from(step), usize::from(u8::MAX)) == pixel)
     }
 
     fn picture(frame: &Frame) -> String {
@@ -978,11 +1064,7 @@ mod tests {
         };
         for top in [sheet.active.1, sheet.wheel_row(Row::Picked)] {
             assert_ne!(shown(&idle, top), []);
-            assert!(
-                shown(&idle, top)
-                    .iter()
-                    .all(|&colour| blended(colour, FOREGROUND))
-            );
+            assert!(shown(&idle, top).iter().all(|&colour| accented(colour)));
             assert_ne!(shown(&zero, top), []);
             assert!(shown(&zero, top).iter().all(|&colour| blended(colour, DIM)));
         }
@@ -1068,7 +1150,7 @@ mod tests {
             let frame = render(PANEL, &face);
             let marked: Vec<_> = lit(&frame)
                 .into_iter()
-                .filter(|&(_, y, colour)| y > PANEL.height * 19 / 20 && colour == FOREGROUND)
+                .filter(|&(_, y, colour)| y > PANEL.height * 19 / 20 && solid(colour))
                 .map(|(x, _, _)| x * Screen::ALL.len() / PANEL.width)
                 .collect();
             assert_ne!(marked, []);
@@ -1147,6 +1229,41 @@ mod tests {
     }
 
     #[test]
+    fn the_accent_runs_from_its_first_colour_to_its_last_and_no_further() {
+        assert_eq!(ACCENT.at(0, 10), ACCENT.from);
+        assert_eq!(ACCENT.at(10, 10), ACCENT.to);
+        assert_eq!(ACCENT.at(25, 10), ACCENT.to);
+        assert_eq!(ACCENT.at(5, 0), ACCENT.from);
+        let middle = ACCENT.at(5, 10);
+        assert!(accented(middle));
+        assert!(![ACCENT.from, ACCENT.to].contains(&middle));
+        assert!(accented(ACCENT.from) && accented(ACCENT.to));
+        assert!(
+            [FOREGROUND, DIM, WARNING, RINGING]
+                .into_iter()
+                .all(|colour| !accented(colour) && !accented(mixed(colour, BACKGROUND, 0x80)))
+        );
+    }
+
+    #[test]
+    fn the_open_tab_runs_blue_at_its_top_left_to_purple_at_its_bottom_right() -> Outcome {
+        let frame = render(PANEL, &face(Some(0), false, charged(80)?)?);
+        let tab: Vec<_> = lit(&frame)
+            .into_iter()
+            .filter(|&(x, y, colour)| {
+                x < PANEL.width / 3 && y > PANEL.height * 19 / 20 && solid(colour)
+            })
+            .collect();
+        let corner = |&(x, y, _): &(usize, usize, Colour)| x + y;
+        let first = tab.iter().min_by_key(|lit| corner(lit)).ok_or("no tab")?;
+        let last = tab.iter().max_by_key(|lit| corner(lit)).ok_or("no tab")?;
+        let channel = |colour: Colour, shift: u32| (colour.0 >> shift) & 0xff;
+        assert!(channel(first.2, 8) > channel(first.2, 16));
+        assert!(channel(last.2, 16) > channel(last.2, 8));
+        Ok(())
+    }
+
+    #[test]
     fn every_digit_has_its_own_shape() -> Outcome {
         let mut seen = Vec::new();
         for value in 0..10 {
@@ -1211,8 +1328,11 @@ mod tests {
                 lit(&frame).into_iter().partition(|&(_, y, _)| y >= 2093);
             let (status, rest): (Vec<_>, Vec<_>) =
                 above.into_iter().partition(|&(x, y, _)| corner(x, y));
-            assert!(bar.iter().all(|&(_, y, lit)| y < PANEL.height - 40
-                && (blended(lit, FOREGROUND) || blended(lit, DIM))));
+            assert!(
+                bar.iter()
+                    .all(|&(_, y, lit)| y < PANEL.height - 40
+                        && (accented(lit) || blended(lit, DIM)))
+            );
             assert!(bar.iter().any(|&(_, _, lit)| lit == DIM));
             assert_ne!(status, []);
             assert!(status.iter().all(|&(_, _, lit)| blended(lit, colour)));
@@ -1223,10 +1343,9 @@ mod tests {
             );
             assert!(rest.iter().all(|&(_, y, _)| y >= 138));
             assert!(rest.iter().all(|&(x, _, _)| x > 40 && x < PANEL.width - 40));
-            assert!(
-                rest.iter()
-                    .all(|&(_, _, lit)| blended(lit, FOREGROUND) || blended(lit, DIM))
-            );
+            assert!(rest.iter().all(|&(_, _, lit)| blended(lit, FOREGROUND)
+                || blended(lit, DIM)
+                || accented(lit)));
         }
         Ok(())
     }
