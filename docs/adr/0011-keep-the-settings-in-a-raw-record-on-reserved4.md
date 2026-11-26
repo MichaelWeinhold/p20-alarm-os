@@ -1,8 +1,8 @@
 # 11. Keep the settings in a raw record on `reserved4`
 
 - **Status:** Accepted; D2's format raised to version 2 by issue 83, to version 3 by
-  issue 81, to version 4 by issue 97, to version 5 by issue 110, and to version 6 by
-  issue 115
+  issue 81, to version 4 by issue 97, to version 5 by issue 110, to version 6 by
+  issue 115, and to version 7 by issue 128
 - **Date:** 2026-11-13
 - **Issue:** #30
 
@@ -54,7 +54,7 @@ slot is little-endian:
 | Offset | Bytes | Field |
 |---|---|---|
 | 0 | 8 | magic, `P20ALRM\0` |
-| 8 | 4 | format version, `6` |
+| 8 | 4 | format version, `7` |
 | 12 | 4 | payload length, at most 4068 |
 | 16 | 8 | sequence number |
 | 24 | n | payload |
@@ -72,11 +72,11 @@ part of the format version, and a change to it raises the version.
 | 9 | 1 | the number of alarms, n |
 | 10 | 4 n | each alarm: hour, minute, weekdays, and `1` armed or `0` not |
 | 10 + 4 n | 1 | the number of saved timers, m; absent before version 3 |
-| 11 + 4 n | 2 m | each timer: minutes `0` to `99` and seconds `0` to `59`, never both `0` |
-| 11 + 4 n + 2 m | 2 | how long a press lights the panel, in seconds: `10`, `30`, `60`, `120` or `300`; absent before version 4 |
-| 13 + 4 n + 2 m | 1 | the ring's volume, `1` to `15`; absent before version 5 |
-| 14 + 4 n + 2 m | 1 | the ring's sound, `1` on and `0` off; absent before version 6 |
-| 15 + 4 n + 2 m | 1 | the ring's vibration, `1` on and `0` off; absent before version 6 |
+| 11 + 4 n | 3 m | each timer: hours `0` to `23`, minutes `0` to `59` and seconds `0` to `59`, never all `0`; before version 7, 2 m bytes of minutes `0` to `99` and seconds |
+| 11 + 4 n + 3 m | 2 | how long a press lights the panel, in seconds: `10`, `30`, `60`, `120` or `300`; absent before version 4 |
+| 13 + 4 n + 3 m | 1 | the ring's volume, `1` to `15`; absent before version 5 |
+| 14 + 4 n + 3 m | 1 | the ring's sound, `1` on and `0` off; absent before version 6 |
+| 15 + 4 n + 3 m | 1 | the ring's vibration, `1` on and `0` off; absent before version 6 |
 
 A version-1 slot still loads, with the toggle on, and the next save writes the current
 version. Version 1 is the same payload without the toggle byte. Amended by issue 83.
@@ -88,6 +88,9 @@ A version-4 slot loads at the loudest volume, `15`; version 4 is the payload wit
 volume. Amended by issue 110.
 A version-5 slot loads with the sound and the vibration on; version 5 is the payload
 without either. Amended by issue 115.
+A version-3 to version-6 slot loads each timer's minutes and seconds as the same length
+in hours, minutes and seconds, `75:00` as `1:15:00`; those versions store a timer in two
+bytes, minutes `0` to `99` and seconds. Amended by issue 128.
 
 Encoding, decoding and choosing a slot live in `alarm-core`, tested on the host with
 fakes (architecture rule 1). The adapter only reads and writes the 8192 bytes. The CRC is
