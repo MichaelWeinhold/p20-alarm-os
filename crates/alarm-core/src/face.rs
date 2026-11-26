@@ -63,7 +63,8 @@ const LIT_ROW: usize = 1;
 const SOUND_ROW: usize = 2;
 const SOUND_NAME_ROW: usize = 3;
 const VIBRATION_ROW: usize = 4;
-const RECOVERY_ROW: usize = 5;
+const RAMP_ROW: usize = 5;
+const RECOVERY_ROW: usize = 6;
 const NAME_UNITS: usize = 3;
 pub const SOUNDS_SHOWN: usize = 6;
 const TIME_FIELDS: [Field; 2] = [Field::Hours, Field::Minutes];
@@ -140,6 +141,7 @@ pub struct Face {
     pub screen: Screen,
     pub power_off: bool,
     pub lit_seconds: i64,
+    pub ramp_seconds: i64,
     pub outputs: Outputs,
     pub recovery_marked: bool,
     pub timers: Vec<Countdown>,
@@ -240,6 +242,7 @@ pub enum Target {
     Choose(usize),
     More,
     Vibration,
+    Ramp,
     Recovery,
     Tab(Screen),
     Blank,
@@ -806,6 +809,26 @@ fn settings_screen(frame: &mut Frame, sheet: Sheet, face: &Face) {
         let top = sheet.setting_row(row);
         symbol(frame, icon, (sheet.left, top), unit, Ink::Flat(FOREGROUND));
         switch(frame, (right, top), unit, on);
+    }
+    let top = sheet.setting_row(RAMP_ROW);
+    symbol(
+        frame,
+        Icon::Ramp,
+        (sheet.left, top),
+        unit,
+        Ink::Flat(FOREGROUND),
+    );
+    if face.ramp_seconds > 0 {
+        let ramp = Countdown::of(face.ramp_seconds);
+        figures(
+            frame,
+            (right - UNITS_ACROSS * unit, top),
+            unit,
+            &[ramp.minutes(), ramp.seconds()],
+            FOREGROUND,
+        );
+    } else {
+        switch(frame, (right, top), unit, false);
     }
     let top = sheet.setting_row(SOUND_NAME_ROW);
     let (shown, colour) = face
@@ -1584,6 +1607,9 @@ pub fn target(size: Size, screen: Screen, stage: Stage, x: usize, y: usize) -> T
         (Screen::Settings, Some(sheet)) if sheet.band(sheet.setting_row(VIBRATION_ROW), y) => {
             Target::Vibration
         }
+        (Screen::Settings, Some(sheet)) if sheet.band(sheet.setting_row(RAMP_ROW), y) => {
+            Target::Ramp
+        }
         (Screen::Settings, Some(sheet)) if sheet.band(sheet.setting_row(RECOVERY_ROW), y) => {
             Target::Recovery
         }
@@ -1755,6 +1781,7 @@ mod tests {
             screen: Screen::Alarm,
             power_off: true,
             lit_seconds: 10,
+            ramp_seconds: 60,
             outputs: Outputs::BOTH,
             recovery_marked: false,
             timers: Vec::new(),
@@ -2065,12 +2092,19 @@ mod tests {
     }
 
     #[test]
-    fn the_settings_screen_shows_the_toggles_the_lit_time_and_the_recovery_row_as_recorded()
+    fn the_settings_screen_shows_the_toggles_the_lit_time_the_ramp_and_the_recovery_row_as_recorded()
     -> Outcome {
-        for (power_off, lit_seconds, (sound, vibration), name, recovery_marked, recorded) in [
+        for (
+            power_off,
+            (lit_seconds, ramp_seconds),
+            (sound, vibration),
+            name,
+            recovery_marked,
+            recorded,
+        ) in [
             (
                 true,
-                10,
+                (10, 0),
                 (true, true),
                 SoundName::new("ringtone.wav"),
                 false,
@@ -2078,7 +2112,7 @@ mod tests {
             ),
             (
                 false,
-                300,
+                (300, 120),
                 (false, true),
                 None,
                 false,
@@ -2086,7 +2120,7 @@ mod tests {
             ),
             (
                 true,
-                10,
+                (10, 15),
                 (true, false),
                 SoundName::new("Carbon.wav"),
                 true,
@@ -2097,6 +2131,7 @@ mod tests {
                 screen: Screen::Settings,
                 power_off,
                 lit_seconds,
+                ramp_seconds,
                 outputs: Outputs { sound, vibration },
                 sound: name,
                 recovery_marked,
@@ -2161,12 +2196,15 @@ mod tests {
         assert_eq!(settings(0, 1461), Target::Vibration);
         assert_eq!(settings(540, 1548), Target::Vibration);
         assert_eq!(settings(1079, 1644), Target::Vibration);
-        assert_eq!(settings(0, 1645), Target::Recovery);
-        assert_eq!(settings(540, 1732), Target::Recovery);
-        assert_eq!(settings(1079, 1828), Target::Recovery);
+        assert_eq!(settings(0, 1645), Target::Ramp);
+        assert_eq!(settings(540, 1732), Target::Ramp);
+        assert_eq!(settings(1079, 1828), Target::Ramp);
+        assert_eq!(settings(0, 1829), Target::Recovery);
+        assert_eq!(settings(540, 1920), Target::Recovery);
+        assert_eq!(settings(1079, 2012), Target::Recovery);
         assert_eq!(settings(540, 724), Target::Blank);
-        assert_eq!(settings(540, 1829), Target::Blank);
-        assert_eq!(settings(540, 1950), Target::Blank);
+        assert_eq!(settings(540, 2013), Target::Blank);
+        assert_eq!(settings(540, 2092), Target::Blank);
         assert_eq!(
             target(SMALL, Screen::Settings, Stage::List, 50, 20),
             Target::Blank

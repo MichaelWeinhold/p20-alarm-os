@@ -46,6 +46,7 @@ ICONS: Final[Mapping[str, int]] = {
     "restart_alt": 0xF053,
     "volume_up": 0xE050,
     "vibration": 0xE62D,
+    "trending_up": 0xE8E5,
     "add_circle": 0xE147,
     "check": 0xE5CA,
     "delete": 0xE872,
