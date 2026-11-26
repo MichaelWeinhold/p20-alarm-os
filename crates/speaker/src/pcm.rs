@@ -131,10 +131,22 @@ pub fn next(samples: &[u8], at: usize, frames: usize) -> usize {
     }
 }
 
+pub fn scaled(period: &[u8], gain: u32, into: &mut Vec<u8>) {
+    into.clear();
+    let (samples, _) = period.as_chunks::<2>();
+    into.extend(samples.iter().flat_map(|&bytes| {
+        let sample = (i64::from(i16::from_le_bytes(bytes)) * i64::from(gain)) >> 16;
+        i16::try_from(sample.clamp(i16::MIN.into(), i16::MAX.into()))
+            .unwrap_or_default()
+            .to_le_bytes()
+    }));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::encoded;
+    use alarm_core::sound::Volume;
 
     fn interval(bytes: &[u8], index: usize) -> Result<(u32, u32, u32), HardwareError> {
         let at = interval_at(index);
@@ -216,5 +228,45 @@ mod tests {
         assert_eq!(next(&samples, at, 80), 0);
         assert_eq!(next(&samples, at, 40), 1_960 * FRAME_BYTES);
         assert_eq!(period(&samples, samples.len() + 4), []);
+    }
+
+    #[test]
+    fn the_loudest_volume_leaves_the_samples_as_they_are() {
+        let samples: Vec<u8> = [i16::MIN, -1, 0, 1, 12_345, i16::MAX]
+            .into_iter()
+            .flat_map(i16::to_le_bytes)
+            .collect();
+        let mut scaled_samples = Vec::new();
+        scaled(&samples, Volume::LOUDEST.gain(), &mut scaled_samples);
+        assert_eq!(scaled_samples, samples);
+    }
+
+    #[test]
+    fn each_step_down_plays_the_samples_three_decibels_quieter() {
+        let samples: Vec<u8> = [i16::MAX, i16::MIN, 20_000]
+            .into_iter()
+            .flat_map(i16::to_le_bytes)
+            .collect();
+        let mut volume = Volume::LOUDEST;
+        let mut louder = samples.clone();
+        let mut quieter = Vec::new();
+        while volume != Volume::QUIETEST {
+            volume = volume.down();
+            scaled(&samples, volume.gain(), &mut quieter);
+            for (before, after) in louder
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .zip(quieter.as_chunks::<2>().0)
+            {
+                let ratio =
+                    f64::from(i16::from_le_bytes(*after)) / f64::from(i16::from_le_bytes(*before));
+                assert!(
+                    (20.0 * ratio.log10() + 3.0).abs() < 0.05,
+                    "{volume:?} {ratio}"
+                );
+            }
+            louder.clone_from(&quieter);
+        }
     }
 }

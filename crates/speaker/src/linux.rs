@@ -6,11 +6,12 @@ use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::os::fd::AsRawFd;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use alarm_core::hardware::{HardwareError, Speaker};
+use alarm_core::sound::{UNITY_GAIN, Volume};
 
 use crate::control::{self, ELEM_INFO, ELEM_LIST, ELEM_WRITE, ENUMERATED, ID_BYTES, Info, Write};
 use crate::dsp::{self, Message};
@@ -247,10 +248,21 @@ fn written(pcm: &File, frames: &[u8]) -> io::Result<usize> {
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
-fn played(pcm: &File, samples: &[u8], stopping: &AtomicBool) -> Result<(), HardwareError> {
+fn played(
+    pcm: &File,
+    samples: &[u8],
+    gain: &AtomicU32,
+    stopping: &AtomicBool,
+) -> Result<(), HardwareError> {
     let mut at = 0;
+    let mut period = Vec::new();
     while !stopping.load(Ordering::Acquire) {
-        match written(pcm, pcm::period(samples, at)) {
+        pcm::scaled(
+            pcm::period(samples, at),
+            gain.load(Ordering::Relaxed),
+            &mut period,
+        );
+        match written(pcm, &period) {
             Ok(0) => return Err(refused(pcm::DEVICE, "wrote no frames".to_owned())),
             Ok(frames) => at = pcm::next(samples, at, frames),
             Err(_) if stopping.load(Ordering::Acquire) => break,
@@ -270,12 +282,16 @@ struct Playing {
     thread: JoinHandle<Result<(), HardwareError>>,
 }
 
-fn playing(pcm: Arc<File>, samples: Arc<[u8]>) -> Result<Playing, HardwareError> {
+fn playing(
+    pcm: Arc<File>,
+    samples: Arc<[u8]>,
+    gain: Arc<AtomicU32>,
+) -> Result<Playing, HardwareError> {
     let stopping = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&stopping);
     let thread = thread::Builder::new()
         .name("speaker".to_owned())
-        .spawn(move || played(&pcm, &samples, &flag))
+        .spawn(move || played(&pcm, &samples, &gain, &flag))
         .map_err(|error| failed(pcm::DEVICE, &error))?;
     Ok(Playing { stopping, thread })
 }
@@ -295,6 +311,7 @@ fn device(path: &str, device: &'static str) -> Result<File, HardwareError> {
 pub struct AlsaSpeaker {
     writes: Writes,
     samples: Arc<[u8]>,
+    gain: Arc<AtomicU32>,
     control: File,
     pcm: Arc<File>,
     replayed: Instant,
@@ -331,6 +348,7 @@ impl AlsaSpeaker {
         Ok(Self {
             writes,
             samples,
+            gain: Arc::new(AtomicU32::new(UNITY_GAIN)),
             control,
             pcm,
             replayed,
@@ -340,14 +358,21 @@ impl AlsaSpeaker {
 }
 
 impl Speaker for AlsaSpeaker {
-    fn start(&mut self) -> Result<(), HardwareError> {
+    fn start(&mut self, volume: Volume) -> Result<(), HardwareError> {
+        self.gain.store(volume.gain(), Ordering::Relaxed);
         if self.playing.is_some() {
             return Ok(());
         }
         thread::sleep(SETTLE.saturating_sub(self.replayed.elapsed()));
         let started = set(&self.control, &self.writes.ring)
             .and_then(|()| prepared(&self.pcm))
-            .and_then(|()| playing(Arc::clone(&self.pcm), Arc::clone(&self.samples)));
+            .and_then(|()| {
+                playing(
+                    Arc::clone(&self.pcm),
+                    Arc::clone(&self.samples),
+                    Arc::clone(&self.gain),
+                )
+            });
         match started {
             Ok(playing) => {
                 self.playing = Some(playing);
@@ -358,6 +383,11 @@ impl Speaker for AlsaSpeaker {
                 Err(error)
             }
         }
+    }
+
+    fn set_volume(&mut self, volume: Volume) -> Result<(), HardwareError> {
+        self.gain.store(volume.gain(), Ordering::Relaxed);
+        Ok(())
     }
 
     fn stop(&mut self) -> Result<(), HardwareError> {

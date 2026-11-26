@@ -5,6 +5,7 @@ use crate::boot::Boot;
 use crate::face::{Frame, Size};
 use crate::input::InputEvent;
 use crate::settings::{RECORD_BYTES, SLOT_BYTES, Slot};
+use crate::sound::Volume;
 use crate::time::UnixSeconds;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,7 +59,8 @@ pub trait Vibrator {
 }
 
 pub trait Speaker {
-    fn start(&mut self) -> Result<(), HardwareError>;
+    fn start(&mut self, volume: Volume) -> Result<(), HardwareError>;
+    fn set_volume(&mut self, volume: Volume) -> Result<(), HardwareError>;
     fn stop(&mut self) -> Result<(), HardwareError>;
 }
 

@@ -65,8 +65,8 @@ def test_the_committed_subset_maps_exactly_the_figures() -> None:
     assert mapped(TTFont(FONTS / INTER.name)) == code_points("0123456789:%-")
 
 
-def test_the_committed_icons_map_exactly_the_sixteen_symbols() -> None:
-    assert len(ICONS) == 16
+def test_the_committed_icons_map_exactly_the_seventeen_symbols() -> None:
+    assert len(ICONS) == 17
     assert mapped(TTFont(FONTS / SYMBOLS.name)) == set(ICONS.values())
 
 
