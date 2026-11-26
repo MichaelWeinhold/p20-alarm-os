@@ -116,11 +116,18 @@ pub fn transferred(bytes: &[u8; XFERI_BYTES]) -> i64 {
     i64::from_le_bytes(result)
 }
 
-#[must_use]
-pub fn period(samples: &[u8], at: usize) -> &[u8] {
-    let frames = usize::try_from(PERIOD_FRAMES).unwrap_or(0);
-    let end = samples.len().min(at.saturating_add(frames * FRAME_BYTES));
-    samples.get(at..end).unwrap_or_default()
+pub fn period(samples: &[u8], at: usize, into: &mut Vec<u8>) {
+    into.clear();
+    let bytes = usize::try_from(PERIOD_FRAMES).unwrap_or(0) * FRAME_BYTES;
+    let mut from = at.checked_rem(samples.len()).unwrap_or(0);
+    while into.len() < bytes {
+        let end = samples.len().min(from + bytes - into.len());
+        match samples.get(from..end) {
+            Some(chunk) if !chunk.is_empty() => into.extend_from_slice(chunk),
+            _ => return,
+        }
+        from = 0;
+    }
 }
 
 #[must_use]
@@ -217,17 +224,45 @@ mod tests {
         assert_eq!(transferred(&bytes), 512);
     }
 
+    fn frames(count: usize) -> Vec<u8> {
+        (0..count)
+            .flat_map(|frame| u32::try_from(frame).unwrap_or(u32::MAX).to_le_bytes())
+            .collect()
+    }
+
     #[test]
-    fn the_sound_is_written_a_period_at_a_time_and_loops() {
-        let samples = vec![0; 2_000 * FRAME_BYTES];
-        assert_eq!(period(&samples, 0).len(), 960 * FRAME_BYTES);
+    fn the_sound_is_written_a_whole_period_at_a_time_and_loops_into_its_start() {
+        let samples = frames(2_000);
+        let mut written = Vec::new();
+        period(&samples, 0, &mut written);
+        assert_eq!(written, samples[..960 * FRAME_BYTES]);
         let at = next(&samples, 0, 960);
         let at = next(&samples, at, 960);
         assert_eq!(at, 1_920 * FRAME_BYTES);
-        assert_eq!(period(&samples, at).len(), 80 * FRAME_BYTES);
-        assert_eq!(next(&samples, at, 80), 0);
+        period(&samples, at, &mut written);
+        assert_eq!(written.len(), 960 * FRAME_BYTES);
+        assert_eq!(written[..80 * FRAME_BYTES], samples[1_920 * FRAME_BYTES..]);
+        assert_eq!(written[80 * FRAME_BYTES..], samples[..880 * FRAME_BYTES]);
+        assert_eq!(next(&samples, at, 960), 880 * FRAME_BYTES);
         assert_eq!(next(&samples, at, 40), 1_960 * FRAME_BYTES);
-        assert_eq!(period(&samples, samples.len() + 4), []);
+    }
+
+    #[test]
+    fn a_sound_shorter_than_a_period_fills_it_by_repeating() {
+        let samples = frames(100);
+        let mut written = Vec::new();
+        period(&samples, 40 * FRAME_BYTES, &mut written);
+        assert_eq!(written.len(), 960 * FRAME_BYTES);
+        assert_eq!(written[..60 * FRAME_BYTES], samples[40 * FRAME_BYTES..]);
+        assert_eq!(written[60 * FRAME_BYTES..160 * FRAME_BYTES], samples);
+        assert_eq!(next(&samples, 40 * FRAME_BYTES, 960), 0);
+    }
+
+    #[test]
+    fn no_sound_writes_no_frames() {
+        let mut written = vec![1];
+        period(&[], 0, &mut written);
+        assert_eq!(written, []);
     }
 
     #[test]

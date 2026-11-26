@@ -131,7 +131,10 @@ DSP is sent sooner plays at an eighth of its speed, unheard, and its watchdog fi
 the stream ends (`docs/device-history/phone.md`, issue 92). Each start writes the
 defaults and then the speaker's controls, less `CLASSD_VOLTAGE_CONFIG`, which refuses its
 value, asks for 16-bit 48 kHz stereo in two periods of 960 frames, checks that the kernel
-kept them, and loops the sound on a thread of its own, preparing again after an underrun. Each period is scaled by the volume's gain as it is written, so a new volume is heard within about 60 ms, the 20 ms period being scaled and the two queued ahead of it. A stop drops the
+kept them, and loops the sound on a thread of its own, preparing again after an underrun.
+Every write is a whole period, the end of the sound running on into its start: a short
+last period leaves the kernel copying into its buffer at an offset it faults on, and the
+phone panics (issue 137). Each period is scaled by the volume's gain as it is written, so a new volume is heard within about 60 ms, the 20 ms period being scaled and the two queued ahead of it. A stop drops the
 stream, which ends the thread's blocked write, frees its parameters, and puts the
 speaker's controls back to their defaults.
 
