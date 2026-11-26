@@ -194,6 +194,7 @@ fn suspended(
         Answer::Suspend(at) if at > now => {
             return Ok(Rest::Waiting(at.0.saturating_sub(now.0).unsigned_abs()));
         }
+        Answer::Hold => None,
         Answer::PowerOff => {
             let on_at = ringer.next().map(power_on_at);
             if ringer.power_off() && powered_off(on_at, cable_in, &mut sleep.power, log) {
@@ -464,6 +465,7 @@ pub fn change(before: &Ringer, after: &Ringer) -> Option<String> {
             ringer.volume(),
             ringer.timers().to_vec(),
             ringer.running_until(),
+            ringer.paused(),
         )
     };
     let clock = |time: TimeOfDay| format!("{:02}:{:02}", time.hour(), time.minute());
@@ -473,11 +475,13 @@ pub fn change(before: &Ringer, after: &Ringer) -> Option<String> {
         let timers: Vec<String> = after.timers().iter().map(|&timer| length(timer)).collect();
         let active = after.active().map_or_else(|| "none".to_owned(), clock);
         let power = if after.power_off() { "on" } else { "off" };
-        let running = after
-            .running_until()
-            .map_or_else(|| "none".to_owned(), |ends| ends.0.to_string());
+        let running = match (after.running_until(), after.paused()) {
+            (Some(ends), _) => format!("until {}", ends.0),
+            (None, Some(left)) => format!("paused {}", length(left)),
+            (None, None) => "none".to_owned(),
+        };
         kmsg::line(&format!(
-            "alarms [{}], active {active}, {:?}, power-off {power}, lit {} s, volume {}, timers [{}], running until {running}",
+            "alarms [{}], active {active}, {:?}, power-off {power}, lit {} s, volume {}, timers [{}], running {running}",
             alarms.join(", "),
             after.ring(),
             after.lit_seconds(),
@@ -829,7 +833,7 @@ mod tests {
         let mut ringer = ringer()?;
         ringer.set_timers(vec![Countdown::new(0, seconds)?]);
         ringer.touched(
-            Target::Start,
+            Target::Play(0),
             Screen::Timer,
             0,
             clock.now()?,
@@ -873,7 +877,7 @@ mod tests {
             recovery_marked: false,
             timers: Vec::new(),
             countdown: Countdown::default(),
-            left: None,
+            running: None,
             rung: None,
             volume: None,
         })
@@ -1060,7 +1064,7 @@ mod tests {
         assert_eq!(
             change(&before, &after),
             Some(kmsg::line(
-                "alarms [07:00], active 07:00, Quiet, power-off on, lit 10 s, volume 15, timers [], running until none"
+                "alarms [07:00], active 07:00, Quiet, power-off on, lit 10 s, volume 15, timers [], running none"
             ))
         );
         Ok(())
@@ -1080,7 +1084,7 @@ mod tests {
         assert_eq!(
             change(&before, &after),
             Some(kmsg::line(
-                "alarms [07:00], active none, Quiet, power-off off, lit 10 s, volume 15, timers [], running until none"
+                "alarms [07:00], active none, Quiet, power-off off, lit 10 s, volume 15, timers [], running none"
             ))
         );
         Ok(())
@@ -1139,6 +1143,47 @@ mod tests {
         resting.rest(&clock, &ringer, &dark());
         assert_eq!(resting.offs(), Some([].as_slice()));
         assert_eq!(resting.armed(), Some([ringer.running_until()].as_slice()));
+        assert_eq!(resting.suspends(), Some(1));
+        Ok(())
+    }
+
+    fn paused_at(clock: &FixedClock, seconds: u8) -> Result<Ringer, Box<dyn std::error::Error>> {
+        let mut ringer = running_at(clock, seconds)?;
+        ringer.touched(
+            Target::Pause,
+            Screen::Timer,
+            0,
+            clock.now()?,
+            UtcOffset::UTC,
+        );
+        Ok(ringer)
+    }
+
+    #[test]
+    fn a_paused_timer_is_logged_with_its_time_left() -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(6, 0, 0);
+        let running = running_at(&clock, 45)?;
+        let paused = paused_at(&clock, 45)?;
+        assert_eq!(
+            change(&running, &paused),
+            Some(kmsg::line(
+                "alarms [07:00], active none, Quiet, power-off on, lit 10 s, volume 15, timers [00:45], running paused 00:45"
+            ))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_paused_timer_holds_the_phone_suspended_past_the_window_with_the_rtc_disarmed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = at(19, 37, 30);
+        let ringer = paused_at(&clock, 50)?;
+        assert_eq!(ringer.next(), None);
+        let mut resting = Resting::unplugged();
+        resting.sleep.window.dark(at(19, 30, 0).now()?);
+        resting.rest(&clock, &ringer, &dark());
+        assert_eq!(resting.offs(), Some([].as_slice()));
+        assert_eq!(resting.armed(), Some([None].as_slice()));
         assert_eq!(resting.suspends(), Some(1));
         Ok(())
     }
@@ -1890,7 +1935,7 @@ mod tests {
         assert_eq!(
             change(&started.ringer, &ringer),
             Some(kmsg::line(
-                "alarms [07:00], active none, Quiet, power-off on, lit 30 s, volume 15, timers [], running until none"
+                "alarms [07:00], active none, Quiet, power-off on, lit 30 s, volume 15, timers [], running none"
             ))
         );
         let current = choices(&ringer, berlin()?, WINDOW_SECONDS);
@@ -1918,7 +1963,7 @@ mod tests {
         assert_eq!(
             change(&started.ringer, &ringer),
             Some(kmsg::line(
-                "alarms [07:00], active none, Quiet, power-off on, lit 10 s, volume 13, timers [], running until none"
+                "alarms [07:00], active none, Quiet, power-off on, lit 10 s, volume 13, timers [], running none"
             ))
         );
         let current = choices(&ringer, berlin()?, WINDOW_SECONDS);

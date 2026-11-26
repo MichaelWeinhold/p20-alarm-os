@@ -2479,3 +2479,29 @@ reboot.
 bytes, its volume byte 5; the second kept the version-4 slot, sequence 33. After
 `adb reboot` at 11:15:35 UTC, the first Volume Down on the lit panel showed 4 and logged
 `volume 4` at 40.98 s. The image was left on the phone.
+
+## 2026-11-26 — the timer tab's list and running stages, for issue 111
+
+**`alarmd` at `399aae6` is 648376 bytes**, sha256
+`0220ee94851a748139eb1b07cc05984e2bb2e9b797dd12c30db9336639c06d67`, 10 704 bytes more than
+issue 110's. From TWRP 3.7.0_9-0 it was copied over `/init` on `system`, replacing issue
+110's `709c4f44…9adb`. `init.rom` still hashed `e8e2768e…78ef`, `misc`'s first 32 bytes
+read zero, and the RTC read 1795693099 against the Mac's 1795693103, before `adb reboot`
+at 11:38:24 UTC.
+
+**A saved timer played from the list rings at its end and Power returns to the list.** The
+operator saw the list with each saved timer's play and cross, the running stage's ring
+empty as the time ran down, and the list again after each dismissal. A 00:05 timer played
+at 161.26 s logged `running until 1795693266`; the speaker started at 167.05 s and the
+`Ringing` line followed at 169.11 s, the speaker's start before it as in issue 110. Power
+ended it at 199.53 s. A 00:10 timer played at 210.30 s rang from 220.51 s, and Power at
+222.71 s ended it. Neither was paused before it rang.
+
+**Pause holds the time left, resume continues it, and the X returns to the list.** With
+00:05 and 00:10 removed by their crosses and 01:19 added, its play at 248.68 s logged
+`running until 1795693427`; the pause at 249.74 s logged `running paused 01:18`, the
+resume at 251.51 s `running until 1795693429`, the end moved on by the time held. A second
+pause at 254.57 s logged `running paused 01:15`, and the X at 255.30 s `running none`; the
+operator saw the list at once. `settings saved` came at 273.45 s, before the recovery row's
+reboot. No photos were taken. `misc` was cleared again and the phone rebooted into the
+image at 11:44:17 UTC, where it was left.

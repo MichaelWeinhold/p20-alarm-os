@@ -8,6 +8,7 @@ pub const POWER_ON_LEAD_SECONDS: i64 = 2 * 60;
 pub enum Answer {
     Lit,
     Suspend(UnixSeconds),
+    Hold,
     PowerOff,
 }
 
@@ -47,7 +48,7 @@ impl Window {
             return Answer::Lit;
         };
         let due = match ring {
-            Ring::Quiet => next,
+            Ring::Quiet | Ring::Paused => next,
             Ring::Ringing => Some(now),
             Ring::Held(until) => Some(next.map_or(until, |next| next.min(until))),
         };
@@ -56,6 +57,7 @@ impl Window {
         }
         match due {
             Some(due) if ring != Ring::Quiet => Answer::Suspend(due),
+            None if ring == Ring::Paused => Answer::Hold,
             Some(due) if due.0 <= now.0.saturating_add(POWER_ON_LEAD_SECONDS) => {
                 Answer::Suspend(due)
             }
@@ -204,6 +206,20 @@ mod tests {
         assert_eq!(
             window.answer(at(60), Ring::Held(at(540)), None),
             Answer::Suspend(at(120))
+        );
+    }
+
+    #[test]
+    fn a_paused_timer_holds_it_suspended_past_the_window_without_a_wake() {
+        let window = dark_at(0);
+        assert_eq!(
+            window.answer(at(60), Ring::Paused, None),
+            Answer::Suspend(at(120))
+        );
+        assert_eq!(window.answer(at(120), Ring::Paused, None), Answer::Hold);
+        assert_eq!(
+            window.answer(at(120), Ring::Paused, Some(at(86_400))),
+            Answer::Suspend(at(86_400))
         );
     }
 

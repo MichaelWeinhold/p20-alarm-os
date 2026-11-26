@@ -34,6 +34,9 @@ const MINUTE_UNITS: usize = COLON_UNITS + 2;
 const ARROW_UNITS: usize = 2;
 const ARROW_GAP_UNITS: usize = 2;
 const ICON_UNITS: usize = 7;
+const RING_UNITS: usize = 21;
+const CONTROL_UNITS: usize = 5;
+const CONTROL_GAP_UNITS: usize = 3;
 const BATTERY_UNITS: usize = 14;
 const ICON_EM: usize = 960;
 const BARS: [usize; 3] = [150, 359, 568];
@@ -115,7 +118,7 @@ pub struct Face {
     pub recovery_marked: bool,
     pub timers: Vec<Countdown>,
     pub countdown: Countdown,
-    pub left: Option<Countdown>,
+    pub running: Option<Running>,
     pub rung: Option<Countdown>,
     pub volume: Option<Volume>,
 }
@@ -135,6 +138,19 @@ impl Face {
             && !self.countdown.is_zero()
             && !self.timers.contains(&self.countdown)
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Running {
+    pub left: Countdown,
+    pub length: Countdown,
+    pub paused: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Stage {
+    List,
+    Running,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -177,7 +193,9 @@ pub enum Target {
     Add,
     Entry(usize),
     Remove(usize),
-    Start,
+    Play(usize),
+    Pause,
+    Close,
     PowerOff,
     LitTime,
     Recovery,
@@ -299,6 +317,7 @@ struct Sheet {
     active: (usize, usize),
     left: usize,
     side: usize,
+    far: usize,
     wheel_top: usize,
     list_top: usize,
 }
@@ -321,26 +340,66 @@ impl Sheet {
     }
 }
 
-fn sheet(size: Size, layout: &Layout) -> Option<Sheet> {
+fn sheet(size: Size, layout: &Layout, screen: Screen) -> Option<Sheet> {
     let unit = layout.alarm_unit;
     let clock_top = 3 * layout.unit;
     let active_top = clock_top + DIGIT_HEIGHT_UNITS * layout.unit + 2 * unit;
-    let wheel_top = active_top + (DIGIT_HEIGHT_UNITS + SECTION_GAP_UNITS) * unit;
+    let (wheel_top, columns) = if screen == Screen::Timer {
+        (clock_top, 2)
+    } else {
+        (
+            active_top + (DIGIT_HEIGHT_UNITS + SECTION_GAP_UNITS) * unit,
+            1,
+        )
+    };
     let list_top = wheel_top + (2 * ROW_UNITS + DIGIT_HEIGHT_UNITS + SECTION_GAP_UNITS) * unit;
     let list_bottom = list_top + (SAVED_ALARMS * ROW_UNITS - 1) * unit;
-    let across = (UNITS_ACROSS + SIDE_GAP_UNITS + SIDE_UNITS) * unit;
+    let across = (UNITS_ACROSS + columns * (SIDE_GAP_UNITS + SIDE_UNITS)) * unit;
     if list_bottom > layout.bar_top || across > size.width {
         return None;
     }
     let left = (size.width - across) / 2;
+    let beside = left + (UNITS_ACROSS + SIDE_GAP_UNITS) * unit;
     Some(Sheet {
         unit,
         clock: (layout.clock.0, clock_top),
         active: (layout.alarm.0, active_top),
         left,
-        side: left + (UNITS_ACROSS + SIDE_GAP_UNITS) * unit,
+        side: beside,
+        far: beside + (columns - 1) * (SIDE_UNITS + SIDE_GAP_UNITS) * unit,
         wheel_top,
         list_top,
+    })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Dial {
+    unit: usize,
+    centre: usize,
+    top: usize,
+    controls: usize,
+}
+
+impl Dial {
+    fn close(self) -> usize {
+        self.centre.saturating_sub((CONTROL_UNITS + 2) * self.unit)
+    }
+}
+
+fn dial(size: Size, layout: &Layout) -> Option<Dial> {
+    let unit = layout.unit;
+    let margin = SECTION_GAP_UNITS * unit;
+    let height = (RING_UNITS + CONTROL_GAP_UNITS + CONTROL_UNITS) * unit;
+    let room = layout.bar_top.checked_sub(margin + height)?;
+    if RING_UNITS * unit > size.width {
+        return None;
+    }
+    let top = margin + room / 2;
+    Some(Dial {
+        unit,
+        centre: size.width / 2,
+        top,
+        controls: top + (RING_UNITS + CONTROL_GAP_UNITS) * unit,
     })
 }
 
@@ -618,7 +677,7 @@ fn slider(
         let top = sheet.list_row(index);
         figures(frame, (sheet.left, top), unit, Some(entry), shade(on));
         let mark = if marked == Some(index) { WARNING } else { DIM };
-        symbol(frame, Icon::Close, (sheet.side, top), unit, Ink::Flat(mark));
+        symbol(frame, Icon::Close, (sheet.far, top), unit, Ink::Flat(mark));
     }
 }
 
@@ -648,28 +707,11 @@ fn alarm_screen(frame: &mut Frame, layout: &Layout, sheet: Sheet, face: &Face) {
     );
 }
 
-fn timer_screen(frame: &mut Frame, layout: &Layout, sheet: Sheet, face: &Face) {
-    let unit = sheet.unit;
-    time(frame, sheet.clock, layout.unit, Some(face.time), FOREGROUND);
-    let readout = (sheet.left, sheet.active.1);
-    let control = (sheet.side, sheet.active.1);
-    let left = face.left.map(of_countdown);
-    figures(frame, readout, unit, left, shade(left.is_some()));
-    if left.is_some() {
-        symbol(frame, Icon::Stop, control, unit, Ink::Accent);
-    } else {
-        symbol(
-            frame,
-            Icon::Play,
-            control,
-            unit,
-            accent(!face.countdown.is_zero()),
-        );
-    }
+fn list_stage(frame: &mut Frame, sheet: Sheet, face: &Face) {
     let entries: Vec<_> = face
         .timers
         .iter()
-        .map(|&timer| (of_countdown(timer), timer == face.countdown))
+        .map(|&timer| (of_countdown(timer), true))
         .collect();
     slider(
         frame,
@@ -679,6 +721,79 @@ fn timer_screen(frame: &mut Frame, layout: &Layout, sheet: Sheet, face: &Face) {
         &entries,
         face.marked,
     );
+    for index in 0..entries.len().min(SAVED_TIMERS) {
+        symbol(
+            frame,
+            Icon::Play,
+            (sheet.side, sheet.list_row(index)),
+            sheet.unit,
+            Ink::Accent,
+        );
+    }
+}
+
+fn running_stage(frame: &mut Frame, dial: Dial, running: Running) {
+    let unit = dial.unit;
+    let size = RING_UNITS * unit;
+    let square = Square {
+        centre2: 2 * dial.centre,
+        middle2: 2 * dial.top + size,
+        size,
+    };
+    let left = dial.centre.saturating_sub(size / 2);
+    glyph::ring(square, unit / 2, (1, 1), |x, y, alpha| {
+        frame.blend(x, y, DIM, alpha);
+    });
+    let share = (running.left.total(), running.length.total());
+    glyph::ring(square, unit / 2, share, |x, y, alpha| {
+        let colour = ACCENT.at(
+            x.saturating_sub(left) + y.saturating_sub(dial.top),
+            2 * size,
+        );
+        frame.blend(x, y, colour, alpha);
+    });
+    let figure = unit * 3 / 4;
+    figures(
+        frame,
+        (
+            dial.centre.saturating_sub(UNITS_ACROSS * figure / 2),
+            (dial.top + size / 2).saturating_sub(DIGIT_HEIGHT_UNITS * figure / 2),
+        ),
+        figure,
+        Some(of_countdown(running.left)),
+        FOREGROUND,
+    );
+    let control = CONTROL_UNITS * unit;
+    let middle2 = 2 * dial.controls + control;
+    let icon = if running.paused {
+        Icon::Play
+    } else {
+        Icon::Pause
+    };
+    centred(
+        frame,
+        icon,
+        (2 * dial.centre, middle2),
+        control,
+        Ink::Accent,
+    );
+    if running.paused {
+        centred(
+            frame,
+            Icon::Close,
+            (2 * dial.close(), middle2),
+            control,
+            Ink::Flat(FOREGROUND),
+        );
+    }
+}
+
+fn timer_screen(frame: &mut Frame, layout: &Layout, sheet: Sheet, face: &Face) {
+    match (face.running, dial(frame.size(), layout)) {
+        (Some(running), Some(dial)) => running_stage(frame, dial, running),
+        (Some(_), None) => {}
+        (None, _) => list_stage(frame, sheet, face),
+    }
 }
 
 fn bar(frame: &mut Frame, layout: &Layout, current: Screen) {
@@ -737,7 +852,7 @@ pub fn render(size: Size, face: &Face) -> Frame {
         return frame;
     };
     let digits = if face.ringing { BACKGROUND } else { FOREGROUND };
-    let sheet = sheet(size, &layout);
+    let sheet = sheet(size, &layout, face.screen);
     if face.ringing || (sheet.is_some() && face.screen != Screen::Settings) {
         let status = if face.battery.level == Level::Low {
             WARNING
@@ -812,14 +927,26 @@ fn sheet_target(sheet: Sheet, x: usize, y: usize) -> Target {
         return Target::Wheel(field, row);
     }
     match (0..SAVED_ALARMS).find(|&index| sheet.band(sheet.list_row(index), y)) {
-        Some(index) if side => Target::Remove(index),
+        Some(index) if x + 3 * unit / 2 >= sheet.far => Target::Remove(index),
+        Some(index) if side => Target::Play(index),
         Some(index) => Target::Entry(index),
         None => Target::Blank,
     }
 }
 
+fn dial_target(dial: Dial, x: usize, y: usize) -> Target {
+    let unit = dial.unit;
+    if y + unit < dial.controls || y >= dial.controls + (CONTROL_UNITS + 1) * unit {
+        Target::Blank
+    } else if 2 * x < dial.close() + dial.centre {
+        Target::Close
+    } else {
+        Target::Pause
+    }
+}
+
 #[must_use]
-pub fn target(size: Size, screen: Screen, x: usize, y: usize) -> Target {
+pub fn target(size: Size, screen: Screen, stage: Stage, x: usize, y: usize) -> Target {
     let Some(layout) = layout(size) else {
         return Target::Blank;
     };
@@ -832,8 +959,10 @@ pub fn target(size: Size, screen: Screen, x: usize, y: usize) -> Target {
             Screen::Settings
         });
     }
-    match (screen, sheet(size, &layout)) {
-        (Screen::Timer, Some(sheet)) if sheet.band(sheet.active.1, y) => Target::Start,
+    if (screen, stage) == (Screen::Timer, Stage::Running) {
+        return dial(size, &layout).map_or(Target::Blank, |dial| dial_target(dial, x, y));
+    }
+    match (screen, sheet(size, &layout, screen)) {
         (Screen::Alarm | Screen::Timer, Some(sheet)) => sheet_target(sheet, x, y),
         (Screen::Settings, Some(sheet)) if sheet.band(sheet.setting_row(POWER_OFF_ROW), y) => {
             Target::PowerOff
@@ -965,7 +1094,7 @@ mod tests {
             recovery_marked: false,
             timers: Vec::new(),
             countdown: Countdown::default(),
-            left: None,
+            running: None,
             rung: None,
             volume: None,
         })
@@ -1020,13 +1149,13 @@ mod tests {
             },
         );
         let layout = layout(SHEET).ok_or("no layout")?;
-        let sheet = sheet(SHEET, &layout).ok_or("no sheet")?;
+        let sheet = sheet(SHEET, &layout, Screen::Alarm).ok_or("no sheet")?;
         let across = SIDE_UNITS * sheet.unit;
         let top = sheet.list_row(1);
         let mut turned = false;
         for y in 0..SHEET.height {
             for (x, (&before, &after)) in plain.row(y).iter().zip(marked.row(y)).enumerate() {
-                let inside = (sheet.side..sheet.side + across).contains(&x)
+                let inside = (sheet.far..sheet.far + across).contains(&x)
                     && (top..top + across).contains(&y);
                 if inside && before != BACKGROUND {
                     assert!(blended(before, DIM) && blended(after, WARNING));
@@ -1050,26 +1179,36 @@ mod tests {
         Ok(())
     }
 
-    fn timer(left: Option<Countdown>, ringing: bool) -> Result<Face, Box<dyn std::error::Error>> {
+    fn timer(running: Option<Running>, ringing: bool) -> Result<Face, Box<dyn std::error::Error>> {
         Ok(Face {
             screen: Screen::Timer,
             timers: vec![Countdown::new(3, 0)?, Countdown::new(12, 5)?],
             countdown: Countdown::new(3, 0)?,
-            left,
+            running,
             ..face(Some(0), ringing, charged(80)?)?
         })
     }
 
+    fn running(paused: bool) -> Result<Option<Running>, Box<dyn std::error::Error>> {
+        Ok(Some(Running {
+            left: Countdown::new(1, 7)?,
+            length: Countdown::new(3, 0)?,
+            paused,
+        }))
+    }
+
     #[test]
-    fn the_timer_screen_shows_the_play_the_slider_and_the_saved_timers_as_recorded() -> Outcome {
+    fn the_list_stage_shows_the_slider_and_each_saved_timer_with_a_play_and_a_cross_as_recorded()
+    -> Outcome {
         let frame = render(SHEET, &timer(None, false)?);
         assert_eq!(picture(&frame), include_str!("../testdata/face-timer.txt"));
         Ok(())
     }
 
     #[test]
-    fn a_running_timer_shows_the_time_left_beside_the_stop_as_recorded() -> Outcome {
-        let frame = render(SHEET, &timer(Some(Countdown::new(2, 47)?), false)?);
+    fn the_running_stage_shows_the_time_left_in_a_part_emptied_ring_and_a_pause_as_recorded()
+    -> Outcome {
+        let frame = render(SHEET, &timer(running(false)?, false)?);
         assert_eq!(
             picture(&frame),
             include_str!("../testdata/face-timer-running.txt")
@@ -1078,7 +1217,54 @@ mod tests {
     }
 
     #[test]
-    fn a_zero_countdown_dims_the_play_and_the_add() -> Outcome {
+    fn the_paused_stage_shows_a_resume_and_the_x_as_recorded() -> Outcome {
+        let frame = render(SHEET, &timer(running(true)?, false)?);
+        assert_eq!(
+            picture(&frame),
+            include_str!("../testdata/face-timer-paused.txt")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn the_ring_empties_with_the_time_left() -> Outcome {
+        let accent = |left| -> Result<usize, Box<dyn std::error::Error>> {
+            let shown = Face {
+                running: Some(Running {
+                    left: Countdown::of(left),
+                    length: Countdown::new(3, 0)?,
+                    paused: false,
+                }),
+                ..timer(None, false)?
+            };
+            Ok(lit(&render(PANEL, &shown))
+                .into_iter()
+                .filter(|&(_, y, colour)| y < PANEL.height * 9 / 10 && accented(colour))
+                .count())
+        };
+        let (full, half, none) = (accent(180)?, accent(90)?, accent(0)?);
+        assert!(full > half && half > none);
+        assert!(half.abs_diff(full.midpoint(none)) < full / 20);
+        Ok(())
+    }
+
+    #[test]
+    fn the_running_stage_draws_no_slider_and_no_list() -> Outcome {
+        let frame = render(PANEL, &timer(running(false)?, false)?);
+        let list = render(PANEL, &timer(None, false)?);
+        assert_ne!(frame, list);
+        let layout = layout(PANEL).ok_or("no layout")?;
+        let dial = dial(PANEL, &layout).ok_or("no dial")?;
+        assert!(lit(&frame).iter().all(|&(_, y, _)| {
+            y < layout.symbol.1 + 2 * layout.unit
+                || (dial.top..dial.controls + CONTROL_UNITS * layout.unit).contains(&y)
+                || y >= layout.bar_top
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn a_zero_countdown_dims_the_add() -> Outcome {
         let idle = render(
             SHEET,
             &Face {
@@ -1094,7 +1280,7 @@ mod tests {
             },
         );
         let layout = layout(SHEET).ok_or("no layout")?;
-        let sheet = sheet(SHEET, &layout).ok_or("no sheet")?;
+        let sheet = sheet(SHEET, &layout, Screen::Timer).ok_or("no sheet")?;
         let across = SIDE_UNITS * sheet.unit;
         let shown = |frame: &Frame, top: usize| {
             (top..top + across)
@@ -1102,12 +1288,11 @@ mod tests {
                 .filter(|&colour| colour != BACKGROUND)
                 .collect::<Vec<_>>()
         };
-        for top in [sheet.active.1, sheet.wheel_row(Row::Picked)] {
-            assert_ne!(shown(&idle, top), []);
-            assert!(shown(&idle, top).iter().all(|&colour| accented(colour)));
-            assert_ne!(shown(&zero, top), []);
-            assert!(shown(&zero, top).iter().all(|&colour| blended(colour, DIM)));
-        }
+        let top = sheet.wheel_row(Row::Picked);
+        assert_ne!(shown(&idle, top), []);
+        assert!(shown(&idle, top).iter().all(|&colour| accented(colour)));
+        assert_ne!(shown(&zero, top), []);
+        assert!(shown(&zero, top).iter().all(|&colour| blended(colour, DIM)));
         Ok(())
     }
 
@@ -1163,7 +1348,7 @@ mod tests {
 
     #[test]
     fn a_tap_across_a_settings_row_is_its_setting_and_elsewhere_blank() {
-        let settings = |x, y| target(PANEL, Screen::Settings, x, y);
+        let settings = |x, y| target(PANEL, Screen::Settings, Stage::List, x, y);
         assert_eq!(settings(0, 725), Target::PowerOff);
         assert_eq!(settings(540, 800), Target::PowerOff);
         assert_eq!(settings(1079, 908), Target::PowerOff);
@@ -1176,7 +1361,10 @@ mod tests {
         assert_eq!(settings(540, 724), Target::Blank);
         assert_eq!(settings(540, 1277), Target::Blank);
         assert_eq!(settings(540, 1400), Target::Blank);
-        assert_eq!(target(SMALL, Screen::Settings, 50, 20), Target::Blank);
+        assert_eq!(
+            target(SMALL, Screen::Settings, Stage::List, 50, 20),
+            Target::Blank
+        );
     }
 
     #[test]
@@ -1453,8 +1641,14 @@ mod tests {
         };
         let frame = render(short, &face(Some(0), false, Gauge::UNREAD)?);
         assert_eq!(frame, Frame::filled(short, BACKGROUND));
-        assert_eq!(target(short, Screen::Alarm, 10, 10), Target::Blank);
-        assert_eq!(target(short, Screen::Timer, 10, 10), Target::Blank);
+        assert_eq!(
+            target(short, Screen::Alarm, Stage::List, 10, 10),
+            Target::Blank
+        );
+        assert_eq!(
+            target(short, Screen::Timer, Stage::List, 10, 10),
+            Target::Blank
+        );
         Ok(())
     }
 
@@ -1467,13 +1661,16 @@ mod tests {
         };
         assert_eq!(picture(&frame).len(), picture(&render(SMALL, &timer)).len());
         assert!(lit(&frame).iter().all(|&(_, y, _)| y > SMALL.height / 2));
-        assert_eq!(target(SMALL, Screen::Alarm, 50, 20), Target::Blank);
+        assert_eq!(
+            target(SMALL, Screen::Alarm, Stage::List, 50, 20),
+            Target::Blank
+        );
         Ok(())
     }
 
     #[test]
     fn a_tap_on_a_wheel_picks_its_field_and_row() {
-        let alarm = |x, y| target(PANEL, Screen::Alarm, x, y);
+        let alarm = |x, y| target(PANEL, Screen::Alarm, Stage::List, x, y);
         assert_eq!(alarm(300, 720), Target::Wheel(Field::Left, Row::Above));
         assert_eq!(alarm(423, 800), Target::Wheel(Field::Left, Row::Above));
         assert_eq!(alarm(424, 800), Target::Wheel(Field::Right, Row::Above));
@@ -1485,7 +1682,7 @@ mod tests {
 
     #[test]
     fn a_tap_beside_the_picked_row_adds_and_beside_another_is_blank() {
-        let alarm = |x, y| target(PANEL, Screen::Alarm, x, y);
+        let alarm = |x, y| target(PANEL, Screen::Alarm, Stage::List, x, y);
         assert_eq!(alarm(701, 1000), Target::Add);
         assert_eq!(alarm(1079, 909), Target::Add);
         assert_eq!(alarm(800, 800), Target::Blank);
@@ -1494,7 +1691,7 @@ mod tests {
 
     #[test]
     fn a_tap_on_a_list_row_picks_the_entry_or_its_cross() {
-        let alarm = |x, y| target(PANEL, Screen::Alarm, x, y);
+        let alarm = |x, y| target(PANEL, Screen::Alarm, Stage::List, x, y);
         assert_eq!(alarm(300, 1323), Target::Entry(0));
         assert_eq!(alarm(300, 1506), Target::Entry(0));
         assert_eq!(alarm(300, 1507), Target::Entry(1));
@@ -1505,7 +1702,7 @@ mod tests {
 
     #[test]
     fn a_tap_between_the_parts_of_the_sheet_is_blank() {
-        let alarm = |x, y| target(PANEL, Screen::Alarm, x, y);
+        let alarm = |x, y| target(PANEL, Screen::Alarm, Stage::List, x, y);
         assert_eq!(alarm(540, 300), Target::Blank);
         assert_eq!(alarm(540, 600), Target::Blank);
         assert_eq!(alarm(540, 1300), Target::Blank);
@@ -1516,7 +1713,7 @@ mod tests {
     #[test]
     fn a_tap_on_the_bar_picks_the_tab_in_its_third_on_every_screen() {
         for screen in Screen::ALL {
-            let tap = |x, y| target(PANEL, screen, x, y);
+            let tap = |x, y| target(PANEL, screen, Stage::List, x, y);
             assert_eq!(tap(0, 2279), Target::Tab(Screen::Alarm));
             assert_eq!(tap(359, 2100), Target::Tab(Screen::Alarm));
             assert_eq!(tap(360, 2200), Target::Tab(Screen::Timer));
@@ -1527,25 +1724,44 @@ mod tests {
     }
 
     #[test]
-    fn a_tap_across_the_readout_row_starts_and_the_rest_of_the_timer_screen_is_the_slider() {
-        let timer = |x, y| target(PANEL, Screen::Timer, x, y);
-        assert_eq!(timer(0, 495), Target::Start);
-        assert_eq!(timer(540, 580), Target::Start);
-        assert_eq!(timer(1079, 678), Target::Start);
-        assert_eq!(timer(540, 494), Target::Blank);
-        assert_eq!(timer(540, 679), Target::Blank);
-        for (x, y) in [
-            (300, 720),
-            (600, 1000),
-            (900, 1000),
-            (800, 1200),
-            (300, 1400),
-            (900, 1400),
-            (540, 1300),
-            (540, 300),
-        ] {
-            assert_eq!(timer(x, y), target(PANEL, Screen::Alarm, x, y));
-        }
+    fn a_tap_on_the_list_stage_is_the_slider_a_play_or_a_cross() {
+        let timer = |x, y| target(PANEL, Screen::Timer, Stage::List, x, y);
+        assert_eq!(timer(200, 220), Target::Wheel(Field::Left, Row::Above));
+        assert_eq!(timer(450, 220), Target::Wheel(Field::Right, Row::Above));
+        assert_eq!(timer(200, 400), Target::Wheel(Field::Left, Row::Picked));
+        assert_eq!(timer(450, 678), Target::Wheel(Field::Right, Row::Below));
+        assert_eq!(timer(586, 400), Target::Add);
+        assert_eq!(timer(1079, 311), Target::Add);
+        assert_eq!(timer(700, 220), Target::Blank);
+        assert_eq!(timer(300, 725), Target::Entry(0));
+        assert_eq!(timer(585, 820), Target::Entry(0));
+        assert_eq!(timer(586, 820), Target::Play(0));
+        assert_eq!(timer(815, 908), Target::Play(0));
+        assert_eq!(timer(815, 909), Target::Play(1));
+        assert_eq!(timer(816, 1000), Target::Remove(1));
+        assert_eq!(timer(1079, 1460), Target::Remove(3));
+        assert_eq!(timer(540, 1461), Target::Blank);
+        assert_eq!(timer(540, 100), Target::Blank);
+    }
+
+    #[test]
+    fn a_tap_on_the_running_stage_is_the_x_the_pause_or_blank() {
+        let running = |x, y| target(PANEL, Screen::Timer, Stage::Running, x, y);
+        assert_eq!(running(0, 1506), Target::Close);
+        assert_eq!(running(218, 1667), Target::Close);
+        assert_eq!(running(378, 1827), Target::Close);
+        assert_eq!(running(379, 1506), Target::Pause);
+        assert_eq!(running(540, 1667), Target::Pause);
+        assert_eq!(running(1079, 1827), Target::Pause);
+        assert_eq!(running(540, 1505), Target::Blank);
+        assert_eq!(running(540, 1828), Target::Blank);
+        assert_eq!(running(540, 900), Target::Blank);
+        assert_eq!(running(200, 820), Target::Blank);
+        assert_eq!(running(540, 2200), Target::Tab(Screen::Timer));
+        assert_eq!(
+            target(PANEL, Screen::Alarm, Stage::Running, 300, 1400),
+            Target::Entry(0)
+        );
     }
 
     #[test]
