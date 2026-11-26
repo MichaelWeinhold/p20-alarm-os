@@ -22,7 +22,9 @@ class Subset:
     text: str
 
 
-INTER: Final = Subset("inter-light-figures.ttf", {"wght": 300, "opsz": 32}, "0123456789:%-")
+INTER: Final = Subset(
+    "inter-light.ttf", {"wght": 300, "opsz": 32}, "0123456789:%- ADFMSTWadehilmnorstuy"
+)
 ICONS: Final[Mapping[str, int]] = {
     "alarm": 0xE855,
     "hourglass_empty": 0xE88B,
@@ -42,6 +44,9 @@ ICONS: Final[Mapping[str, int]] = {
     "restart_alt": 0xF053,
     "volume_up": 0xE050,
     "vibration": 0xE62D,
+    "add_circle": 0xE147,
+    "check": 0xE5CA,
+    "delete": 0xE872,
 }
 SYMBOLS: Final = Subset(
     "material-symbols-light-icons.ttf",

@@ -24,6 +24,11 @@ impl Weekdays {
     }
 
     #[must_use]
+    pub fn toggled(self, day: Weekday) -> Self {
+        Self(self.0 ^ day.bit())
+    }
+
+    #[must_use]
     pub fn contains(self, day: Weekday) -> bool {
         self.0 & day.bit() != 0
     }
@@ -198,6 +203,17 @@ mod tests {
         );
         assert_eq!(Weekdays::from_bits(0), Some(Weekdays::NONE));
         assert_eq!(Weekdays::from_bits(0b1000_0000), None);
+    }
+
+    #[test]
+    fn a_toggled_day_turns_on_and_back_off_and_leaves_the_others() {
+        let sunday = Weekdays::WORKDAYS.toggled(Weekday::Sunday);
+        assert!(sunday.contains(Weekday::Sunday) && sunday.contains(Weekday::Monday));
+        assert_eq!(sunday.toggled(Weekday::Sunday), Weekdays::WORKDAYS);
+        assert_eq!(
+            Weekdays::NONE.toggled(Weekday::Friday),
+            Weekdays::NONE.with(Weekday::Friday)
+        );
     }
 
     #[test]

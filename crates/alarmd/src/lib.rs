@@ -1,4 +1,4 @@
-use alarm_core::alarm::{Alarm, Weekdays};
+use alarm_core::alarm::Weekdays;
 use alarm_core::battery::{ChargeLimit, ChargeStep, Gauge, stop_at_limit};
 use std::thread::JoinHandle;
 
@@ -8,11 +8,13 @@ use alarm_core::hardware::{
 };
 use alarm_core::light::Light;
 use alarm_core::ringer::{Ring, Ringer, show};
-use alarm_core::settings::{self, Choices, SetAlarm};
+use alarm_core::settings::{self, Choices};
 use alarm_core::sound::Sound;
 #[cfg(test)]
 use alarm_core::sound::Volume;
-use alarm_core::time::{Countdown, TimeOfDay, UnixSeconds, UtcOffset, seconds_to_next_minute};
+use alarm_core::time::{
+    Countdown, TimeOfDay, UnixSeconds, UtcOffset, Weekday, seconds_to_next_minute,
+};
 use alarm_core::vibration::Vibration;
 use alarm_core::warning::Warning;
 use alarm_core::window::{Answer, WINDOW_SECONDS, Window, power_on_at};
@@ -309,18 +311,7 @@ pub fn choices(ringer: &Ringer, offset: UtcOffset, window_seconds: i64) -> Choic
         offset,
         window_seconds,
         power_off: ringer.power_off(),
-        alarms: ringer
-            .alarms()
-            .iter()
-            .enumerate()
-            .map(|(index, &time)| SetAlarm {
-                alarm: Alarm {
-                    time,
-                    repeat: Weekdays::EVERY_DAY,
-                },
-                armed: ringer.active_index() == Some(index) && ringer.armed(),
-            })
-            .collect(),
+        alarms: ringer.alarms().to_vec(),
         timers: ringer.timers().to_vec(),
         lit_seconds: ringer.lit_seconds(),
         volume: ringer.volume(),
@@ -360,31 +351,16 @@ pub fn restored(
             choices(&Ringer::new(alarm), offset, WINDOW_SECONDS)
         }
     };
-    let armed = loaded
-        .alarms
-        .iter()
-        .find(|set| set.armed)
-        .map(|set| set.alarm.time);
-    let picked = armed
-        .or_else(|| loaded.alarms.first().map(|set| set.alarm.time))
-        .unwrap_or(alarm);
-    let mut ringer = Ringer::listed(
-        loaded.alarms.iter().map(|set| set.alarm.time).collect(),
-        picked,
-    );
+    let mut ringer = Ringer::listed(loaded.alarms.clone());
     ringer.set_power_off(loaded.power_off);
     ringer.set_lit_seconds(loaded.lit_seconds);
     ringer.set_volume(loaded.volume);
     ringer.set_outputs(loaded.outputs);
     ringer.set_timers(loaded.timers.clone());
-    if let Some(armed) = armed {
+    if ringer.alarms().iter().any(|set| set.armed) {
         match clock.now() {
-            Ok(now) => {
-                if let Some(index) = ringer.alarms().iter().position(|&time| time == armed) {
-                    ringer.activate(index, now, loaded.offset);
-                }
-            }
-            Err(error) => log.push(kmsg::failure("arming the saved alarm", &error)),
+            Ok(now) => ringer.rearm(now, loaded.offset),
+            Err(error) => log.push(kmsg::failure("arming the saved alarms", &error)),
         }
     }
     Restored {
@@ -461,6 +437,17 @@ impl<S: Suspend> Suspend for AfterModem<S> {
     }
 }
 
+fn weekdays(repeat: Weekdays) -> String {
+    if repeat.is_empty() {
+        return "once".to_owned();
+    }
+    Weekday::ALL
+        .into_iter()
+        .zip("MTWTFSS".chars())
+        .map(|(day, letter)| if repeat.contains(day) { letter } else { '-' })
+        .collect()
+}
+
 #[must_use]
 pub fn change(before: &Ringer, after: &Ringer) -> Option<String> {
     let state = |ringer: &Ringer| {
@@ -479,18 +466,31 @@ pub fn change(before: &Ringer, after: &Ringer) -> Option<String> {
     };
     let clock = |time: TimeOfDay| format!("{:02}:{:02}", time.hour(), time.minute());
     let length = |timer: Countdown| format!("{:02}:{:02}", timer.minutes(), timer.seconds());
+    let switched = |on: bool| if on { "on" } else { "off" };
     (state(before) != state(after)).then(|| {
-        let alarms: Vec<String> = after.alarms().iter().map(|&time| clock(time)).collect();
+        let alarms: Vec<String> = after
+            .alarms()
+            .iter()
+            .map(|set| {
+                format!(
+                    "{} {} {}",
+                    clock(set.alarm.time),
+                    weekdays(set.alarm.repeat),
+                    switched(set.armed)
+                )
+            })
+            .collect();
         let timers: Vec<String> = after.timers().iter().map(|&timer| length(timer)).collect();
-        let active = after.active().map_or_else(|| "none".to_owned(), clock);
-        let switched = |on: bool| if on { "on" } else { "off" };
+        let next = after
+            .next()
+            .map_or_else(|| "none".to_owned(), |next| next.0.to_string());
         let running = match (after.running_until(), after.paused()) {
             (Some(ends), _) => format!("until {}", ends.0),
             (None, Some(left)) => format!("paused {}", length(left)),
             (None, None) => "none".to_owned(),
         };
         kmsg::line(&format!(
-            "alarms [{}], active {active}, {:?}, power-off {}, lit {} s, volume {}, sound {}, vibration {}, timers [{}], running {running}",
+            "alarms [{}], next {next}, {:?}, power-off {}, lit {} s, volume {}, sound {}, vibration {}, timers [{}], running {running}",
             alarms.join(", "),
             after.ring(),
             switched(after.power_off()),
@@ -505,10 +505,11 @@ pub fn change(before: &Ringer, after: &Ringer) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use alarm_core::alarm::Alarm;
     use alarm_core::battery::{BatteryReading, ChargeStatus, Health, Percent};
     use alarm_core::boot::Boot;
     use alarm_core::face::{
-        Face, Field, Frame, RINGING, Row, Screen, Size, Target, WARNING, render,
+        Face, Field, Frame, Listed, RINGING, Row, Screen, Size, Target, WARNING, render,
     };
     use alarm_core::input::{InputEvent, Key};
     use alarm_core::light::LIT_SECONDS;
@@ -688,7 +689,7 @@ mod tests {
     fn ringing_at(clock: &FixedClock) -> Result<Ringer, Box<dyn std::error::Error>> {
         let mut ringer = ringer()?;
         let before = UnixSeconds(clock.now()?.0 - 60);
-        ringer.touched(Target::Entry(0), Screen::Alarm, 0, before, UtcOffset::UTC);
+        ringer.touched(Target::Switch(0), Screen::Alarm, 0, before, UtcOffset::UTC);
         ringer.tick(clock.now()?, UtcOffset::UTC);
         Ok(ringer)
     }
@@ -861,7 +862,7 @@ mod tests {
     fn armed_at(clock: &FixedClock) -> Result<Ringer, Box<dyn std::error::Error>> {
         let mut ringer = ringer()?;
         ringer.touched(
-            Target::Entry(0),
+            Target::Switch(0),
             Screen::Alarm,
             0,
             clock.now()?,
@@ -881,10 +882,20 @@ mod tests {
     fn face(hour: u8, minute: u8, battery: Gauge) -> Result<Face, TimeError> {
         Ok(Face {
             time: TimeOfDay::new(hour, minute)?,
-            alarms: vec![TimeOfDay::new(ALARM_HOUR, ALARM_MINUTE)?],
-            active: None,
+            weekday: Weekday::Wednesday,
+            day: 11,
+            alarms: vec![Listed {
+                alarm: Alarm {
+                    time: TimeOfDay::new(ALARM_HOUR, ALARM_MINUTE)?,
+                    repeat: Weekdays::EVERY_DAY,
+                },
+                armed: false,
+                until: None,
+            }],
+            until: None,
+            editing: None,
+            rang: None,
             marked: None,
-            picked: TimeOfDay::new(ALARM_HOUR, ALARM_MINUTE)?,
             ringing: false,
             battery,
             screen: Screen::Alarm,
@@ -1036,7 +1047,7 @@ mod tests {
         let mut ringer = ringer()?;
         let before = at(6, 59, 0);
         ringer.touched(
-            Target::Entry(0),
+            Target::Switch(0),
             Screen::Alarm,
             0,
             before.now()?,
@@ -1072,7 +1083,7 @@ mod tests {
         let mut after = before.clone();
         assert_eq!(change(&before, &after), None);
         after.touched(
-            Target::Entry(0),
+            Target::Switch(0),
             Screen::Alarm,
             0,
             at(6, 0, 0).now()?,
@@ -1080,9 +1091,10 @@ mod tests {
         );
         assert_eq!(
             change(&before, &after),
-            Some(kmsg::line(
-                "alarms [07:00], active 07:00, Quiet, power-off on, lit 10 s, volume 15, sound on, vibration on, timers [], running none"
-            ))
+            Some(kmsg::line(&format!(
+                "alarms [07:00 MTWTFSS on], next {}, Quiet, power-off on, lit 10 s, volume 15, sound on, vibration on, timers [], running none",
+                at(7, 0, 0).now()?.0
+            )))
         );
         Ok(())
     }
@@ -1093,7 +1105,7 @@ mod tests {
         let mut after = before.clone();
         after.touched(
             Target::PowerOff,
-            Screen::Alarm,
+            Screen::Settings,
             0,
             at(6, 0, 0).now()?,
             UtcOffset::UTC,
@@ -1101,7 +1113,7 @@ mod tests {
         assert_eq!(
             change(&before, &after),
             Some(kmsg::line(
-                "alarms [07:00], active none, Quiet, power-off off, lit 10 s, volume 15, sound on, vibration on, timers [], running none"
+                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off off, lit 10 s, volume 15, sound on, vibration on, timers [], running none"
             ))
         );
         Ok(())
@@ -1115,7 +1127,7 @@ mod tests {
         assert_eq!(
             change(&before, &started),
             Some(kmsg::line(&format!(
-                "alarms [07:00], active none, Quiet, power-off on, lit 10 s, volume 15, sound on, vibration on, timers [00:45], running until {}",
+                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off on, lit 10 s, volume 15, sound on, vibration on, timers [00:45], running until {}",
                 after(&clock, 45)?.0
             )))
         );
@@ -1184,7 +1196,7 @@ mod tests {
         assert_eq!(
             change(&running, &paused),
             Some(kmsg::line(
-                "alarms [07:00], active none, Quiet, power-off on, lit 10 s, volume 15, sound on, vibration on, timers [00:45], running paused 00:45"
+                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off on, lit 10 s, volume 15, sound on, vibration on, timers [00:45], running paused 00:45"
             ))
         );
         Ok(())
@@ -1206,9 +1218,13 @@ mod tests {
     }
 
     #[test]
-    fn a_moved_slider_is_not_logged() -> Result<(), Box<dyn std::error::Error>> {
+    fn an_alarm_edited_but_not_done_is_not_logged() -> Result<(), Box<dyn std::error::Error>> {
         let before = ringer()?;
         let mut after = before.clone();
+        for target in [Target::Entry(0), Target::Day(Weekday::Monday)] {
+            after.touched(target, Screen::Alarm, 0, at(6, 0, 0).now()?, UtcOffset::UTC);
+            after.lifted();
+        }
         after.touched(
             Target::Wheel(Field::Left, Row::Picked),
             Screen::Alarm,
@@ -1217,40 +1233,55 @@ mod tests {
             UtcOffset::UTC,
         );
         after.dragged(400, 46);
-        assert_ne!(after.picked(), before.picked());
+        assert_ne!(after.editing(), None);
         assert_eq!(change(&before, &after), None);
         Ok(())
     }
 
     #[test]
-    fn every_saved_alarm_is_restored_and_the_armed_one_rings_next()
+    fn every_saved_alarm_is_restored_with_its_days_and_switch_and_the_soonest_rings_next()
     -> Result<(), Box<dyn std::error::Error>> {
         let clock = at(19, 37, 30);
         let mut settings = Ok(FakeSettings::blank());
         let mut started = boot(&mut settings, &clock)?;
         let mut ringer = started.ringer.clone();
         for target in [
+            Target::Add,
             Target::Wheel(Field::Left, Row::Above),
+            Target::Done,
             Target::Add,
-            Target::Wheel(Field::Left, Row::Below),
-            Target::Wheel(Field::Left, Row::Below),
-            Target::Add,
+            Target::Wheel(Field::Left, Row::Above),
+            Target::Wheel(Field::Left, Row::Above),
+            Target::Day(Weekday::Thursday),
+            Target::Done,
+            Target::Switch(0),
         ] {
             ringer.touched(target, Screen::Alarm, 0, clock.now()?, berlin()?);
             ringer.lifted();
         }
-        ringer.touched(Target::Entry(2), Screen::Alarm, 0, clock.now()?, berlin()?);
         let current = choices(&ringer, berlin()?, WINDOW_SECONDS);
-        assert_eq!(current.alarms.iter().filter(|set| set.armed).count(), 1);
+        let shown: Vec<_> = current
+            .alarms
+            .iter()
+            .map(|set| (set.alarm.time.hour(), set.alarm.repeat, set.armed))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                (7, Weekdays::EVERY_DAY, true),
+                (21, Weekdays::NONE, true),
+                (22, Weekdays::NONE.with(Weekday::Thursday), true),
+            ]
+        );
         persisted(&mut settings, &mut started.saved, current);
 
-        let rebooted = boot(&mut settings, &at(20, 0, 0))?;
+        let later = at(19, 40, 0);
+        let rebooted = boot(&mut settings, &later)?;
         assert_eq!(rebooted.ringer.alarms(), ringer.alarms());
         assert_eq!(rebooted.ringer.timers(), []);
-        assert_eq!(rebooted.ringer.active(), ringer.active());
         assert_eq!(
             rebooted.ringer.next(),
-            Some(Alarm::once(TimeOfDay::new(8, 0)?).next_after(at(20, 0, 0).now()?, berlin()?))
+            Some(Alarm::once(TimeOfDay::new(21, 37)?).next_after(later.now()?, berlin()?))
         );
         Ok(())
     }
@@ -1949,7 +1980,7 @@ mod tests {
         assert_eq!(
             change(&started.ringer, &ringer),
             Some(kmsg::line(
-                "alarms [07:00], active none, Quiet, power-off on, lit 10 s, volume 15, sound off, vibration off, timers [], running none"
+                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off on, lit 10 s, volume 15, sound off, vibration off, timers [], running none"
             ))
         );
         let current = choices(&ringer, berlin()?, WINDOW_SECONDS);
@@ -1981,7 +2012,7 @@ mod tests {
         assert_eq!(
             change(&started.ringer, &ringer),
             Some(kmsg::line(
-                "alarms [07:00], active none, Quiet, power-off on, lit 30 s, volume 15, sound on, vibration on, timers [], running none"
+                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off on, lit 30 s, volume 15, sound on, vibration on, timers [], running none"
             ))
         );
         let current = choices(&ringer, berlin()?, WINDOW_SECONDS);
@@ -2009,7 +2040,7 @@ mod tests {
         assert_eq!(
             change(&started.ringer, &ringer),
             Some(kmsg::line(
-                "alarms [07:00], active none, Quiet, power-off on, lit 10 s, volume 13, sound on, vibration on, timers [], running none"
+                "alarms [07:00 MTWTFSS off], next none, Quiet, power-off on, lit 10 s, volume 13, sound on, vibration on, timers [], running none"
             ))
         );
         let current = choices(&ringer, berlin()?, WINDOW_SECONDS);
@@ -2095,7 +2126,7 @@ mod tests {
         assert_eq!(
             faulted.log[1],
             kmsg::failure(
-                "arming the saved alarm",
+                "arming the saved alarms",
                 &HardwareError::Absent("realtime clock")
             )
         );

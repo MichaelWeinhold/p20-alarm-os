@@ -1,7 +1,7 @@
 use ab_glyph_rasterizer::{Point, Rasterizer, point};
 use ttf_parser::{Face, GlyphId, OutlineBuilder, Rect};
 
-const INTER: &[u8] = include_bytes!("../fonts/inter-light-figures.ttf");
+const INTER: &[u8] = include_bytes!("../fonts/inter-light.ttf");
 const SYMBOLS: &[u8] = include_bytes!("../fonts/material-symbols-light-icons.ttf");
 const RING_STEPS: i64 = 360;
 
@@ -25,11 +25,14 @@ pub(crate) enum Icon {
     Restart,
     Volume,
     Vibration,
+    AddCircle,
+    Check,
+    Delete,
 }
 
 impl Icon {
     #[cfg(test)]
-    const ALL: [Self; 18] = [
+    const ALL: [Self; 21] = [
         Self::Alarm,
         Self::Timer,
         Self::Settings,
@@ -48,6 +51,9 @@ impl Icon {
         Self::Restart,
         Self::Volume,
         Self::Vibration,
+        Self::AddCircle,
+        Self::Check,
+        Self::Delete,
     ];
 
     fn code(self) -> char {
@@ -70,6 +76,9 @@ impl Icon {
             Self::Restart => '\u{f053}',
             Self::Volume => '\u{e050}',
             Self::Vibration => '\u{e62d}',
+            Self::AddCircle => '\u{e147}',
+            Self::Check => '\u{e5ca}',
+            Self::Delete => '\u{e872}',
         }
     }
 }
@@ -174,6 +183,68 @@ fn ratio(numerator: i64, denominator: i64) -> Option<f32> {
 
 pub(crate) fn rasterise(character: char, place: Place, mut plot: impl FnMut(usize, usize, u8)) {
     let _ = drawn(character, place, &mut plot);
+}
+
+pub(crate) fn width(line: &str, height: usize) -> usize {
+    measured(line, height).unwrap_or(0)
+}
+
+pub(crate) fn write(
+    line: &str,
+    (left, baseline): (usize, usize),
+    height: usize,
+    mut plot: impl FnMut(usize, usize, u8),
+) {
+    let _ = written(line, (left, baseline), height, &mut plot);
+}
+
+fn measured(line: &str, height: usize) -> Option<usize> {
+    let face = Face::parse(INTER, 0).ok()?;
+    let cap = i64::from(face.capital_height()?);
+    let pen = line
+        .chars()
+        .filter_map(|character| face.glyph_index(character))
+        .filter_map(|id| face.glyph_hor_advance(id))
+        .map(i64::from)
+        .sum::<i64>();
+    usize::try_from((pen * i64::try_from(height).ok()? + cap - 1) / cap).ok()
+}
+
+fn written(
+    line: &str,
+    (left, baseline): (usize, usize),
+    height: usize,
+    plot: &mut impl FnMut(usize, usize, u8),
+) -> Option<()> {
+    let face = Face::parse(INTER, 0).ok()?;
+    let cap = i64::from(face.capital_height()?);
+    let height = i64::try_from(height).ok()?;
+    let left = i64::try_from(left).ok()? * cap;
+    let baseline = i64::try_from(baseline).ok()? * cap;
+    let scale = ratio(height, cap)?;
+    let mut pen = 0;
+    for id in line
+        .chars()
+        .filter_map(|character| face.glyph_index(character))
+    {
+        if let Some(bounds) = face.glyph_bounding_box(id) {
+            let width = i64::from(bounds.x_max) - i64::from(bounds.x_min);
+            let tall = i64::from(bounds.y_max) - i64::from(bounds.y_min);
+            let across = span(
+                left + (pen + i64::from(bounds.x_min)) * height,
+                width * height,
+                cap,
+            )?;
+            let down = span(
+                baseline - i64::from(bounds.y_max) * height,
+                tall * height,
+                cap,
+            )?;
+            traced(&face, id, bounds, (across, down), scale, plot)?;
+        }
+        pen += i64::from(face.glyph_hor_advance(id)?);
+    }
+    Some(())
 }
 
 pub(crate) fn icon(icon: Icon, square: Square, mut plot: impl FnMut(usize, usize, u8)) {
@@ -298,9 +369,9 @@ fn drawn_ring(
 
 #[cfg(test)]
 mod tests {
-    use super::{Align, Icon, Place, Square, icon, rasterise, ring};
+    use super::{Align, Icon, Place, Square, icon, rasterise, ring, width, write};
 
-    const FIGURES: &str = "0123456789:%-";
+    const FIGURES: &str = "0123456789:%-ADFMSTWadehilmnorstuy";
 
     fn place(height: usize, align: Align) -> Place {
         Place {
@@ -333,7 +404,7 @@ mod tests {
 
     #[test]
     fn a_character_outside_the_subset_draws_nothing() {
-        assert_eq!(plotted('A', place(42, Align::Baseline)), Vec::new());
+        assert_eq!(plotted('Q', place(42, Align::Baseline)), Vec::new());
     }
 
     #[test]
@@ -378,6 +449,49 @@ mod tests {
         let pixels = plotted('0', place);
         assert_ne!(pixels, Vec::new());
         assert!(pixels.iter().all(|&(x, y, _)| x < 30 && y < 32));
+    }
+
+    fn written(line: &str, height: usize) -> Vec<(usize, usize, u8)> {
+        let mut found = Vec::new();
+        write(line, (40, 100), height, |x, y, alpha| {
+            if alpha > 0 {
+                found.push((x, y, alpha));
+            }
+        });
+        found
+    }
+
+    #[test]
+    fn a_line_starts_at_its_left_and_stands_on_its_baseline() {
+        let pixels = written("Mon", 30);
+        let left = pixels.iter().map(|&(x, _, _)| x).min();
+        let top = pixels.iter().map(|&(_, y, _)| y).min();
+        let bottom = pixels.iter().map(|&(_, y, _)| y).max();
+        assert_eq!((left, top, bottom), (Some(43), Some(70), Some(100)));
+    }
+
+    #[test]
+    fn a_line_ends_within_its_measured_width() {
+        let pixels = written("Alarm in 11h 42m", 30);
+        let right = pixels.iter().map(|&(x, _, _)| x).max().unwrap_or(0);
+        let measured = width("Alarm in 11h 42m", 30);
+        assert!(
+            right < 40 + measured && right + 6 > 40 + measured,
+            "{right} {measured}"
+        );
+    }
+
+    #[test]
+    fn a_space_moves_the_pen_and_draws_nothing() {
+        assert!(width("M T", 30) > width("MT", 30));
+        assert_eq!(written(" ", 30), Vec::new());
+        assert_eq!(width("", 30), 0);
+    }
+
+    #[test]
+    fn a_character_outside_the_subset_neither_draws_nor_moves_the_pen() {
+        assert_eq!(width("MQ", 30), width("M", 30));
+        assert_eq!(written("MQ", 30), written("M", 30));
     }
 
     fn drawn_icon(shown: Icon, size: usize) -> Vec<(usize, usize, u8)> {
