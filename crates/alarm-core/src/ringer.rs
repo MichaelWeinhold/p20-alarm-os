@@ -336,13 +336,12 @@ impl Ringer {
         let Some(draft) = self.draft.take() else {
             return;
         };
-        let set = SetAlarm {
-            alarm: draft.alarm,
-            armed: true,
-        };
         match draft.index.and_then(|index| self.alarms.get_mut(index)) {
-            Some(saved) => *saved = set,
-            None => self.alarms.push(set),
+            Some(saved) => saved.alarm = draft.alarm,
+            None => self.alarms.push(SetAlarm {
+                alarm: draft.alarm,
+                armed: true,
+            }),
         }
         ordered(&mut self.alarms);
         self.rearm(now, offset);
@@ -2258,6 +2257,27 @@ mod tests {
     }
 
     #[test]
+    fn a_saved_alarm_edited_and_saved_keeps_its_switch() -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(5, 0, 0);
+        let mut ringer = ringer(7, 0)?;
+        drain(
+            &mut FakeInput::with(&[&OPEN_FIRST, &HOUR_ABOVE, &DONE]),
+            &clock,
+            &mut ringer,
+        )?;
+        assert_eq!(ringer.alarms(), [set(8, 0, Weekdays::EVERY_DAY, false)?]);
+        assert_eq!(ringer.next(), None);
+        drain(
+            &mut FakeInput::with(&[&FIRST, &OPEN_FIRST, &HOUR_ABOVE, &DONE]),
+            &clock,
+            &mut ringer,
+        )?;
+        assert_eq!(ringer.alarms(), [set(9, 0, Weekdays::EVERY_DAY, true)?]);
+        assert_eq!(ringer.next(), Some(FakeClock::at(9, 0, 0).now()?));
+        Ok(())
+    }
+
+    #[test]
     fn no_sixth_alarm_is_made_and_a_duplicate_is_merged_into_one()
     -> Result<(), Box<dyn std::error::Error>> {
         let clock = FakeClock::at(7, 0, 0);
@@ -2296,7 +2316,7 @@ mod tests {
     }
 
     #[test]
-    fn an_opened_alarm_takes_new_days_and_a_new_time_and_is_armed_when_done()
+    fn an_opened_alarm_takes_new_days_and_a_new_time_when_done()
     -> Result<(), Box<dyn std::error::Error>> {
         let clock = FakeClock::at(5, 0, 0);
         let mut ringer = Ringer::listed(daily(&[(6, 0), (9, 0)])?);
@@ -2316,11 +2336,11 @@ mod tests {
         assert_eq!(
             ringer.alarms(),
             [
-                set(7, 0, only(Weekday::Sunday), true)?,
+                set(7, 0, only(Weekday::Sunday), false)?,
                 set(9, 0, Weekdays::EVERY_DAY, false)?
             ]
         );
-        assert_eq!(ringer.next(), Some(FakeClock::at(4 * 24 + 7, 0, 0).now()?));
+        assert_eq!(ringer.next(), None);
         Ok(())
     }
 
