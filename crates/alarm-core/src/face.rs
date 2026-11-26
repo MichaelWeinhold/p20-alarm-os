@@ -2,7 +2,7 @@ use crate::alarm::{Alarm, Weekdays};
 use crate::battery::{Gauge, Level};
 use crate::glyph::{self, Align, Icon, Place, Square};
 use crate::ringer::Outputs;
-use crate::sound::Volume;
+use crate::sound::{SoundName, Volume};
 use crate::time::{Countdown, SECONDS_PER_DAY, TimeOfDay, Weekday};
 
 pub const BACKGROUND: Colour = Colour(0x00_0000);
@@ -61,8 +61,11 @@ pub const SAVED_TIMERS: usize = 4;
 const POWER_OFF_ROW: usize = 0;
 const LIT_ROW: usize = 1;
 const SOUND_ROW: usize = 2;
-const VIBRATION_ROW: usize = 3;
-const RECOVERY_ROW: usize = 4;
+const SOUND_NAME_ROW: usize = 3;
+const VIBRATION_ROW: usize = 4;
+const RECOVERY_ROW: usize = 5;
+const NAME_UNITS: usize = 3;
+pub const SOUNDS_SHOWN: usize = 6;
 const TIME_FIELDS: [Field; 2] = [Field::Hours, Field::Minutes];
 const COUNTDOWN_FIELDS: [Field; 3] = [Field::Hours, Field::Minutes, Field::Seconds];
 
@@ -144,6 +147,15 @@ pub struct Face {
     pub running: Option<Running>,
     pub rung: Option<Countdown>,
     pub volume: Option<Volume>,
+    pub sound: Option<SoundName>,
+    pub listing: Option<Listing>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Listing {
+    pub sounds: Vec<SoundName>,
+    pub chosen: Option<usize>,
+    pub more: bool,
 }
 
 impl Face {
@@ -170,6 +182,7 @@ pub enum Stage {
     List,
     Running,
     Editing,
+    Choosing,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -223,6 +236,9 @@ pub enum Target {
     PowerOff,
     LitTime,
     Sound,
+    SoundList,
+    Choose(usize),
+    More,
     Vibration,
     Recovery,
     Tab(Screen),
@@ -791,6 +807,19 @@ fn settings_screen(frame: &mut Frame, sheet: Sheet, face: &Face) {
         symbol(frame, icon, (sheet.left, top), unit, Ink::Flat(FOREGROUND));
         switch(frame, (right, top), unit, on);
     }
+    let top = sheet.setting_row(SOUND_NAME_ROW);
+    let (shown, colour) = face
+        .sound
+        .as_ref()
+        .map_or(("None", DIM), |sound| (sound.stem(), FOREGROUND));
+    name(frame, sheet, top, shown, colour);
+    symbol(
+        frame,
+        Icon::Down,
+        (right - ICON_UNITS * unit, top),
+        unit,
+        Ink::Flat(FOREGROUND),
+    );
     let top = sheet.setting_row(RECOVERY_ROW);
     let ink = Ink::Flat(if face.recovery_marked {
         WARNING
@@ -805,6 +834,65 @@ fn settings_screen(frame: &mut Frame, sheet: Sheet, face: &Face) {
         unit,
         ink,
     );
+}
+
+fn listing_screen(frame: &mut Frame, sheet: Sheet, listing: &Listing) {
+    let unit = sheet.unit;
+    let right = sheet.side + SIDE_UNITS * unit;
+    let top = sheet.setting_row(0);
+    symbol(
+        frame,
+        Icon::Close,
+        (sheet.left, top),
+        unit,
+        Ink::Flat(FOREGROUND),
+    );
+    if listing.more {
+        symbol(
+            frame,
+            Icon::Down,
+            (right - ICON_UNITS * unit, top),
+            unit,
+            Ink::Flat(FOREGROUND),
+        );
+    }
+    for (index, sound) in listing.sounds.iter().take(SOUNDS_SHOWN).enumerate() {
+        let top = sheet.setting_row(index + 1);
+        name(frame, sheet, top, sound.stem(), FOREGROUND);
+        if listing.chosen == Some(index) {
+            symbol(
+                frame,
+                Icon::Check,
+                (right - ICON_UNITS * unit, top),
+                unit,
+                Ink::Accent,
+            );
+        }
+    }
+}
+
+fn name(frame: &mut Frame, sheet: Sheet, top: usize, text: &str, colour: Colour) {
+    let unit = sheet.unit;
+    let height = NAME_UNITS * unit;
+    let room = sheet.side.saturating_sub(sheet.left + unit);
+    line(
+        frame,
+        fitted(text, height, room),
+        (
+            sheet.left,
+            top + (DIGIT_HEIGHT_UNITS + NAME_UNITS) * unit / 2,
+        ),
+        height,
+        colour,
+    );
+}
+
+fn fitted(text: &str, height: usize, room: usize) -> &str {
+    (0..=text.len())
+        .rev()
+        .filter_map(|end| text.get(..end))
+        .find(|shown| glyph::width(shown, height) <= room)
+        .unwrap_or("")
 }
 
 fn wheels(frame: &mut Frame, sheet: Sheet, picked: &[u8], figure: usize) {
@@ -1323,7 +1411,10 @@ pub fn render(size: Size, face: &Face) -> Frame {
         }
         (Screen::Settings, _) => {
             if let Some(sheet) = sheet(size, &layout, Arrangement::Rows) {
-                settings_screen(&mut frame, sheet, face);
+                match &face.listing {
+                    Some(listing) => listing_screen(&mut frame, sheet, listing),
+                    None => settings_screen(&mut frame, sheet, face),
+                }
             }
         }
     }
@@ -1424,6 +1515,19 @@ fn dial_target(dial: Dial, x: usize, y: usize) -> Target {
     }
 }
 
+fn listing_target(sheet: Sheet, x: usize, y: usize) -> Target {
+    if sheet.band(sheet.setting_row(0), y) {
+        return if x >= sheet.side {
+            Target::More
+        } else {
+            Target::Close
+        };
+    }
+    (0..SOUNDS_SHOWN)
+        .find(|&index| sheet.band(sheet.setting_row(index + 1), y))
+        .map_or(Target::Blank, Target::Choose)
+}
+
 #[must_use]
 pub fn target(size: Size, screen: Screen, stage: Stage, x: usize, y: usize) -> Target {
     let Some(layout) = layout(size) else {
@@ -1458,6 +1562,10 @@ pub fn target(size: Size, screen: Screen, stage: Stage, x: usize, y: usize) -> T
             return sheet(size, &layout, Arrangement::Picker)
                 .map_or(Target::Blank, |sheet| sheet_target(sheet, x, y));
         }
+        (Screen::Settings, Stage::Choosing) => {
+            return sheet(size, &layout, Arrangement::Rows)
+                .map_or(Target::Blank, |sheet| listing_target(sheet, x, y));
+        }
         (Screen::Settings, _) => {}
     }
     match (screen, sheet(size, &layout, Arrangement::Rows)) {
@@ -1469,6 +1577,9 @@ pub fn target(size: Size, screen: Screen, stage: Stage, x: usize, y: usize) -> T
         }
         (Screen::Settings, Some(sheet)) if sheet.band(sheet.setting_row(SOUND_ROW), y) => {
             Target::Sound
+        }
+        (Screen::Settings, Some(sheet)) if sheet.band(sheet.setting_row(SOUND_NAME_ROW), y) => {
+            Target::SoundList
         }
         (Screen::Settings, Some(sheet)) if sheet.band(sheet.setting_row(VIBRATION_ROW), y) => {
             Target::Vibration
@@ -1651,6 +1762,8 @@ mod tests {
             running: None,
             rung: None,
             volume: None,
+            sound: SoundName::new("ringtone.wav"),
+            listing: None,
         })
     }
 
@@ -1954,11 +2067,12 @@ mod tests {
     #[test]
     fn the_settings_screen_shows_the_toggles_the_lit_time_and_the_recovery_row_as_recorded()
     -> Outcome {
-        for (power_off, lit_seconds, (sound, vibration), recovery_marked, recorded) in [
+        for (power_off, lit_seconds, (sound, vibration), name, recovery_marked, recorded) in [
             (
                 true,
                 10,
                 (true, true),
+                SoundName::new("ringtone.wav"),
                 false,
                 include_str!("../testdata/face-settings.txt"),
             ),
@@ -1966,6 +2080,7 @@ mod tests {
                 false,
                 300,
                 (false, true),
+                None,
                 false,
                 include_str!("../testdata/face-settings-stays.txt"),
             ),
@@ -1973,6 +2088,7 @@ mod tests {
                 true,
                 10,
                 (true, false),
+                SoundName::new("Carbon.wav"),
                 true,
                 include_str!("../testdata/face-settings-recovery.txt"),
             ),
@@ -1982,12 +2098,49 @@ mod tests {
                 power_off,
                 lit_seconds,
                 outputs: Outputs { sound, vibration },
+                sound: name,
                 recovery_marked,
                 ..face(true, false, charged(80)?)?
             };
             assert_eq!(picture(&render(SHEET, &settings)), recorded);
         }
         Ok(())
+    }
+
+    #[test]
+    fn the_sound_list_shows_its_page_of_names_the_chosen_one_checked_as_recorded() -> Outcome {
+        let sounds = ["Argon.wav", "Carbon.wav", "ringtone.wav"]
+            .into_iter()
+            .filter_map(SoundName::new)
+            .collect();
+        for (more, recorded) in [
+            (false, include_str!("../testdata/face-settings-sounds.txt")),
+            (
+                true,
+                include_str!("../testdata/face-settings-sounds-more.txt"),
+            ),
+        ] {
+            let listing = Face {
+                screen: Screen::Settings,
+                listing: Some(Listing {
+                    sounds: Vec::clone(&sounds),
+                    chosen: Some(1),
+                    more,
+                }),
+                ..face(true, false, charged(80)?)?
+            };
+            assert_eq!(picture(&render(SHEET, &listing)), recorded);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_name_too_wide_for_its_row_is_cut_to_what_fits() {
+        let height = 30;
+        let room = glyph::width("Carbon", height);
+        assert_eq!(fitted("Carbon", height, room), "Carbon");
+        assert_eq!(fitted("CarbonCarbon", height, room), "Carbon");
+        assert_eq!(fitted("Carbon", height, 0), "");
     }
 
     #[test]
@@ -2002,19 +2155,38 @@ mod tests {
         assert_eq!(settings(0, 1093), Target::Sound);
         assert_eq!(settings(540, 1180), Target::Sound);
         assert_eq!(settings(1079, 1276), Target::Sound);
-        assert_eq!(settings(0, 1277), Target::Vibration);
-        assert_eq!(settings(540, 1364), Target::Vibration);
-        assert_eq!(settings(1079, 1460), Target::Vibration);
-        assert_eq!(settings(0, 1461), Target::Recovery);
-        assert_eq!(settings(540, 1548), Target::Recovery);
-        assert_eq!(settings(1079, 1644), Target::Recovery);
+        assert_eq!(settings(0, 1277), Target::SoundList);
+        assert_eq!(settings(540, 1364), Target::SoundList);
+        assert_eq!(settings(1079, 1460), Target::SoundList);
+        assert_eq!(settings(0, 1461), Target::Vibration);
+        assert_eq!(settings(540, 1548), Target::Vibration);
+        assert_eq!(settings(1079, 1644), Target::Vibration);
+        assert_eq!(settings(0, 1645), Target::Recovery);
+        assert_eq!(settings(540, 1732), Target::Recovery);
+        assert_eq!(settings(1079, 1828), Target::Recovery);
         assert_eq!(settings(540, 724), Target::Blank);
-        assert_eq!(settings(540, 1645), Target::Blank);
-        assert_eq!(settings(540, 1800), Target::Blank);
+        assert_eq!(settings(540, 1829), Target::Blank);
+        assert_eq!(settings(540, 1950), Target::Blank);
         assert_eq!(
             target(SMALL, Screen::Settings, Stage::List, 50, 20),
             Target::Blank
         );
+    }
+
+    #[test]
+    fn a_tap_on_the_sound_list_is_close_or_more_on_its_first_row_and_a_name_below() {
+        let listing = |x, y| target(PANEL, Screen::Settings, Stage::Choosing, x, y);
+        assert_eq!(listing(0, 725), Target::Close);
+        assert_eq!(listing(500, 908), Target::Close);
+        assert_eq!(listing(1079, 725), Target::More);
+        assert_eq!(listing(540, 1000), Target::Choose(0));
+        assert_eq!(listing(1079, 1276), Target::Choose(1));
+        assert_eq!(listing(0, 1828), Target::Choose(4));
+        assert_eq!(listing(540, 1829), Target::Choose(5));
+        assert_eq!(listing(1079, 2012), Target::Choose(5));
+        assert_eq!(listing(540, 724), Target::Blank);
+        assert_eq!(listing(540, 2013), Target::Blank);
+        assert_eq!(listing(900, 2200), Target::Tab(Screen::Settings));
     }
 
     #[test]

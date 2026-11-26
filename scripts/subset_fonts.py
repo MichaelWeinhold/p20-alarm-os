@@ -23,7 +23,9 @@ class Subset:
 
 
 INTER: Final = Subset(
-    "inter-light.ttf", {"wght": 300, "opsz": 32}, "0123456789:%- ADFMSTWadehilmnorstuy"
+    "inter-light.ttf",
+    {"wght": 300, "opsz": 32},
+    "0123456789:%-._ ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
 )
 ICONS: Final[Mapping[str, int]] = {
     "alarm": 0xE855,

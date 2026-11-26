@@ -97,6 +97,10 @@ each alarm's days and how long until it rings — so `ADFMSTWadehilmnorstuy` and
 join the subset, renamed `inter-light.ttf`, 5 024 bytes. A line is laid out by the glyphs'
 advance widths with no kerning, which leaves `fontdue`'s reopening condition unmet.
 
+**Amended by issue 86**: the settings screen writes the chosen sound's file name, so every
+letter, `.` and `_` join the subset, 7 908 bytes. A name too wide for its row is cut at
+the last character that fits.
+
 ### D3. The icons are Material Symbols Outlined, drawn the same way
 
 The variable Material Symbols Outlined font is instanced at `FILL=0`, `GRAD=0`, `opsz=48`

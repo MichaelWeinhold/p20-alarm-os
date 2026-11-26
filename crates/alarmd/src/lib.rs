@@ -4,7 +4,7 @@ use std::thread::JoinHandle;
 
 use alarm_core::hardware::{
     Battery, BootReason, Clock, Display, HardwareError, Indicator, Modem, PowerOff, Recovery,
-    Settings, Speaker, Suspend, Vibrator, WakeAlarm,
+    Settings, Sounds, Speaker, Suspend, Vibrator, WakeAlarm,
 };
 use alarm_core::light::Light;
 use alarm_core::ringer::{Ring, Ringer, show};
@@ -339,6 +339,18 @@ pub struct Restored {
     pub log: Vec<String>,
 }
 
+#[must_use]
+pub fn sounds_listed(sounds: &impl Sounds, ringer: &mut Ringer) -> Vec<String> {
+    match sounds.list() {
+        Ok(listed) => {
+            let line = kmsg::line(&format!("{} alarm sounds listed", listed.len()));
+            ringer.set_sounds(listed);
+            vec![line]
+        }
+        Err(error) => vec![kmsg::failure("listing the alarm sounds", &error)],
+    }
+}
+
 pub fn restored(
     settings: &mut Result<impl Settings, HardwareError>,
     clock: &impl Clock,
@@ -534,6 +546,7 @@ mod tests {
     use alarm_core::face::{
         BACKGROUND, Face, Field, Frame, Listed, Row, Screen, Size, Target, WARNING, render,
     };
+    use alarm_core::hardware::Sounds;
     use alarm_core::input::{InputEvent, Key};
     use alarm_core::light::LIT_SECONDS;
     use alarm_core::ringer::Outputs;
@@ -959,6 +972,8 @@ mod tests {
             running: None,
             rung: None,
             volume: None,
+            sound: None,
+            listing: None,
         })
     }
 
@@ -2625,6 +2640,40 @@ mod tests {
         let speaker = buzz.speaker.as_ref().map_err(Clone::clone)?;
         assert_eq!(speaker.loads, ["ringtone.wav", "Carbon.wav"]);
         assert_eq!(speaker.starts, 0);
+        Ok(())
+    }
+
+    struct FakeSounds(Result<Vec<SoundName>, HardwareError>);
+
+    impl Sounds for FakeSounds {
+        fn list(&self) -> Result<Vec<SoundName>, HardwareError> {
+            self.0.clone()
+        }
+    }
+
+    #[test]
+    fn the_alarm_sounds_are_listed_into_the_ringer_and_counted_in_the_log()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut ringer = ringer()?;
+        let listed = ["ringtone.wav", "Carbon.wav"]
+            .into_iter()
+            .filter_map(SoundName::new)
+            .collect();
+        let log = sounds_listed(&FakeSounds(Ok(listed)), &mut ringer);
+        assert_eq!(log, [kmsg::line("2 alarm sounds listed")]);
+        let shown: Vec<&str> = ringer.sounds().iter().map(SoundName::as_str).collect();
+        assert_eq!(shown, ["Carbon.wav", "ringtone.wav"]);
+        Ok(())
+    }
+
+    #[test]
+    fn a_directory_that_does_not_list_is_logged_and_leaves_the_list_empty()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut ringer = ringer()?;
+        let absent = HardwareError::Absent("alarm sound");
+        let log = sounds_listed(&FakeSounds(Err(absent.clone())), &mut ringer);
+        assert_eq!(log, [kmsg::failure("listing the alarm sounds", &absent)]);
+        assert_eq!(ringer.sounds(), []);
         Ok(())
     }
 

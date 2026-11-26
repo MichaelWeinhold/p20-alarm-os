@@ -22,7 +22,7 @@ use pid1::kmsg;
 use pid1::linux::{into_recovery, mounted};
 use power::Cmdline;
 use power::linux::{PoweroffAlarm, RecoveryReboot};
-use speaker::linux::AlsaSpeaker;
+use speaker::linux::{AlarmSounds, AlsaSpeaker};
 use storage::Partition;
 use suspend::{SysfsSuspend, SysfsWakeAlarm};
 use vibrator::LedVibrator;
@@ -30,7 +30,7 @@ use vibrator::LedVibrator;
 use crate::{
     ALARM_HOUR, ALARM_MINUTE, AfterModem, BRIGHTNESS, Booted, Buzz, LOCAL_OFFSET_SECONDS, Lamp,
     Restored, Sleep, booted, cable_in, change, choices, minute, modem_booted, persisted, pulse,
-    recover, rest, restored, warned,
+    recover, rest, restored, sounds_listed, warned,
 };
 
 const FIRMWARE_POLL: Duration = Duration::from_millis(250);
@@ -119,7 +119,9 @@ fn restoring(log: &mut Option<File>) -> (Result<Partition, HardwareError>, Resto
         }
     };
     let mut settings = Partition::open();
-    let restored = restored(&mut settings, &SystemClock, alarm, offset);
+    let mut restored = restored(&mut settings, &SystemClock, alarm, offset);
+    let listed = sounds_listed(&AlarmSounds, &mut restored.ringer);
+    restored.log.extend(listed);
     for line in &restored.log {
         logged(log, line);
     }
