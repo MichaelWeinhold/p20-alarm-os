@@ -2,7 +2,35 @@ use crate::hardware::{HardwareError, Speaker};
 use crate::ringer::Ring;
 
 pub const UNITY_GAIN: u32 = 1 << 16;
+pub const LONGEST_NAME: usize = 64;
+pub const NAME_SUFFIX: &str = ".wav";
 const STEP_GAIN: u32 = 46_396;
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SoundName(String);
+
+impl SoundName {
+    #[must_use]
+    pub fn new(name: &str) -> Option<Self> {
+        let stem = name.strip_suffix(NAME_SUFFIX)?;
+        let named = name.len() <= LONGEST_NAME
+            && stem.starts_with(|first: char| first.is_ascii_alphanumeric())
+            && stem
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'));
+        named.then(|| Self(name.to_owned()))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    #[must_use]
+    pub fn stem(&self) -> &str {
+        self.0.strip_suffix(NAME_SUFFIX).unwrap_or(&self.0)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Volume(u8);
@@ -261,6 +289,47 @@ mod tests {
             ]
         );
         Ok(())
+    }
+
+    #[test]
+    fn a_sound_name_is_a_plain_wav_file_name_of_at_most_sixty_four_bytes() {
+        let longest = format!("{}.wav", "a".repeat(LONGEST_NAME - 4));
+        for good in [
+            "ringtone.wav",
+            "Carbon.wav",
+            "a.wav",
+            "0_x-y.z.wav",
+            &longest,
+        ] {
+            assert_eq!(
+                SoundName::new(good).map(|name| name.0),
+                Some(good.to_owned())
+            );
+        }
+        let longer = format!("a{longest}");
+        for bad in [
+            "",
+            ".wav",
+            "ringtone",
+            "ringtone.WAV",
+            "ringtone.ogg",
+            ".hidden.wav",
+            "-a.wav",
+            "a b.wav",
+            "a/b.wav",
+            "../a.wav",
+            "ä.wav",
+            &longer,
+        ] {
+            assert_eq!(SoundName::new(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_sound_name_shows_without_its_suffix() {
+        let name = SoundName::new("Carbon.wav");
+        assert_eq!(name.as_ref().map(SoundName::stem), Some("Carbon"));
+        assert_eq!(name.as_ref().map(SoundName::as_str), Some("Carbon.wav"));
     }
 
     #[test]

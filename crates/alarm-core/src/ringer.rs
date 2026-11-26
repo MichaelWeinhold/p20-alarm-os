@@ -8,7 +8,7 @@ use crate::hardware::{Clock, Display, HardwareError, Input};
 use crate::input::{InputEvent, Key};
 use crate::light::{LIT_SECONDS, Light, next_lit_seconds};
 use crate::settings::SetAlarm;
-use crate::sound::Volume;
+use crate::sound::{SoundName, Volume};
 use crate::time::{Countdown, TimeOfDay, UnixSeconds, UtcOffset, Weekday, day_of_month, local_day};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -94,6 +94,7 @@ pub struct Ringer {
     lit_seconds: i64,
     volume: Volume,
     outputs: Outputs,
+    sound: Option<SoundName>,
     recovery_marked: bool,
     recovery: bool,
     timers: Vec<Countdown>,
@@ -153,6 +154,7 @@ impl Ringer {
             lit_seconds: LIT_SECONDS,
             volume: Volume::LOUDEST,
             outputs: Outputs::BOTH,
+            sound: None,
             recovery_marked: false,
             recovery: false,
             timers: Vec::new(),
@@ -257,6 +259,15 @@ impl Ringer {
 
     pub fn set_outputs(&mut self, outputs: Outputs) {
         self.outputs = outputs;
+    }
+
+    #[must_use]
+    pub fn sound(&self) -> Option<&SoundName> {
+        self.sound.as_ref()
+    }
+
+    pub fn set_sound(&mut self, sound: Option<SoundName>) {
+        self.sound = sound;
     }
 
     #[must_use]

@@ -2,19 +2,21 @@ use crate::alarm::{Alarm, Weekdays};
 use crate::hardware::{HardwareError, Settings};
 use crate::light::{LIT_CHOICES, LIT_SECONDS};
 use crate::ringer::Outputs;
-use crate::sound::Volume;
+use crate::sound::{LONGEST_NAME, SoundName, Volume};
 use crate::time::{Countdown, TimeOfDay, UtcOffset};
 
 pub const RECORD_BYTES: usize = 2 * SLOT_BYTES;
 pub const SLOT_BYTES: usize = 4096;
 pub const MAGIC: [u8; 8] = *b"P20ALRM\0";
-pub const VERSION: u32 = 7;
+pub const VERSION: u32 = 8;
 pub const FIRST_VERSION: u32 = 1;
 const UNTIMED_VERSION: u32 = 2;
 const UNLIT_VERSION: u32 = 3;
 const UNVOLUMED_VERSION: u32 = 4;
 const UNTOGGLED_VERSION: u32 = 5;
 const MINUTE_TIMED_VERSION: u32 = 6;
+const UNNAMED_VERSION: u32 = 7;
+pub const PLAYED_BEFORE: &str = "ringtone.wav";
 pub const LARGEST_PAYLOAD: usize = SLOT_BYTES - HEADER_BYTES - CRC_BYTES;
 
 const HEADER_BYTES: usize = 24;
@@ -66,6 +68,7 @@ pub struct Choices {
     pub lit_seconds: i64,
     pub volume: Volume,
     pub outputs: Outputs,
+    pub sound: Option<SoundName>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -119,7 +122,8 @@ fn payload(choices: &Choices) -> Result<Vec<u8>, HardwareError> {
             + 1
             + TIMER_BYTES * choices.timers.len()
             + LIT_BYTES
-            + 3,
+            + 4
+            + LONGEST_NAME,
     );
     bytes.extend_from_slice(&offset.to_le_bytes());
     bytes.extend_from_slice(&window.to_le_bytes());
@@ -141,6 +145,13 @@ fn payload(choices: &Choices) -> Result<Vec<u8>, HardwareError> {
     bytes.push(choices.volume.level());
     bytes.push(u8::from(choices.outputs.sound));
     bytes.push(u8::from(choices.outputs.vibration));
+    let name = choices.sound.as_ref().map_or("", SoundName::as_str);
+    let length = u8::try_from(name.len())
+        .ok()
+        .filter(|_| name.len() <= LONGEST_NAME)
+        .ok_or_else(|| refused(format!("a sound name of {} bytes", name.len())))?;
+    bytes.push(length);
+    bytes.extend_from_slice(name.as_bytes());
     Ok(bytes)
 }
 
@@ -272,6 +283,18 @@ fn choices(payload: &[u8], version: u32) -> Option<Choices> {
         };
         (outputs, rest)
     };
+    let (sound, rest) = if version <= UNNAMED_VERSION {
+        (Some(SoundName::new(PLAYED_BEFORE)?), rest)
+    } else {
+        let (&length, rest) = rest.split_first()?;
+        let (name, rest) = rest.split_at_checked(usize::from(length))?;
+        let sound = if name.is_empty() {
+            None
+        } else {
+            Some(SoundName::new(std::str::from_utf8(name).ok()?)?)
+        };
+        (sound, rest)
+    };
     if !rest.is_empty() {
         return None;
     }
@@ -284,6 +307,7 @@ fn choices(payload: &[u8], version: u32) -> Option<Choices> {
         lit_seconds,
         volume,
         outputs,
+        sound,
     })
 }
 
@@ -412,13 +436,21 @@ mod tests {
                 sound: false,
                 vibration: true,
             },
+            sound: SoundName::new("Carbon.wav"),
+        })
+    }
+
+    fn unnamed(hour: u8, minute: u8) -> Result<Choices, TimeError> {
+        Ok(Choices {
+            sound: SoundName::new(PLAYED_BEFORE),
+            ..choices_at(hour, minute)?
         })
     }
 
     fn untoggled(hour: u8, minute: u8) -> Result<Choices, TimeError> {
         Ok(Choices {
             outputs: Outputs::BOTH,
-            ..choices_at(hour, minute)?
+            ..unnamed(hour, minute)?
         })
     }
 
@@ -454,18 +486,19 @@ mod tests {
         let choices = choices_at(6, 45)?;
         let slot = encode(&choices, 7)?;
         assert_eq!(&slot[..8], b"P20ALRM\0");
-        assert_eq!(slot[8..12], 7_u32.to_le_bytes());
-        assert_eq!(slot[12..16], 23_u32.to_le_bytes());
+        assert_eq!(slot[8..12], 8_u32.to_le_bytes());
+        assert_eq!(slot[12..16], 34_u32.to_le_bytes());
         assert_eq!(slot[16..24], 7_u64.to_le_bytes());
         assert_eq!(
-            slot[24..47],
+            slot[24..48],
             [
                 0x10, 0x0e, 0, 0, 120, 0, 0, 0, 1, 1, 6, 45, 0b111_1111, 1, 1, 0, 5, 30, 30, 0, 13,
-                0, 1
+                0, 1, 10
             ]
         );
-        assert_eq!(slot[47..51], crc32(&slot[..47]).to_le_bytes());
-        assert!(slot[51..].iter().all(|&byte| byte == 0));
+        assert_eq!(&slot[48..58], b"Carbon.wav");
+        assert_eq!(slot[58..62], crc32(&slot[..58]).to_le_bytes());
+        assert!(slot[62..].iter().all(|&byte| byte == 0));
         Ok(())
     }
 
@@ -478,7 +511,7 @@ mod tests {
         assert_eq!(load(&mut record)?, Some(untimed(6, 45)?));
         save(&mut record, &choices_at(6, 45)?)?;
         assert_eq!(record.saved, [Slot::Second]);
-        assert_eq!(record.bytes[SLOT_BYTES + 8], 7);
+        assert_eq!(record.bytes[SLOT_BYTES + 8], 8);
         assert_eq!(load(&mut record)?, Some(choices_at(6, 45)?));
         Ok(())
     }
@@ -511,7 +544,7 @@ mod tests {
         lit.extend_from_slice(&[30, 0]);
         assert_eq!(decode(&framed_as(UNLIT_VERSION, &lit, 0)?), None);
         save(&mut record, &choices_at(6, 45)?)?;
-        assert_eq!(record.bytes[SLOT_BYTES + 8], 7);
+        assert_eq!(record.bytes[SLOT_BYTES + 8], 8);
         assert_eq!(load(&mut record)?, Some(choices_at(6, 45)?));
         Ok(())
     }
@@ -529,7 +562,7 @@ mod tests {
         volumed.push(13);
         assert_eq!(decode(&framed_as(UNVOLUMED_VERSION, &volumed, 0)?), None);
         save(&mut record, &choices_at(6, 45)?)?;
-        assert_eq!(record.bytes[SLOT_BYTES + 8], 7);
+        assert_eq!(record.bytes[SLOT_BYTES + 8], 8);
         assert_eq!(load(&mut record)?, Some(choices_at(6, 45)?));
         Ok(())
     }
@@ -551,7 +584,7 @@ mod tests {
         toggled.extend_from_slice(&[0, 1]);
         assert_eq!(decode(&framed_as(UNTOGGLED_VERSION, &toggled, 0)?), None);
         save(&mut record, &choices_at(6, 45)?)?;
-        assert_eq!(record.bytes[SLOT_BYTES + 8], 7);
+        assert_eq!(record.bytes[SLOT_BYTES + 8], 8);
         assert_eq!(load(&mut record)?, Some(choices_at(6, 45)?));
         Ok(())
     }
@@ -567,7 +600,7 @@ mod tests {
         record.put(Slot::First, &framed_as(MINUTE_TIMED_VERSION, &sixth, 2)?);
         let loaded = Choices {
             timers: vec![Countdown::new(0, 5, 30)?, Countdown::new(1, 15, 0)?],
-            ..choices_at(6, 45)?
+            ..unnamed(6, 45)?
         };
         assert_eq!(load(&mut record)?, Some(loaded.clone()));
         for (minutes, seconds) in [(100, 0), (5, 60), (0, 0)] {
@@ -576,8 +609,48 @@ mod tests {
             assert_eq!(decode(&framed_as(MINUTE_TIMED_VERSION, &broken, 0)?), None);
         }
         save(&mut record, &loaded)?;
-        assert_eq!(record.bytes[SLOT_BYTES + 8], 7);
+        assert_eq!(record.bytes[SLOT_BYTES + 8], 8);
         assert_eq!(load(&mut record)?, Some(loaded));
+        Ok(())
+    }
+
+    #[test]
+    fn a_seventh_version_slot_loads_with_the_sound_it_played_chosen()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut record = FakeRecord::blank();
+        let seventh = [
+            0x10, 0x0e, 0, 0, 120, 0, 0, 0, 1, 1, 6, 45, 0b111_1111, 1, 1, 0, 5, 30, 30, 0, 13, 0,
+            1,
+        ];
+        record.put(Slot::First, &framed_as(UNNAMED_VERSION, &seventh, 2)?);
+        assert_eq!(load(&mut record)?, Some(unnamed(6, 45)?));
+        let mut named = seventh.to_vec();
+        named.push(0);
+        assert_eq!(decode(&framed_as(UNNAMED_VERSION, &named, 0)?), None);
+        save(&mut record, &choices_at(6, 45)?)?;
+        assert_eq!(record.bytes[SLOT_BYTES + 8], 8);
+        assert_eq!(load(&mut record)?, Some(choices_at(6, 45)?));
+        Ok(())
+    }
+
+    #[test]
+    fn no_sound_and_every_length_of_name_round_trip() -> Result<(), Box<dyn std::error::Error>> {
+        let mut record = FakeRecord::blank();
+        let longest = format!("{}.wav", "x".repeat(LONGEST_NAME - 4));
+        let sounds = [
+            None,
+            SoundName::new("a.wav"),
+            SoundName::new(PLAYED_BEFORE),
+            Some(SoundName::new(&longest).ok_or("no name")?),
+        ];
+        for sound in sounds {
+            let choices = Choices {
+                sound,
+                ..choices_at(6, 45)?
+            };
+            save(&mut record, &choices)?;
+            assert_eq!(load(&mut record)?, Some(choices));
+        }
         Ok(())
     }
 
@@ -782,6 +855,13 @@ mod tests {
             (20, 16),
             (21, 2),
             (22, 2),
+            (23, 9),
+            (23, 11),
+            (23, 65),
+            (24, b'.'),
+            (30, b' '),
+            (33, b'W'),
+            (33, 0xff),
         ] {
             let mut payload = good.clone();
             payload[at] = value;
@@ -802,6 +882,14 @@ mod tests {
         bad.push(good[..20].to_vec());
         bad.push(good[..21].to_vec());
         bad.push(good[..22].to_vec());
+        bad.push(good[..23].to_vec());
+        bad.push(good[..33].to_vec());
+        let mut unsuffixed = good[..30].to_vec();
+        unsuffixed[23] = 6;
+        bad.push(unsuffixed);
+        let mut unnamed = good[..24].to_vec();
+        unnamed[23] = 0;
+        assert!(decode(&framed(&unnamed, 0)?).is_some());
         let mut zero = good.clone();
         zero[15..18].copy_from_slice(&[0, 0, 0]);
         bad.push(zero);
@@ -817,7 +905,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let slot = encode(&choices_at(6, 45)?, 0)?;
         let mut version = slot;
-        version[8] = 8;
+        version[8] = 9;
         let mut magic = slot;
         magic[0] = b'Q';
         let mut length = slot;
