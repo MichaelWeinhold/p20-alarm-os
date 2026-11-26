@@ -3,7 +3,6 @@ use ttf_parser::{Face, GlyphId, OutlineBuilder, Rect};
 
 const INTER: &[u8] = include_bytes!("../fonts/inter-light.ttf");
 const SYMBOLS: &[u8] = include_bytes!("../fonts/material-symbols-light-icons.ttf");
-const RING_STEPS: i64 = 360;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Icon {
@@ -314,10 +313,14 @@ fn covered(
     plot: &mut impl FnMut(usize, usize, u8),
 ) {
     raster.for_each_pixel(|index, coverage| {
+        let alpha = level(coverage);
+        if alpha == 0 {
+            return;
+        }
         let x = across.start + i64::try_from(index % across.length).unwrap_or(i64::MAX);
         let y = down.start + i64::try_from(index / across.length).unwrap_or(i64::MAX);
         if let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y)) {
-            plot(x, y, level(coverage));
+            plot(x, y, alpha);
         }
     });
 }
@@ -326,7 +329,7 @@ pub(crate) fn ring(
     square: Square,
     thickness: usize,
     share: (i64, i64),
-    mut plot: impl FnMut(usize, usize, u8),
+    mut plot: impl FnMut(usize, usize, u8, u8),
 ) {
     let _ = drawn_ring(square, thickness, share, &mut plot);
 }
@@ -335,36 +338,81 @@ fn drawn_ring(
     square: Square,
     thickness: usize,
     (part, whole): (i64, i64),
-    plot: &mut impl FnMut(usize, usize, u8),
+    plot: &mut impl FnMut(usize, usize, u8, u8),
 ) -> Option<()> {
-    let part = part.min(whole);
-    if part <= 0 || 2 * thickness > square.size {
+    let part = part.clamp(0, whole);
+    if whole <= 0 || 2 * thickness > square.size {
         return None;
     }
-    let size = i64::try_from(square.size).ok()?;
-    let across = span(i64::try_from(square.centre2).ok()? - size, 2 * size, 2)?;
-    let down = span(i64::try_from(square.middle2).ok()? - size, 2 * size, 2)?;
-    let outer = ratio(size, 2)?;
+    let outer = ratio(i64::try_from(square.size).ok()?, 2)?;
     let inner = outer - ratio(i64::try_from(thickness).ok()?, 1)?;
-    let steps = (RING_STEPS * part + whole - 1) / whole;
-    let turn = std::f32::consts::TAU * ratio(part, whole)?;
-    let (left, top) = (across.offset + outer, down.offset + outer);
-    let along = |radius: f32, step: i64| {
-        let (sin, cos) = (turn * ratio(step, steps)?).sin_cos();
-        Some(point(left + radius * sin, top - radius * cos))
-    };
-    let path = (0..=steps)
-        .map(|step| along(outer, step))
-        .chain((0..=steps).rev().map(|step| along(inner, step)))
-        .collect::<Option<Vec<_>>>()?;
-    let mut raster = Rasterizer::new(across.length, down.length);
-    let mut last = *path.last()?;
-    for &next in &path {
-        raster.draw_line(last, next);
-        last = next;
+    let centre = ratio(i64::try_from(square.centre2).ok()?, 2)?;
+    let middle = ratio(i64::try_from(square.middle2).ok()?, 2)?;
+    let turn = (part < whole).then_some((std::f32::consts::TAU * ratio(part, whole)?).sin_cos());
+    let solid = ((outer - 0.5).powi(2), (inner + 0.5).max(0.0).powi(2));
+    for y in floor(middle - outer - 1.0).max(0)..=floor(middle + outer + 1.0) {
+        let dy = ratio(y, 1)? + 0.5 - middle;
+        let reach = (outer + 0.5).powi(2) - dy * dy;
+        if reach <= 0.0 {
+            continue;
+        }
+        let hole = (inner - 0.5).powi(2) - dy * dy;
+        let hole = if inner > 0.5 && hole > 0.0 {
+            hole.sqrt()
+        } else {
+            0.0
+        };
+        let reach = reach.sqrt();
+        let first = floor(centre - hole).max(0);
+        let second = (first + 1).max(floor(centre + hole));
+        let columns = (floor(centre - reach).max(0)..=first).chain(second..=floor(centre + reach));
+        for x in columns {
+            let dx = ratio(x, 1)? + 0.5 - centre;
+            let squared = dx * dx + dy * dy;
+            let band = if squared <= solid.0 && squared >= solid.1 {
+                1.0
+            } else {
+                let distance = squared.sqrt();
+                let band = (outer - distance + 0.5).clamp(0.0, 1.0);
+                if inner > 0.0 {
+                    band.min((distance - inner + 0.5).clamp(0.0, 1.0))
+                } else {
+                    band
+                }
+            };
+            let arc = match turn {
+                _ if part == 0 => 0.0,
+                Some(turn) => band.min(swept(dx, dy, turn)),
+                None => band,
+            };
+            let alpha = level(band);
+            if alpha > 0 {
+                plot(
+                    usize::try_from(x).ok()?,
+                    usize::try_from(y).ok()?,
+                    alpha,
+                    level(arc),
+                );
+            }
+        }
     }
-    covered(&raster, (across, down), plot);
     Some(())
+}
+
+fn swept(dx: f32, dy: f32, (sin, cos): (f32, f32)) -> f32 {
+    let start = dx;
+    let end = -dx * cos - dy * sin;
+    let inside = if sin >= 0.0 {
+        start.min(end)
+    } else {
+        start.max(end)
+    };
+    (inside + 0.5).clamp(0.0, 1.0)
+}
+
+#[expect(clippy::cast_possible_truncation)]
+fn floor(value: f32) -> i64 {
+    value.floor() as i64
 }
 
 #[cfg(test)]
@@ -586,8 +634,8 @@ mod tests {
             middle2: 200,
             size: 96,
         };
-        ring(square, 8, share, |x, y, alpha| {
-            if alpha > 127 {
+        ring(square, 8, share, |x, y, _, arc| {
+            if arc > 127 {
                 found.push((x, y));
             }
         });
@@ -595,8 +643,20 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_ring_draws_nothing() {
+    fn an_empty_share_draws_no_arc_but_the_whole_band() {
         assert_eq!(drawn_ring((0, 180)), Vec::new());
+        let square = Square {
+            centre2: 200,
+            middle2: 200,
+            size: 96,
+        };
+        let mut band = Vec::new();
+        ring(square, 8, (0, 180), |x, y, alpha, _| {
+            if alpha > 127 {
+                band.push((x, y));
+            }
+        });
+        assert_eq!(band, drawn_ring((180, 180)));
     }
 
     #[test]

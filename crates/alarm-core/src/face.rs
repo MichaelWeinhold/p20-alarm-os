@@ -859,20 +859,20 @@ fn clock_face(frame: &mut Frame, board: Board, face: &Face) {
         size: board.size,
     };
     let left = board.centre.saturating_sub(board.size / 2);
-    glyph::ring(square, unit, (1, 1), |x, y, alpha| {
-        frame.blend(x, y, DIM, alpha);
+    let minutes = SECONDS_PER_DAY / 60;
+    let share = face.until.map_or((0, minutes), |until| {
+        ((until.clamp(1, SECONDS_PER_DAY) + 59) / 60, minutes)
     });
-    if let Some(until) = face.until {
-        let minutes = SECONDS_PER_DAY / 60;
-        let share = ((until.clamp(1, SECONDS_PER_DAY) + 59) / 60, minutes);
-        glyph::ring(square, unit, share, |x, y, alpha| {
+    glyph::ring(square, unit, share, |x, y, band, arc| {
+        frame.blend(x, y, DIM, band);
+        if arc > 0 {
             let colour = ACCENT.at(
                 x.saturating_sub(left) + y.saturating_sub(board.top),
                 2 * board.size,
             );
-            frame.blend(x, y, colour, alpha);
-        });
-    }
+            frame.blend(x, y, colour, arc);
+        }
+    });
     let figures_top = board.middle() + unit - DIGIT_HEIGHT_UNITS * unit / 2;
     time(
         frame,
@@ -901,7 +901,7 @@ fn clock_face(frame: &mut Frame, board: Board, face: &Face) {
         middle2: 2 * y,
         size: size + unit,
     };
-    glyph::ring(mask, mask.size / 2, (1, 1), |x, y, alpha| {
+    glyph::ring(mask, mask.size / 2, (1, 1), |x, y, alpha, _| {
         frame.blend(x, y, BACKGROUND, alpha);
     });
     centred(
@@ -1019,16 +1019,16 @@ fn running_stage(frame: &mut Frame, dial: Dial, running: Running) {
         size,
     };
     let left = dial.centre.saturating_sub(size / 2);
-    glyph::ring(square, unit / 2, (1, 1), |x, y, alpha| {
-        frame.blend(x, y, DIM, alpha);
-    });
     let share = (running.left.total(), running.length.total());
-    glyph::ring(square, unit / 2, share, |x, y, alpha| {
-        let colour = ACCENT.at(
-            x.saturating_sub(left) + y.saturating_sub(dial.top),
-            2 * size,
-        );
-        frame.blend(x, y, colour, alpha);
+    glyph::ring(square, unit / 2, share, |x, y, band, arc| {
+        frame.blend(x, y, DIM, band);
+        if arc > 0 {
+            let colour = ACCENT.at(
+                x.saturating_sub(left) + y.saturating_sub(dial.top),
+                2 * size,
+            );
+            frame.blend(x, y, colour, arc);
+        }
     });
     let figure = unit * 3 / 4;
     figures(
