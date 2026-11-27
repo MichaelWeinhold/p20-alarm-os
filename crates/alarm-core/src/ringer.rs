@@ -932,15 +932,15 @@ mod tests {
     const FIFTH: [InputEvent; 2] = tap(930, 1736);
     const OPEN_FIRST: [InputEvent; 2] = tap(300, 1000);
     const OPEN_SECOND: [InputEvent; 2] = tap(300, 1184);
-    const BLANK: [InputEvent; 2] = tap(540, 400);
+    const BLANK: [InputEvent; 2] = tap(540, 180);
     const BELOW_SETTINGS: [InputEvent; 2] = tap(540, 2050);
-    const POWER_OFF: [InputEvent; 2] = tap(540, 800);
-    const LIT_TIME: [InputEvent; 2] = tap(540, 1000);
-    const SOUND: [InputEvent; 2] = tap(540, 1180);
-    const SOUND_LIST: [InputEvent; 2] = tap(540, 1364);
-    const VIBRATION: [InputEvent; 2] = tap(540, 1548);
-    const RAMP: [InputEvent; 2] = tap(540, 1732);
-    const RECOVERY: [InputEvent; 2] = tap(540, 1920);
+    const SOUND: [InputEvent; 2] = tap(930, 345);
+    const SOUND_LIST: [InputEvent; 2] = tap(540, 345);
+    const VIBRATION: [InputEvent; 2] = tap(540, 529);
+    const RAMP: [InputEvent; 2] = tap(540, 713);
+    const LIT_TIME: [InputEvent; 2] = tap(540, 1012);
+    const POWER_OFF: [InputEvent; 2] = tap(540, 1311);
+    const RECOVERY: [InputEvent; 2] = tap(540, 1495);
     const ALARM_TAB: [InputEvent; 2] = tap(180, 2200);
     const TIMER_TAB: [InputEvent; 2] = tap(540, 2200);
     const SETTINGS_TAB: [InputEvent; 2] = tap(900, 2200);
@@ -2484,7 +2484,7 @@ mod tests {
         let armed = ringer.clone();
         let mut light = always();
         drain_lit(
-            &mut FakeInput::with(&[&SETTINGS_TAB, &ADD, &BELOW_SETTINGS, &BLANK]),
+            &mut FakeInput::with(&[&SETTINGS_TAB, &tap(540, 850), &BELOW_SETTINGS, &BLANK]),
             &clock,
             &mut ringer,
             &mut light,
