@@ -1,44 +1,30 @@
 # p20-bedside-clock
 
 [![Main](https://github.com/MichaelWeinhold/p20-bedside-clock/actions/workflows/main.yml/badge.svg)](https://github.com/MichaelWeinhold/p20-bedside-clock/actions/workflows/main.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A single-purpose alarm clock built from an old Huawei P20 Lite. The phone keeps the Linux
-kernel it already boots; everything above it — Android, its services, its apps — is
-replaced by one static Rust program that draws the time, rings the alarm, and otherwise
-keeps the phone in deep sleep.
+A bedside clock made from an old Huawei P20 Lite: the Linux kernel the phone already
+boots, and one static Rust program as `/init` in place of Android.
 
-## Why
+![The alarm, timer and settings tabs](docs/images/screens.png)
 
-An old phone has a good screen, a battery, a real-time clock and a vibrator, which is
-everything a bedside clock needs. Running Android to use them means hundreds of processes
-and a device that is never really asleep. This project removes that layer instead of
-configuring it away, and it is also an exercise in bringing up a device with no public
-documentation, starting from the vendor kernel rather than from nothing.
+The alarm, timer and settings tabs, rendered on the host from the same code and the same
+state the fixture tests use; the phone draws the same frames at 1080×2280.
+`scripts/render_screens.py` renders them again.
 
-## Status
+## What it does
 
-| Area | State |
-|---|---|
-| Repository, workflow and CI | **Built.** Guards, a pipeline that matches the local checks, rulesets. |
-| Alarm logic (`alarm-core`) | **Built, host-tested.** When each alarm next fires, in local time, and arming the RTC for the earliest one. |
-| Which kernel to boot | **Decided.** The kernel already on the phone, `4.9.319`, unchanged — [ADR 0004](docs/adr/0004-boot-the-kernel-already-on-the-phone.md). |
-| Flashing and rollback | **Decided.** No tethered boot; flash `kernel` from fastboot and write the stock image back — [ADR 0005](docs/adr/0005-flash-kernel-and-roll-back-from-fastboot.md). |
-| Boot image round trip | **Built, host-tested.** `scripts/boot_image.py` repacks the stock image byte for byte. |
-| Where `/init` lives | **Decided and proven.** On `system`, since the bootloader loads no ramdisk from `kernel` — [ADR 0006](docs/adr/0006-put-our-init-on-system.md); a probe of ours ran there as PID 1, issue 17. |
-| Battery and charging | **Decided.** The kernel charges under our `/init`; the phone sleeps between uses, lights the panel only when used, and stops a charge at 80 % — [ADR 0007](docs/adr/0007-hold-the-charge-and-leave-charging-to-the-kernel.md) and [ADR 0008](docs/adr/0008-sleep-between-uses-and-charge-to-eighty.md), issues 27 and 39. |
-| Debug shell over USB | **Decided.** A serial shell on a USB gadget, and the kernel log in pstore — [ADR 0009](docs/adr/0009-a-serial-shell-over-usb-and-logs-in-pstore.md), issue 15. Built in P2; `scripts/serial_shell.py` runs a command on it, issue 42. |
-| Clock on screen | **Built and on the phone.** `alarmd` as `/init` draws the local time each minute, issue 10. |
-| Touch and the side keys | **Built and on the phone.** One daily alarm set by touch, ringing on the panel until Power dismisses it, issues 11 and 113. |
-| RTC wake and power-off | **Decided.** Suspended for two minutes after a use, then off until the RTC switches it on for the alarm — [ADR 0010](docs/adr/0010-suspend-briefly-then-power-off-until-the-alarm.md), issue 12. |
-| Settings across a power-off | **Decided.** A raw record of two checksummed slots on `reserved4`, a partition the ROM never used — [ADR 0011](docs/adr/0011-keep-the-settings-in-a-raw-record-on-reserved4.md), issue 30. |
-| Alarm sounds | **Decided.** Files on `system`, read-only, the ROM's own used as they are; the settings stay on `reserved4`, with room to spare — [ADR 0014](docs/adr/0014-keep-alarm-sounds-on-system-and-the-settings-on-reserved4.md), issue 82. |
-| Low-battery light | **Decided; built, host-tested.** The LED blinks red at its lowest current while suspended at or below 20 % off the cable; the power model does not change for it — [ADR 0013](docs/adr/0013-blink-the-led-red-while-suspended-on-a-low-battery.md), issues 64 and 76. |
-| Vibration | **Built and on the phone.** A 1 s pulse every 2 s while the alarm rings, stopped at once by a dismissal, issue 13. |
-| Speaker | **Decided and proven.** The codec's class-D, after `alarmd` replays the HAL's DSP init recorded under the ROM; sounds are WAV files converted on the host — [ADR 0015](docs/adr/0015-ring-through-the-speaker-after-replaying-the-hals-dsp-init.md), issue 14. |
-| Type and icons | **Decided.** Inter at weight 300 and Material Symbols, rasterised on the phone at the layout's unit and blended into the frame, for about 59 KB of binary — [ADR 0016](docs/adr/0016-rasterise-light-type-and-icons-on-the-phone.md), issue 95. |
-| Timer and settings screens | **Decided.** The timer's picker sits in a ring like the alarm clock and runs a length without saving it; settings are labelled rows in three groups; the alarm and timer lists scroll under their ring, up to 12 rows each — [ADR 0017](docs/adr/0017-put-the-timer-in-a-ring-label-the-settings-and-scroll-the-lists.md), issue 143. |
-| Name and README | **Decided.** The project becomes `p20-bedside-clock`, and the README leads with its screens, rendered on the host — [ADR 0018](docs/adr/0018-name-the-project-for-the-bedside-clock-and-lead-the-readme-with-its-screens.md), issue 141. |
+An old phone has a good screen, a battery, a real-time clock, a speaker and a vibrator,
+which is everything a bedside clock needs; this project removes Android instead of
+configuring it away. The phone keeps up to 12 alarms, each on its own weekdays, and rings
+them with a chosen sound that fades in to the set volume, and with the vibrator, until
+Power ends the ring. A timer runs a length without saving it, or keeps it in a list. The
+panel lights only when touched. Between uses the phone suspends, and after two minutes
+off the cable it can power off until the RTC switches it on for the next alarm. A charge
+stops at 80 % to spare the old battery, and on a low battery off the cable the LED blinks
+red; that blink is host-tested and not yet read on the phone.
+
+What is built, what is only decided, and what is parked is in
+[docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## How it works
 
@@ -49,21 +35,31 @@ kernel = vendor kernel (unchanged)  ──mounts──▶  system as /
 
 `alarmd` runs as PID 1. It mounts `/dev`, `/sys` and `/proc`, draws to the framebuffer,
 `/dev/fb0`, reads `/dev/input/event*`, arms `/dev/rtc0` for the next alarm, and suspends
-with `echo mem > /sys/power/state`. Only `system` is ever written — `kernel` stays stock
-— so recovery and fastboot stay intact and the `system` backup restores the phone.
+with `echo mem > /sys/power/state`. The image goes onto `system`, and `alarmd` writes only
+its settings record on `reserved4`. `kernel` stays stock, so recovery and fastboot stay
+intact and the `system` backup restores the phone.
 
 The logic is kept apart from the hardware: `alarm-core` knows nothing about devices and
-takes each one as a trait, so the scheduling rules are tested on a laptop and in CI, and
-only the thin adapters need the phone. → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+takes each one as a trait, so the scheduling rules and the screens are tested on a
+laptop and in CI, and only the thin adapters need the phone. →
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Hardware
+## What was hard
 
-| | |
-|---|---|
-| Phone | Huawei P20 Lite, codename `anne` |
-| SoC | HiSilicon Kirin 659, 8× Cortex-A53, `aarch64` |
-| Bootloader | unlocked; a custom ROM is already installed |
-| Connection | USB, `adb` and `fastboot` on the laptop |
+- **The speaker.** Kirin audio runs through a HiFi DSP that Android's audio HAL sets up;
+  with the route set and nothing sent to the DSP, nothing is heard. `alarmd` replays the
+  DSP init recorded from the HAL under the ROM, once per boot, before the first sound. →
+  ADR 0015.
+- **Debugging blind.** There is no serial console; a boot that fails is a black screen. A
+  debug `/init` serves a shell on a USB serial gadget, and the kernel log is kept in
+  pstore. → ADR 0009.
+- **Deep sleep.** Under our `/init` the SoC never reached deep sleep, and a suspend drew
+  about 53 mA. The modem holds the deep-sleep vote until its firmware runs, which the ROM
+  starts through the secure OS's `teecd`. `alarmd` boots the modem the same way, with its
+  radio off, and a suspend draws 4.8 mA. → ADR 0010 and 0012.
+
+The decisions behind the approach, and what was rejected, are in
+[ADR 0002](docs/adr/0002-vendor-kernel-and-own-userspace.md).
 
 ## Running it on your own P20 Lite
 
@@ -73,13 +69,15 @@ built on runs.
 
 | | |
 |---|---|
-| Model | `ANE-LX1` (`devmodel` `ANE-L01`), firmware base `9.1.0.401(C432E13R1P7)` |
+| Phone | Huawei P20 Lite, codename `anne`, model `ANE-LX1` (`devmodel` `ANE-L01`), firmware base `9.1.0.401(C432E13R1P7)` |
+| SoC | HiSilicon Kirin 659, 8× Cortex-A53, `aarch64` |
 | Bootloader | `Chipset-chicago9.1.0.6(1GA4)_FASTBOOT`, **unlocked** |
 | Kernel | `4.9.319-Abdelhay-KSU-`, with KernelSU, from [Abdelhay-Ali/android_kernel_huawei_hi6250_KernelSU](https://github.com/Abdelhay-Ali/android_kernel_huawei_hi6250_KernelSU) |
 | Kernel image | release [`2024-04-01-1230`](https://github.com/Abdelhay-Ali/android_kernel_huawei_hi6250_KernelSU/releases/tag/2024-04-01-1230), `Kernel-4.9.319-KSU-enforcing-01042024-1220.img`, 12969984 bytes, sha256 `a8d27ec65ab9d6596980a9aad00d8f22cd0fe70606221058d684f374b605f686` |
 | Kernel source | the release's tag, commit `4a89ea72d610f5e3cd7d23d9d3b0919eba9fa8a2`, GPL-2.0 |
 | ROM | unofficial LineageOS for Android 9, `0.23-p-20250919-UNOFFICIAL-anne`, `userdebug` |
 | Recovery | TWRP 3.7.0_9-0 in `recovery_ramdisk` |
+| Connection | USB, `adb` and `fastboot` on the laptop |
 
 The release image is byte for byte what this phone's `kernel` partition holds, up to the
 partition's unused tail. To check yours, with `adb root` in the ROM or from TWRP:
@@ -103,41 +101,20 @@ bootloader is not covered here.
 From there, [docs/manual-steps/phone.md](docs/manual-steps/phone.md) is how the phone was
 set up, backed up, and how our `/init` goes onto `system`.
 
-## What is hard
-
-- **Audio.** Kirin audio goes through a DSP that needs firmware and mixer routing that
-  Android's audio HAL normally sets up. The vibrator comes first, and the speaker is parked.
-- **Debugging blind.** There is no serial console; a boot that fails is a black screen. A
-  debug image with a serial shell over USB, and the log in pstore, is built before anything
-  else.
-- **Deep sleep and RTC wake.** The RTC wakes a suspend and switches on a powered-off phone
-  without Android's userspace, but the SoC never reaches deep sleep, so a suspend draws
-  about 53 mA. The modem holds the vote until it is booted, which the ROM does with the
-  secure OS's `teecd`. → ADR 0010 and 0012.
-
-The decisions behind the approach, and what was rejected, are in
-[ADR 0002](docs/adr/0002-vendor-kernel-and-own-userspace.md).
-
 ## How this repository is worked
 
-Every change is an issue, a branch, a pull request and a green pipeline, merged by squash.
-Most of the code is written by coding agents, so the process is written down as rules
-and procedures they read, and enforced by mechanisms that hold whether or not they read
-them:
+Most of the code is written by coding agents, so the process is written down for them to
+read and enforced by mechanisms that hold whether or not they do:
 
-- **[AGENTS.md](AGENTS.md)** holds the invariants and commands; this README holds the
-  reasons. Nothing is written out in full in both.
-- **Skills** under `.claude/skills/` hold the procedures: the Definition of Done, grooming
-  an issue, and claiming the next free issue so parallel sessions never collide.
-- **A commit hook** refuses commits on protected branches, malformed messages, and any AI
-  co-author trailer; the human is the author.
-- **The pipeline runs exactly the local checks**, and a script asserts that the two lists
-  are equal. Two more gates read the pull request: it may close only its own issue, and a
-  new dependency must say why it is worth it.
-- **Research comes before code.** An open question becomes a research issue, which ends in
-  an ADR with the rejected alternatives and the condition that would reopen each one.
-- **`main` is integration; `production` is what is on the phone**, and only a person at the
-  USB cable writes to it.
+- **[AGENTS.md](AGENTS.md)** holds the invariants and commands; this README the reasons.
+- **Skills** under `.claude/skills/` hold the procedures, from grooming an issue to the
+  Definition of Done.
+- **A commit hook** refuses a commit on a protected branch, a malformed message and any AI
+  co-author trailer.
+- **The pipeline runs exactly the local checks**, and gates each pull request on the
+  issue it closes and on why a new dependency is worth it.
+- **Research comes before code**, and ends in an ADR with its rejected alternatives.
+- **`main` is integration; `production` is what is on the phone.**
 
 → [ADR 0001](docs/adr/0001-how-this-repository-is-worked.md) for each of these decisions.
 
@@ -146,7 +123,7 @@ them:
 | Document | What it covers |
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The image, the program's crates, the loop, host tooling |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | The phases, P0 to P6, and what is parked |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | The phases, P0 to P7, what each has reached, and what is parked |
 | [docs/SECURITY.md](docs/SECURITY.md) | Bricking risks, what must never be published, licensing, supply chain |
 | [docs/MANUAL_STEPS.md](docs/MANUAL_STEPS.md) | The hand-made state, one file per subsystem under `docs/manual-steps/` |
 | [docs/device-history/](docs/device-history/) | What each hand-made run printed, and when |
