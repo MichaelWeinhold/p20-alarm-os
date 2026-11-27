@@ -7,24 +7,13 @@ boots, and one static Rust program as `/init` in place of Android.
 
 ![The alarm, timer and settings tabs](docs/images/screens.png)
 
-The alarm, timer and settings tabs, rendered on the host from the same code and the same
-state the fixture tests use; the phone draws the same frames at 1080×2280.
-`scripts/render_screens.py` renders them again.
-
 ## What it does
 
-An old phone has a good screen, a battery, a real-time clock, a speaker and a vibrator,
-which is everything a bedside clock needs; this project removes Android instead of
-configuring it away. The phone keeps up to 12 alarms, each on its own weekdays, and rings
-them with a chosen sound that fades in to the set volume, and with the vibrator, until
-Power ends the ring. A timer runs a length without saving it, or keeps it in a list. The
-panel lights only when touched. Between uses the phone suspends, and after two minutes
-off the cable it can power off until the RTC switches it on for the next alarm. A charge
-stops at 80 % to spare the old battery, and on a low battery off the cable the LED blinks
-red; that blink is host-tested and not yet read on the phone.
-
-What is built, what is only decided, and what is parked is in
-[docs/ROADMAP.md](docs/ROADMAP.md).
+Up to 12 alarms on chosen weekdays, each ringing with a sound that fades in and the
+vibrator until Power ends it. A timer that runs a length without saving it. The panel
+lights only when touched; between uses the phone suspends, then can power off until the
+RTC switches it on for the next alarm. A charge stops at 80 %, and the LED blinks red on
+a low battery, a blink not yet read on the phone.
 
 ## How it works
 
@@ -43,23 +32,6 @@ The logic is kept apart from the hardware: `alarm-core` knows nothing about devi
 takes each one as a trait, so the scheduling rules and the screens are tested on a
 laptop and in CI, and only the thin adapters need the phone. →
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-
-## What was hard
-
-- **The speaker.** Kirin audio runs through a HiFi DSP that Android's audio HAL sets up;
-  with the route set and nothing sent to the DSP, nothing is heard. `alarmd` replays the
-  DSP init recorded from the HAL under the ROM, once per boot, before the first sound. →
-  ADR 0015.
-- **Debugging blind.** There is no serial console; a boot that fails is a black screen. A
-  debug `/init` serves a shell on a USB serial gadget, and the kernel log is kept in
-  pstore. → ADR 0009.
-- **Deep sleep.** Under our `/init` the SoC never reached deep sleep, and a suspend drew
-  about 53 mA. The modem holds the deep-sleep vote until its firmware runs, which the ROM
-  starts through the secure OS's `teecd`. `alarmd` boots the modem the same way, with its
-  radio off, and a suspend draws 4.8 mA. → ADR 0010 and 0012.
-
-The decisions behind the approach, and what was rejected, are in
-[ADR 0002](docs/adr/0002-vendor-kernel-and-own-userspace.md).
 
 ## Running it on your own P20 Lite
 
@@ -100,34 +72,6 @@ bootloader is not covered here.
 
 From there, [docs/manual-steps/phone.md](docs/manual-steps/phone.md) is how the phone was
 set up, backed up, and how our `/init` goes onto `system`.
-
-## How this repository is worked
-
-Most of the code is written by coding agents, so the process is written down for them to
-read and enforced by mechanisms that hold whether or not they do:
-
-- **[AGENTS.md](AGENTS.md)** holds the invariants and commands; this README the reasons.
-- **Skills** under `.claude/skills/` hold the procedures, from grooming an issue to the
-  Definition of Done.
-- **A commit hook** refuses a commit on a protected branch, a malformed message and any AI
-  co-author trailer.
-- **The pipeline runs exactly the local checks**, and gates each pull request on the
-  issue it closes and on why a new dependency is worth it.
-- **Research comes before code**, and ends in an ADR with its rejected alternatives.
-- **`main` is integration; `production` is what is on the phone.**
-
-→ [ADR 0001](docs/adr/0001-how-this-repository-is-worked.md) for each of these decisions.
-
-## Documentation
-
-| Document | What it covers |
-|---|---|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The image, the program's crates, the loop, host tooling |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | The phases, P0 to P7, what each has reached, and what is parked |
-| [docs/SECURITY.md](docs/SECURITY.md) | Bricking risks, what must never be published, licensing, supply chain |
-| [docs/MANUAL_STEPS.md](docs/MANUAL_STEPS.md) | The hand-made state, one file per subsystem under `docs/manual-steps/` |
-| [docs/device-history/](docs/device-history/) | What each hand-made run printed, and when |
-| [docs/adr/](docs/adr/) | Accepted decisions, what was rejected, and what would reopen it |
 
 ## Development
 
