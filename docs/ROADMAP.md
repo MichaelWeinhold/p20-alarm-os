@@ -38,6 +38,9 @@ pstore. → ADR 0009, issue 9. Its host end is `scripts/serial_shell.py`, issue 
 **Done when:** the laptop reaches a shell on the phone over USB, and a failed boot leaves a
 log that can be read.
 
+**Done** — issues 9 and 42. The shell is read on the phone, across a lost line since
+issue 55.
+
 ## Research before P3
 
 - **How the phone charges and spares its old battery.** **Decided** — in ADR 0007 and
@@ -69,7 +72,17 @@ while suspended is read with USB input cut, and both readings are in
 **Proven** — issue 12. The RTC woke a suspend to the second, a suspend draws about 53 mA,
 and a power-on alarm switched a powered-off phone on. The adapters and the two-minute
 window are built; the power-off with its power-on alarm, off the cable only, is issue
-52.
+52, built and read on the phone.
+
+## Research after P5
+
+- **Deep sleep under our `/init`.** **Decided** — in ADR 0012: the modem holds the
+  deep-sleep vote until its firmware runs, so `alarmd` boots it as the ROM does, with its
+  radio off. **Built** — issue 71: a suspend draws 4.8 mA.
+- **A low-battery warning while the panel is off.** **Decided** — in ADR 0013: the LED
+  blinks red at its lowest current while suspended at or below 20 % off the cable, and the
+  power model does not change for it. **Built, host-tested** — issue 76; the blink has
+  not been read on the phone.
 
 ## P6 — Vibrate
 
@@ -98,19 +111,23 @@ settings toggle for powering off (83).
 **Done when:** its five children are closed, an alarm set on the phone survives a reboot,
 and a timer wakes a suspended phone when it ends.
 
+**Done** — issue 31's five children are closed; the alarm is kept on `reserved4` since
+issue 58, and a running timer woke a suspended phone and rang, issue 81.
+
 ## Research before the speaker
 
 - **Speaker audio without Android.** **Decided** — in ADR 0015: the codec's class-D,
   routed by the HAL's `media-speaker` controls, after `alarmd` replays the HAL's DSP init
   recorded under the ROM. Sounds are WAV files converted on the host. Its two follow-ups
-  are a recorder with its host scripts, and the `speaker` adapter.
+  are a recorder with its host scripts, and the `speaker` adapter. **Built** — issue 92:
+  the speaker rings the alarm on the phone.
 
 ## Research before smooth type
 
 - **Smooth type and thinner icons.** **Decided** — in ADR 0016: Inter at weight 300 and
   Material Symbols, rasterised by `face` at the layout's unit and blended into the frame,
   12.9 ms per frame for a clock's worth of glyphs on the Kirin 659. Its two follow-ups are
-  the figures (104) and the icons (105).
+  the figures (104) and the icons (105). **Built** — both are read on the phone.
 
 ## Research before the timer and settings redesign
 
@@ -118,7 +135,8 @@ and a timer wakes a suspended phone when it ends.
   the timer's picker in a ring with a start and a save on it, lengths in the short form,
   labelled and grouped settings with the battery, a scrolled sound list, and alarm and
   timer lists that scroll under their ring up to 12 rows. Its five follow-ups are filed
-  under issue 143.
+  under issue 143. **Built** — issues 144 to 148, on the phone; a list of 12 and the
+  scrolls are covered by host fixtures and not yet read there.
 
 ## Research before presenting the repository
 

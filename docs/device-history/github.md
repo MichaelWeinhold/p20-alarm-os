@@ -36,3 +36,13 @@ A probe commit pushed straight to `main` was refused:
 remote: error: GH013: Repository rule violations found for refs/heads/main.
  ! [remote rejected] main -> main (push declined due to repository rule violations)
 ```
+
+## 2026-11-27 — the social preview, for issue 162
+
+The operator uploaded `docs/images/social-preview.png` at `82f5454`, 1280×640, sha256
+`b3eba37c26a1264aea58bb05b7ab6616cb7d2169a5c192a9e1def272f271fdfc`, on the settings page.
+Before it, `usesCustomOpenGraphImage` read `false`. The read-back at 16:26:50 UTC:
+
+```
+{"usesCustomOpenGraphImage":true,"openGraphImageUrl":"https://repository-images.githubusercontent.com/1454308208/b5e7962f-314b-4752-be1e-32650e987dd1"}
+```

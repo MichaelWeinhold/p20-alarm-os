@@ -11,6 +11,7 @@ repository level; the rulesets narrow them per branch.
 | Dependabot alerts and security updates | on |
 | Description | A bedside clock made from an old Huawei P20 Lite: the stock Linux kernel, and one static Rust program as `/init` in place of Android. Alarms, a timer, and deep sleep between uses. |
 | Topics | `rust`, `embedded-linux`, `aarch64`, `musl`, `framebuffer`, `alarm-clock`, `huawei`, `pid1` |
+| Social preview | `docs/images/social-preview.png`, 1280×640 |
 
 Labels beyond GitHub's defaults: `feature`, `research`, `chore`, `workflow`, `future`,
 `dependencies`, `hardware` (needs the phone to do or verify), `device` (on-device Rust code).
@@ -38,15 +39,22 @@ gh api -X PUT repos/MichaelWeinhold/p20-bedside-clock/automated-security-fixes
 git config user.email 104927463+MichaelWeinhold@users.noreply.github.com
 ```
 
+The social preview has no API. On the repository's **Settings → General → Social
+preview**, **Edit → Upload an image** takes `docs/images/social-preview.png`.
+
+⚠️ Upload it again whenever `scripts/render_screens.py` writes a new preview.
+
 **Verify.**
 
 ```bash
 gh api repos/MichaelWeinhold/p20-bedside-clock --jq '.security_and_analysis'
 gh repo view MichaelWeinhold/p20-bedside-clock --json name,description,repositoryTopics
+gh api graphql -f query='{repository(owner:"MichaelWeinhold",name:"p20-bedside-clock"){usesCustomOpenGraphImage}}'
 git log --format='%ae' | sort -u
 ```
 
-The second prints only the noreply address.
+The third prints `"usesCustomOpenGraphImage":true`. The last prints only the noreply
+address.
 
 ## Rulesets
 
