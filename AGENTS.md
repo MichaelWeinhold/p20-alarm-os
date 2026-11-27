@@ -42,7 +42,7 @@ vendor Linux kernel the phone already boots, running one program of ours as `/in
 
 **Read `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/ROADMAP.md`, and
 `docs/MANUAL_STEPS.md` and the files it indexes, before changing anything they
-describe.** `README.md` says what each one covers.
+describe.**
 
 **Read `docs/adr/` for any decision you are about to revisit.** It records what was
 rejected and the condition that would reopen it.

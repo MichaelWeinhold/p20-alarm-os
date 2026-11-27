@@ -1,6 +1,6 @@
 # 18. Name the project for the bedside clock, and lead the README with its screens
 
-- **Status:** Accepted
+- **Status:** Accepted; D4 amended with a shorter README by issue 168
 - **Date:** 2026-11-27
 - **Issue:** #141
 
@@ -114,6 +114,11 @@ In this order:
 **The status table leaves the README.** `docs/ROADMAP.md` already lists each phase,
 each research and its ADR, and what is parked. The README links it in one line. The
 table's two stale rows stop being a risk, because no second list of the status is kept.
+
+**Amended by issue 168**: the operator chose a shorter README. Steps 4 and 6, the
+documentation table and the line linking `docs/ROADMAP.md` are dropped, and step 2 is one
+compact paragraph. What they said stays in ADR 0001, 0002, 0009, 0010, 0012 and 0015,
+and in `docs/ROADMAP.md`.
 
 ### D5. The screens are host renders, kept in `docs/images/` and tied to the fixtures
 
