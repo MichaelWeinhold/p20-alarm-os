@@ -1,6 +1,6 @@
 # GitHub
 
-**State.** `MichaelWeinhold/p20-alarm-os` is public, MIT-licensed, with the wiki and
+**State.** `MichaelWeinhold/p20-bedside-clock` is public, MIT-licensed, with the wiki and
 projects off and branches deleted on merge. All three merge methods are allowed at the
 repository level; the rulesets narrow them per branch.
 
@@ -9,7 +9,8 @@ repository level; the rulesets narrow them per branch.
 | Secret scanning | on |
 | Push protection | on |
 | Dependabot alerts and security updates | on |
-| Topics | `linux`, `embedded`, `rust`, `initramfs`, `android-device`, `postmarketos` |
+| Description | A bedside clock made from an old Huawei P20 Lite: the stock Linux kernel, and one static Rust program as `/init` in place of Android. Alarms, a timer, and deep sleep between uses. |
+| Topics | `rust`, `embedded-linux`, `aarch64`, `musl`, `framebuffer`, `alarm-clock`, `huawei`, `pid1` |
 
 Labels beyond GitHub's defaults: `feature`, `research`, `chore`, `workflow`, `future`,
 `dependencies`, `hardware` (needs the phone to do or verify), `device` (on-device Rust code).
@@ -21,20 +22,27 @@ config, so no private address reaches the public history.
 **Reproduce.**
 
 ```bash
-gh repo edit MichaelWeinhold/p20-alarm-os --enable-projects=false --delete-branch-on-merge \
+gh repo rename p20-bedside-clock --repo MichaelWeinhold/p20-alarm-os --yes
+git remote set-url origin git@github.com:MichaelWeinhold/p20-bedside-clock.git
+gh repo edit MichaelWeinhold/p20-bedside-clock --enable-projects=false --delete-branch-on-merge \
   --enable-squash-merge --enable-rebase-merge --enable-merge-commit
-gh api -X PATCH repos/MichaelWeinhold/p20-alarm-os \
+gh repo edit MichaelWeinhold/p20-bedside-clock \
+  --description 'A bedside clock made from an old Huawei P20 Lite: the stock Linux kernel, and one static Rust program as /init in place of Android. Alarms, a timer, and deep sleep between uses.' \
+  --add-topic rust,embedded-linux,aarch64,musl,framebuffer,alarm-clock,huawei,pid1 \
+  --remove-topic linux,embedded,initramfs,android-device,postmarketos
+gh api -X PATCH repos/MichaelWeinhold/p20-bedside-clock \
   -f 'security_and_analysis[secret_scanning][status]=enabled' \
   -f 'security_and_analysis[secret_scanning_push_protection][status]=enabled'
-gh api -X PUT repos/MichaelWeinhold/p20-alarm-os/vulnerability-alerts
-gh api -X PUT repos/MichaelWeinhold/p20-alarm-os/automated-security-fixes
+gh api -X PUT repos/MichaelWeinhold/p20-bedside-clock/vulnerability-alerts
+gh api -X PUT repos/MichaelWeinhold/p20-bedside-clock/automated-security-fixes
 git config user.email 104927463+MichaelWeinhold@users.noreply.github.com
 ```
 
 **Verify.**
 
 ```bash
-gh api repos/MichaelWeinhold/p20-alarm-os --jq '.security_and_analysis'
+gh api repos/MichaelWeinhold/p20-bedside-clock --jq '.security_and_analysis'
+gh repo view MichaelWeinhold/p20-bedside-clock --json name,description,repositoryTopics
 git log --format='%ae' | sort -u
 ```
 

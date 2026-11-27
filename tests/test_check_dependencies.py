@@ -11,7 +11,7 @@ BASE = "a" * 40
 HEAD = "b" * 40
 BEFORE = """
 [project]
-name = "p20-alarm-os-tools"
+name = "p20-bedside-clock-tools"
 dependencies = ["httpx>=0.28.1", "pydantic>=2.13"]
 
 [dependency-groups]

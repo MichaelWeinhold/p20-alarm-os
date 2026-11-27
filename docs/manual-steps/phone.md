@@ -136,10 +136,10 @@ eRecovery. Choose nothing there; reach TWRP with the keys.
 boot, Huawei's `dfx` partition still holds it:
 
 ```bash
-adb shell 'grep p20-alarm-os /sys/fs/pstore/console-ramoops-0'
-adb shell 'grep -a p20-alarm-os /sys/fs/pstore/dmesg-ramoops-0'   # after a panic past boot
+adb shell 'grep -E "p20-(alarm-os|bedside-clock)" /sys/fs/pstore/console-ramoops-0'
+adb shell 'grep -a -E "p20-(alarm-os|bedside-clock)" /sys/fs/pstore/dmesg-ramoops-0'   # after a panic past boot
 adb exec-out 'dd if=/dev/block/by-name/dfx 2>/dev/null' > <scratch>/dfx.bin
-strings -n 6 <scratch>/dfx.bin | grep -E 'jump to execute /init|Kernel panic|p20-alarm-os'
+strings -n 6 <scratch>/dfx.bin | grep -E 'jump to execute /init|Kernel panic|p20-(alarm-os|bedside-clock)'
 ```
 
 ⚠️ Never change the ROM's gadget under `/config/usb_gadget/g1`: Android's init owns it,
@@ -162,7 +162,7 @@ into TWRP after about 20 s. → ADR 0008, D3.
 
 ```bash
 cargo build --release --locked -p init-probe --target aarch64-unknown-linux-musl
-adb shell 'grep -a -E "p20-alarm-os: (power|charge)" /sys/fs/pstore/console-ramoops-0'
+adb shell 'grep -a -E "p20-(alarm-os|bedside-clock): (power|charge)" /sys/fs/pstore/console-ramoops-0'
 ```
 
 ⚠️ `status` can lag a write to `enable_charger` by more than 5 s; read `enable_charger`
@@ -181,7 +181,7 @@ on a CDC-ACM gadget, starts it again whenever it ends, and reboots into TWRP on
 
 ```bash
 cargo build --release --locked -p debug-init --target aarch64-unknown-linux-musl
-ls /dev/cu.usbmodem*          # /dev/cu.usbmodemp20_alarm_os1, about 50 s after the reboot
+ls /dev/cu.usbmodem*          # /dev/cu.usbmodemp20_bedside_clock1, about 50 s after the reboot
 uv run python scripts/serial_shell.py 'uname -r'           # exits with the command's status
 uv run python scripts/serial_shell.py --push <file>        # to /mnt/<name>, sha256 checked
 ```

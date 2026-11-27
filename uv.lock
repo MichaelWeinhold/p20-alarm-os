@@ -436,7 +436,7 @@ wheels = [
 ]
 
 [[package]]
-name = "p20-alarm-os-tools"
+name = "p20-bedside-clock-tools"
 version = "0.1.0"
 source = { virtual = "." }
 

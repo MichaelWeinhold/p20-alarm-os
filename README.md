@@ -1,6 +1,6 @@
-# p20-alarm-os
+# p20-bedside-clock
 
-[![Main](https://github.com/MichaelWeinhold/p20-alarm-os/actions/workflows/main.yml/badge.svg)](https://github.com/MichaelWeinhold/p20-alarm-os/actions/workflows/main.yml)
+[![Main](https://github.com/MichaelWeinhold/p20-bedside-clock/actions/workflows/main.yml/badge.svg)](https://github.com/MichaelWeinhold/p20-bedside-clock/actions/workflows/main.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A single-purpose alarm clock built from an old Huawei P20 Lite. The phone keeps the Linux

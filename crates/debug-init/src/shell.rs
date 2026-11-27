@@ -61,16 +61,16 @@ mod tests {
     fn the_log_says_how_the_shell_ended_and_what_comes_next() {
         assert_eq!(
             ended(ExitStatus::from_raw(0), Next::Restart),
-            "<3>p20-alarm-os: debug: /system/bin/sh ended with exit status: 0, starting it again\n"
+            "<3>p20-bedside-clock: debug: /system/bin/sh ended with exit status: 0, starting it again\n"
         );
         assert_eq!(
             ended(ExitStatus::from_raw(129 << 8), Next::Restart),
-            "<3>p20-alarm-os: debug: /system/bin/sh ended with exit status: 129, starting it again\n"
+            "<3>p20-bedside-clock: debug: /system/bin/sh ended with exit status: 129, starting it again\n"
         );
         assert!(ended(ExitStatus::from_raw(9), Next::Restart).ends_with(", starting it again\n"));
         assert_eq!(
             ended(ExitStatus::from_raw(0), Next::Recovery),
-            "<3>p20-alarm-os: debug: /system/bin/sh ended with exit status: 0, /mnt/recovery asks for recovery, rebooting into it\n"
+            "<3>p20-bedside-clock: debug: /system/bin/sh ended with exit status: 0, /mnt/recovery asks for recovery, rebooting into it\n"
         );
     }
 }
