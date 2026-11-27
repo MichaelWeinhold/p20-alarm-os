@@ -5,6 +5,8 @@ use crate::ringer::Outputs;
 use crate::sound::{SoundName, Volume};
 use crate::time::{Countdown, SECONDS_PER_DAY, TimeOfDay, Weekday};
 
+pub mod sample;
+
 pub const BACKGROUND: Colour = Colour(0x00_0000);
 pub const FOREGROUND: Colour = Colour(0xff_ffff);
 pub const WARNING: Colour = Colour(0xff_3b30);
@@ -1908,8 +1910,8 @@ pub fn target(
 
 #[cfg(test)]
 mod tests {
+    use super::sample::{self, charged, face, listed, timer, weekend};
     use super::*;
-    use crate::battery::{ChargeLimit, Percent};
     use crate::time::Weekday;
     use std::collections::HashSet;
     use std::sync::OnceLock;
@@ -2019,71 +2021,6 @@ mod tests {
             .collect()
     }
 
-    fn charged(value: u8) -> Result<Gauge, Box<dyn std::error::Error>> {
-        Ok(Gauge::of(Percent::new(value)?, ChargeLimit::DEFAULT))
-    }
-
-    fn listed(
-        hour: u8,
-        minute: u8,
-        repeat: Weekdays,
-        until: Option<i64>,
-    ) -> Result<Listed, Box<dyn std::error::Error>> {
-        Ok(Listed {
-            alarm: Alarm {
-                time: TimeOfDay::new(hour, minute)?,
-                repeat,
-            },
-            armed: until.is_some(),
-            until,
-        })
-    }
-
-    fn weekend() -> Weekdays {
-        Weekdays::NONE.with(Weekday::Monday).with(Weekday::Sunday)
-    }
-
-    fn face(
-        armed: bool,
-        ringing: bool,
-        battery: Gauge,
-    ) -> Result<Face, Box<dyn std::error::Error>> {
-        let until = armed.then_some(11 * 3_600 + 8 * 60);
-        Ok(Face {
-            time: TimeOfDay::new(19, 37)?,
-            weekday: Weekday::Monday,
-            day: 18,
-            alarms: vec![
-                listed(6, 45, Weekdays::EVERY_DAY, until)?,
-                listed(7, 30, weekend(), None)?,
-            ],
-            until,
-            editing: None,
-            rang: if armed {
-                Some(TimeOfDay::new(6, 45)?)
-            } else {
-                None
-            },
-            marked: None,
-            ringing,
-            battery,
-            screen: Screen::Alarm,
-            power_off: true,
-            lit_seconds: 10,
-            ramp_seconds: 60,
-            outputs: Outputs::BOTH,
-            recovery_marked: false,
-            timers: Vec::new(),
-            countdown: Countdown::default(),
-            running: None,
-            rung: None,
-            volume: None,
-            sound: SoundName::new("ringtone.wav"),
-            listing: None,
-            scroll: 0,
-        })
-    }
-
     fn editing(marked: Option<usize>) -> Result<Face, Box<dyn std::error::Error>> {
         Ok(Face {
             editing: Some(Alarm {
@@ -2098,7 +2035,7 @@ mod tests {
     #[test]
     fn the_alarm_screen_shows_the_clock_in_its_ring_the_plus_and_each_alarm_with_its_switch_as_recorded()
     -> Outcome {
-        let frame = render(SHEET, &face(true, false, charged(80)?)?);
+        let frame = render(SHEET, &sample::sheet()?);
         assert_eq!(picture(&frame), include_str!("../testdata/face-sheet.txt"));
         Ok(())
     }
@@ -2247,7 +2184,7 @@ mod tests {
     }
 
     fn unarmed() -> Result<Vec<Listed>, Box<dyn std::error::Error>> {
-        [
+        Ok([
             (5, 0),
             (6, 45),
             (7, 30),
@@ -2263,23 +2200,13 @@ mod tests {
         ]
         .into_iter()
         .map(|(hour, minute)| listed(hour, minute, Weekdays::NONE, None))
-        .collect()
+        .collect::<Result<_, _>>()?)
     }
 
     fn lengths() -> Result<Vec<Countdown>, Box<dyn std::error::Error>> {
         Ok((1..=12)
             .map(|minutes| Countdown::new(0, minutes, 0))
             .collect::<Result<_, _>>()?)
-    }
-
-    fn timer(running: Option<Running>, ringing: bool) -> Result<Face, Box<dyn std::error::Error>> {
-        Ok(Face {
-            screen: Screen::Timer,
-            timers: vec![Countdown::new(0, 3, 0)?, Countdown::new(0, 12, 5)?],
-            countdown: Countdown::new(0, 3, 0)?,
-            running,
-            ..face(true, ringing, charged(80)?)?
-        })
     }
 
     fn running(paused: bool) -> Result<Option<Running>, Box<dyn std::error::Error>> {
@@ -2320,7 +2247,7 @@ mod tests {
     #[test]
     fn the_list_stage_shows_the_picker_in_a_ring_its_bin_and_each_saved_timer_with_a_play_as_recorded()
     -> Outcome {
-        let frame = render(SHEET, &timer(None, false)?);
+        let frame = render(SHEET, &sample::timers()?);
         assert_eq!(picture(&frame), include_str!("../testdata/face-timer.txt"));
         Ok(())
     }
@@ -2495,49 +2422,37 @@ mod tests {
     #[test]
     fn the_settings_screen_shows_the_toggles_the_lit_time_the_ramp_and_the_recovery_row_as_recorded()
     -> Outcome {
-        for (
-            power_off,
-            (lit_seconds, ramp_seconds),
-            (sound, vibration),
-            name,
-            recovery_marked,
-            recorded,
-        ) in [
+        let shown = sample::settings()?;
+        for (settings, recorded) in [
+            (shown.clone(), include_str!("../testdata/face-settings.txt")),
             (
-                true,
-                (10, 0),
-                (true, true),
-                SoundName::new("ringtone.wav"),
-                false,
-                include_str!("../testdata/face-settings.txt"),
-            ),
-            (
-                false,
-                (300, 120),
-                (false, true),
-                None,
-                false,
+                Face {
+                    power_off: false,
+                    lit_seconds: 300,
+                    ramp_seconds: 120,
+                    outputs: Outputs {
+                        sound: false,
+                        vibration: true,
+                    },
+                    sound: None,
+                    ..shown.clone()
+                },
                 include_str!("../testdata/face-settings-stays.txt"),
             ),
             (
-                true,
-                (10, 15),
-                (true, false),
-                SoundName::new("Carbon.wav"),
-                true,
+                Face {
+                    ramp_seconds: 15,
+                    outputs: Outputs {
+                        sound: true,
+                        vibration: false,
+                    },
+                    sound: SoundName::new("Carbon.wav"),
+                    recovery_marked: true,
+                    ..shown
+                },
                 include_str!("../testdata/face-settings-recovery.txt"),
             ),
         ] {
-            let settings = Face {
-                screen: Screen::Settings,
-                power_off,
-                lit_seconds,
-                ramp_seconds,
-                outputs: Outputs { sound, vibration },
-                sound: name,
-                recovery_marked,
-                ..face(true, false, charged(80)?)?
-            };
             assert_eq!(picture(&render(SHEET, &settings)), recorded);
         }
         Ok(())
