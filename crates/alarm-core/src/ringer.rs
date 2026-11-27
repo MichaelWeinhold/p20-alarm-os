@@ -2,7 +2,7 @@ use crate::alarm::{Alarm, Weekdays, earliest};
 use crate::battery::Gauge;
 use crate::face::{
     Face, Field, Listed, Listing, Row, Running, SAVED_ALARMS, SAVED_TIMERS, SOUNDS_SHOWN, Screen,
-    Size, Stage, Target, pitch, reach, render, target,
+    Size, Stage, Target, into_view, pitch, reach, render, target,
 };
 use crate::hardware::{Clock, Display, HardwareError, Input};
 use crate::input::{InputEvent, Key};
@@ -52,6 +52,7 @@ struct Grab {
 struct Swipe {
     from: usize,
     scroll: usize,
+    screen: Screen,
     target: Target,
     moved: bool,
 }
@@ -100,6 +101,7 @@ pub struct Ringer {
     grab: Option<Grab>,
     swipe: Option<Swipe>,
     scroll: usize,
+    saved: Option<usize>,
     marked: Option<usize>,
     power_off: bool,
     lit_seconds: i64,
@@ -166,6 +168,7 @@ impl Ringer {
             grab: None,
             swipe: None,
             scroll: 0,
+            saved: None,
             marked: None,
             power_off: true,
             lit_seconds: LIT_SECONDS,
@@ -439,6 +442,7 @@ impl Ringer {
             }),
         }
         ordered(&mut self.alarms);
+        self.saved = self.alarms.iter().position(|set| set.alarm == draft.alarm);
         self.rearm(now, offset);
     }
 
@@ -470,6 +474,7 @@ impl Ringer {
             None if self.timers.len() < SAVED_TIMERS && !self.countdown.is_zero() => {
                 let at = self.timers.partition_point(|&timer| timer < self.countdown);
                 self.timers.insert(at, self.countdown);
+                self.saved = Some(at);
             }
             None => {}
         }
@@ -592,6 +597,7 @@ impl Ringer {
         self.grab = None;
         self.swipe = None;
         self.scroll = 0;
+        self.saved = None;
         self.marked = None;
         self.recovery_marked = false;
         self.draft = None;
@@ -642,10 +648,16 @@ impl Ringer {
             self.draft = None;
             self.listing = None;
             self.scroll = 0;
-        } else if screen == Screen::Settings && self.listing.is_none() {
+        } else if (screen == Screen::Settings && self.listing.is_none())
+            || matches!(
+                target,
+                Target::Entry(_) | Target::Switch(_) | Target::Play(_)
+            )
+        {
             self.swipe = Some(Swipe {
                 from: y,
                 scroll: self.scroll,
+                screen,
                 target,
                 moved: false,
             });
@@ -721,11 +733,16 @@ impl Ringer {
         self.pick(picked);
     }
 
-    pub fn lifted(&mut self) {
+    pub fn lifted(&mut self, now: UnixSeconds, offset: UtcOffset) {
         if let Some(swipe) = self.swipe.take() {
-            let recovery_marked = std::mem::take(&mut self.recovery_marked);
-            if !swipe.moved {
-                self.touched_setting(swipe.target, recovery_marked);
+            match swipe.screen {
+                _ if swipe.moved => {}
+                Screen::Alarm => self.touched_alarm(swipe.target, None, now, offset),
+                Screen::Timer => self.touched_timer(swipe.target, None, now),
+                Screen::Settings => {
+                    let recovery_marked = std::mem::take(&mut self.recovery_marked);
+                    self.touched_setting(swipe.target, recovery_marked);
+                }
             }
         }
         if let Some(grab) = self.grab.take()
@@ -733,6 +750,22 @@ impl Ringer {
         {
             self.pick(stepped(grab.picked, grab.field, i64::from(grab.row.step())));
         }
+    }
+
+    fn rows(&self, screen: Screen) -> usize {
+        match screen {
+            Screen::Alarm => self.alarms.len(),
+            Screen::Timer => self.timers.len(),
+            Screen::Settings => 0,
+        }
+    }
+
+    pub fn settle(&mut self, size: Size, screen: Screen) {
+        let scroll = self
+            .saved
+            .take()
+            .map_or(self.scroll, |index| into_view(size, index, self.scroll));
+        self.scroll = scroll.min(reach(size, screen, self.rows(screen)));
     }
 
     #[must_use]
@@ -841,9 +874,13 @@ pub fn listen(
                     light.open(screen);
                 }
                 ringer.touched(touched, light.screen(), y, now, offset);
+                ringer.settle(size, light.screen());
             }
-            InputEvent::Move { y, .. } => ringer.dragged(y, pitch(size), reach(size)),
-            InputEvent::Lift => ringer.lifted(),
+            InputEvent::Move { y, .. } => {
+                let screen = light.screen();
+                ringer.dragged(y, pitch(size), reach(size, screen, ringer.rows(screen)));
+            }
+            InputEvent::Lift => ringer.lifted(now, offset),
         }
     }
     light.set_seconds(ringer.lit_seconds());
@@ -866,6 +903,20 @@ mod tests {
         height: 2280,
     };
     const PITCH: usize = 46;
+    const TWELVE: [(u8, u8); 12] = [
+        (1, 0),
+        (2, 0),
+        (3, 0),
+        (4, 0),
+        (5, 0),
+        (6, 0),
+        (8, 0),
+        (9, 0),
+        (10, 0),
+        (11, 0),
+        (12, 0),
+        (13, 0),
+    ];
     const HOUR_ABOVE: [InputEvent; 2] = tap(200, 220);
     const HOUR_BELOW: [InputEvent; 2] = tap(200, 600);
     const MINUTE_ABOVE: [InputEvent; 2] = tap(450, 220);
@@ -1074,20 +1125,40 @@ mod tests {
 
     #[test]
     fn a_listed_ringer_is_sorted_without_duplicates_and_capped() -> Result<(), TimeError> {
-        let mut alarms = daily(&[(9, 0), (6, 0), (7, 0), (5, 0), (8, 0), (4, 0)])?;
+        let mut alarms = daily(&[
+            (9, 0),
+            (6, 0),
+            (7, 0),
+            (5, 0),
+            (8, 0),
+            (4, 0),
+            (13, 0),
+            (12, 0),
+            (11, 0),
+            (10, 0),
+            (15, 0),
+            (14, 0),
+        ])?;
         alarms.push(set(6, 0, Weekdays::EVERY_DAY, true)?);
         alarms.push(set(6, 0, only(Weekday::Monday), false)?);
         let ringer = Ringer::listed(alarms);
-        assert_eq!(
-            ringer.alarms(),
-            [
-                set(4, 0, Weekdays::EVERY_DAY, false)?,
-                set(5, 0, Weekdays::EVERY_DAY, false)?,
-                set(6, 0, only(Weekday::Monday), false)?,
-                set(6, 0, Weekdays::EVERY_DAY, true)?,
-                set(7, 0, Weekdays::EVERY_DAY, false)?,
-            ]
-        );
+        let mut kept = vec![
+            set(4, 0, Weekdays::EVERY_DAY, false)?,
+            set(5, 0, Weekdays::EVERY_DAY, false)?,
+            set(6, 0, only(Weekday::Monday), false)?,
+            set(6, 0, Weekdays::EVERY_DAY, true)?,
+        ];
+        kept.extend(daily(&[
+            (7, 0),
+            (8, 0),
+            (9, 0),
+            (10, 0),
+            (11, 0),
+            (12, 0),
+            (13, 0),
+            (14, 0),
+        ])?);
+        assert_eq!(ringer.alarms(), kept);
         assert_eq!(ringer.next(), None);
         Ok(())
     }
@@ -1314,15 +1385,17 @@ mod tests {
         let clock = FakeClock::at(5, 59, 0);
         let mut ringer = ringer(7, 0)?;
         let mut input = FakeInput::with(&[&FIRST]);
-        listen(
-            &mut input,
-            60,
-            &clock,
-            berlin_winter,
-            PANEL,
-            &mut ringer,
-            &mut always(),
-        )?;
+        for _ in FIRST {
+            listen(
+                &mut input,
+                60,
+                &clock,
+                berlin_winter,
+                PANEL,
+                &mut ringer,
+                &mut always(),
+            )?;
+        }
         clock.pass(60);
         ringer.tick(clock.now()?, berlin_winter);
         assert_eq!(ringer.ring(), Ring::Ringing);
@@ -1737,13 +1810,14 @@ mod tests {
     }
 
     #[test]
-    fn a_set_of_timers_starts_on_its_shortest_without_zeros_duplicates_or_a_fifth()
+    fn a_set_of_timers_starts_on_its_shortest_without_zeros_duplicates_or_a_thirteenth()
     -> Result<(), TimeError> {
-        let ringer = timed(&[(9, 0), (0, 0), (1, 30), (9, 0), (3, 0), (0, 5), (20, 0)])?;
-        assert_eq!(
-            ringer.timers(),
-            countdowns(&[(0, 5), (1, 30), (3, 0), (9, 0)])?
-        );
+        let mut lengths = vec![(9, 0), (0, 0), (1, 30), (9, 0), (3, 0), (0, 5), (20, 0)];
+        lengths.extend((10..=17).map(|minutes| (minutes, 0)));
+        let ringer = timed(&lengths)?;
+        let mut kept = vec![(0, 5), (1, 30), (3, 0), (9, 0)];
+        kept.extend((10..=17).map(|minutes| (minutes, 0)));
+        assert_eq!(ringer.timers(), countdowns(&kept)?);
         assert_eq!(ringer.countdown(), Countdown::new(0, 0, 5)?);
         assert_eq!(timed(&[])?.countdown(), Countdown::default());
         Ok(())
@@ -1783,7 +1857,7 @@ mod tests {
     }
 
     #[test]
-    fn a_timer_is_added_in_order_once_and_never_at_zero_or_past_four()
+    fn a_timer_is_added_in_order_once_and_never_at_zero_or_past_twelve()
     -> Result<(), Box<dyn std::error::Error>> {
         let clock = FakeClock::at(12, 0, 0);
         let mut ringer = timed(&[(5, 0)])?;
@@ -1807,16 +1881,13 @@ mod tests {
             &mut zero,
         )?;
         assert_eq!(zero.timers(), []);
-        let mut full = timed(&[(1, 0), (2, 0), (3, 0), (4, 0)])?;
+        let mut full = timed(&TWELVE)?;
         drain(
             &mut FakeInput::with(&[&TIMER_TAB, &TIMER_SECONDS_BELOW, &TIMER_ADD]),
             &clock,
             &mut full,
         )?;
-        assert_eq!(
-            full.timers(),
-            countdowns(&[(1, 0), (2, 0), (3, 0), (4, 0)])?
-        );
+        assert_eq!(full.timers(), countdowns(&TWELVE)?);
         Ok(())
     }
 
@@ -1898,7 +1969,7 @@ mod tests {
     #[test]
     fn a_full_list_refuses_a_save_but_never_a_start() -> Result<(), Box<dyn std::error::Error>> {
         let clock = FakeClock::at(12, 0, 0);
-        let mut full = timed(&[(1, 0), (2, 0), (3, 0), (4, 0)])?;
+        let mut full = timed(&TWELVE)?;
         drain(
             &mut FakeInput::with(&[
                 &TIMER_TAB,
@@ -1912,10 +1983,7 @@ mod tests {
             &clock,
             &mut full,
         )?;
-        assert_eq!(
-            full.timers(),
-            countdowns(&[(1, 0), (2, 0), (3, 0), (4, 0)])?
-        );
+        assert_eq!(full.timers(), countdowns(&TWELVE)?);
         assert_eq!(
             full.running_until(),
             Some(UnixSeconds(clock.now()?.0 + 300))
@@ -2793,10 +2861,10 @@ mod tests {
     }
 
     #[test]
-    fn no_sixth_alarm_is_made_and_a_duplicate_is_merged_into_one()
+    fn no_thirteenth_alarm_is_made_and_a_duplicate_is_merged_into_one()
     -> Result<(), Box<dyn std::error::Error>> {
         let clock = FakeClock::at(7, 0, 0);
-        let mut full = Ringer::listed(daily(&[(5, 0), (6, 0), (8, 0), (9, 0), (10, 0)])?);
+        let mut full = Ringer::listed(daily(&TWELVE)?);
         drain(&mut FakeInput::with(&[&ADD]), &clock, &mut full)?;
         assert_eq!(full.editing(), None);
         assert_eq!(full.alarms().len(), SAVED_ALARMS);
@@ -3016,12 +3084,12 @@ mod tests {
             ringer.dragged(y, PITCH, 300);
             seen.push(scroll(&ringer));
         }
-        ringer.lifted();
+        ringer.lifted(now, UtcOffset::UTC);
         assert_eq!(seen, [100, 300, 0, 50]);
         assert_eq!(scroll(&ringer), 50);
         ringer.touched(Target::LitTime, Screen::Settings, 1000, now, UtcOffset::UTC);
         ringer.dragged(1100, PITCH, 300);
-        ringer.lifted();
+        ringer.lifted(now, UtcOffset::UTC);
         assert_eq!(scroll(&ringer), 0);
         assert_eq!(ringer.lit_seconds(), LIT_SECONDS);
         Ok(())
@@ -3040,7 +3108,7 @@ mod tests {
             let mut ringer = ringer(7, 0)?;
             ringer.touched(Target::LitTime, Screen::Settings, 1000, now, UtcOffset::UTC);
             ringer.dragged(to, PITCH, 0);
-            ringer.lifted();
+            ringer.lifted(now, UtcOffset::UTC);
             assert_eq!(ringer.lit_seconds(), lit_seconds, "{to}");
         }
         Ok(())
@@ -3071,7 +3139,7 @@ mod tests {
         let scrolled = |ringer: &mut Ringer| {
             ringer.touched(Target::Sound, Screen::Settings, 1500, now, UtcOffset::UTC);
             ringer.dragged(1300, PITCH, 300);
-            ringer.lifted();
+            ringer.lifted(now, UtcOffset::UTC);
             ringer
                 .face(now, UtcOffset::UTC, Gauge::UNREAD, Screen::Settings)
                 .scroll
@@ -3099,6 +3167,249 @@ mod tests {
             0
         );
         assert!(ringer.outputs().sound);
+        Ok(())
+    }
+
+    fn scroll_on(ringer: &Ringer, screen: Screen) -> Result<usize, HardwareError> {
+        Ok(ringer
+            .face(
+                FakeClock::at(6, 59, 0).now()?,
+                UtcOffset::UTC,
+                Gauge::UNREAD,
+                screen,
+            )
+            .scroll)
+    }
+
+    #[test]
+    fn a_drag_on_either_list_scrolls_its_rows_and_stops_at_both_ends_without_a_tap()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut light = always();
+        let mut alarms = Ringer::listed(daily(&TWELVE)?);
+        let before = alarms.alarms().to_vec();
+        drain_lit(
+            &mut FakeInput::with(&[&drag(300, 1500, &[1000])]),
+            &clock,
+            &mut alarms,
+            &mut light,
+        )?;
+        assert_eq!(scroll_on(&alarms, Screen::Alarm)?, 500);
+        drain_lit(
+            &mut FakeInput::with(&[&drag(300, 1500, &[200])]),
+            &clock,
+            &mut alarms,
+            &mut light,
+        )?;
+        assert_eq!(scroll_on(&alarms, Screen::Alarm)?, 1012);
+        drain_lit(
+            &mut FakeInput::with(&[&drag(930, 1000, &[2000])]),
+            &clock,
+            &mut alarms,
+            &mut light,
+        )?;
+        assert_eq!(scroll_on(&alarms, Screen::Alarm)?, 12);
+        drain_lit(
+            &mut FakeInput::with(&[&drag(930, 1000, &[2000])]),
+            &clock,
+            &mut alarms,
+            &mut light,
+        )?;
+        assert_eq!(scroll_on(&alarms, Screen::Alarm)?, 0);
+        assert_eq!(alarms.editing(), None);
+        assert_eq!(alarms.alarms(), before);
+        light = always();
+        let mut timers = timed(&TWELVE)?;
+        drain_lit(
+            &mut FakeInput::with(&[&TIMER_TAB]),
+            &clock,
+            &mut timers,
+            &mut light,
+        )?;
+        drain_lit(
+            &mut FakeInput::with(&[&drag(930, 1500, &[200])]),
+            &clock,
+            &mut timers,
+            &mut light,
+        )?;
+        assert_eq!(scroll_on(&timers, Screen::Timer)?, 1012);
+        assert_eq!(timers.running_until(), None);
+        Ok(())
+    }
+
+    #[test]
+    fn a_row_tapped_after_a_scroll_acts_on_the_row_drawn_under_it_once_the_finger_lifts()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut light = always();
+        let mut alarms = Ringer::listed(daily(&TWELVE)?);
+        drain_lit(
+            &mut FakeInput::with(&[&drag(300, 1500, &[200])]),
+            &clock,
+            &mut alarms,
+            &mut light,
+        )?;
+        let mut input = FakeInput::with(&[&OPEN_FIRST]);
+        listen(
+            &mut input,
+            60,
+            &clock,
+            UtcOffset::UTC,
+            PANEL,
+            &mut alarms,
+            &mut light,
+        )?;
+        assert_eq!(alarms.editing(), None);
+        drain_lit(&mut input, &clock, &mut alarms, &mut light)?;
+        assert_eq!(
+            alarms.editing(),
+            Some(Alarm {
+                time: TimeOfDay::new(6, 0)?,
+                repeat: Weekdays::EVERY_DAY,
+            })
+        );
+        light = always();
+        let mut timers = timed(&TWELVE)?;
+        drain_lit(
+            &mut FakeInput::with(&[&TIMER_TAB]),
+            &clock,
+            &mut timers,
+            &mut light,
+        )?;
+        drain_lit(
+            &mut FakeInput::with(&[&drag(930, 1500, &[200])]),
+            &clock,
+            &mut timers,
+            &mut light,
+        )?;
+        drain_lit(
+            &mut FakeInput::with(&[&PLAY_FIRST]),
+            &clock,
+            &mut timers,
+            &mut light,
+        )?;
+        assert_eq!(
+            timers.running_until(),
+            Some(UnixSeconds(clock.now()?.0 + 360))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_row_s_tap_is_dropped_once_the_finger_has_moved_half_a_pitch()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for (to, opened) in [(1022, true), (1023, false), (977, false)] {
+            let mut ringer = Ringer::listed(daily(&[(6, 0), (7, 0)])?);
+            let clock = FakeClock::at(6, 59, 0);
+            let mut light = always();
+            drain_lit(
+                &mut FakeInput::with(&[&drag(300, 1000, &[to])]),
+                &clock,
+                &mut ringer,
+                &mut light,
+            )?;
+            assert_eq!(ringer.editing().is_some(), opened, "{to}");
+            assert_eq!(scroll_on(&ringer, Screen::Alarm)?, 0, "{to}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_drag_on_the_ring_keeps_its_meaning_and_never_scrolls_the_list()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut light = always();
+        let mut alarms = Ringer::listed(daily(&TWELVE)?);
+        drain_lit(
+            &mut FakeInput::with(&[&drag(775, 718, &[200]), &drag(540, 400, &[100])]),
+            &clock,
+            &mut alarms,
+            &mut light,
+        )?;
+        assert_eq!(scroll_on(&alarms, Screen::Alarm)?, 0);
+        light = always();
+        let mut timers = timed(&TWELVE)?;
+        drain_lit(
+            &mut FakeInput::with(&[&TIMER_TAB]),
+            &clock,
+            &mut timers,
+            &mut light,
+        )?;
+        drain_lit(
+            &mut FakeInput::with(&[&drag(340, 480, &[480 - 2 * PITCH])]),
+            &clock,
+            &mut timers,
+            &mut light,
+        )?;
+        assert_eq!(timers.countdown(), Countdown::new(2, 1, 0)?);
+        assert_eq!(scroll_on(&timers, Screen::Timer)?, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn a_scrolled_list_starts_at_the_top_again_on_a_tab_change_or_once_the_panel_goes_dark()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(6, 59, 0);
+        let mut light = always();
+        let mut ringer = Ringer::listed(daily(&TWELVE)?);
+        drain_lit(
+            &mut FakeInput::with(&[&drag(300, 1500, &[1000])]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        assert_eq!(scroll_on(&ringer, Screen::Alarm)?, 500);
+        ringer.darkened();
+        assert_eq!(scroll_on(&ringer, Screen::Alarm)?, 0);
+        drain_lit(
+            &mut FakeInput::with(&[&drag(300, 1500, &[1000])]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        drain_lit(
+            &mut FakeInput::with(&[&ALARM_TAB]),
+            &clock,
+            &mut ringer,
+            &mut light,
+        )?;
+        assert_eq!(scroll_on(&ringer, Screen::Alarm)?, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn a_saved_row_is_scrolled_into_view_and_a_removed_one_leaves_no_scroll_past_the_end()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clock = FakeClock::at(23, 0, 0);
+        let mut light = always();
+        let mut alarms = Ringer::listed(daily(&TWELVE[..11])?);
+        drain_lit(
+            &mut FakeInput::with(&[&ADD, &DONE]),
+            &clock,
+            &mut alarms,
+            &mut light,
+        )?;
+        assert_eq!(alarms.alarms().len(), SAVED_ALARMS);
+        assert_eq!(
+            alarms.alarms().last().map(|set| set.alarm.time),
+            Some(TimeOfDay::new(23, 0)?)
+        );
+        assert_eq!(scroll_on(&alarms, Screen::Alarm)?, 1012);
+        drain(
+            &mut FakeInput::with(&[&tap(300, 2050), &DELETE, &DELETE]),
+            &clock,
+            &mut alarms,
+        )?;
+        assert_eq!(alarms.alarms(), daily(&TWELVE[..11])?);
+        assert_eq!(scroll_on(&alarms, Screen::Alarm)?, 828);
+        let mut timers = timed(&TWELVE[..11])?;
+        drain(
+            &mut FakeInput::with(&[&TIMER_TAB, &TIMER_HOURS_ABOVE, &TIMER_ADD]),
+            &clock,
+            &mut timers,
+        )?;
+        assert_eq!(timers.timers().len(), SAVED_TIMERS);
+        assert_eq!(scroll_on(&timers, Screen::Timer)?, 1012);
         Ok(())
     }
 }
