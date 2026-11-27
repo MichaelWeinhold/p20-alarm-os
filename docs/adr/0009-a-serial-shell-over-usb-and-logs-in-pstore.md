@@ -1,6 +1,7 @@
 # 9. A serial shell over USB, and the log in pstore
 
-- **Status:** Accepted; D2 amended for a lost line by issue 55
+- **Status:** Accepted; D2 amended for a lost line by issue 55, D3 for the prefix by issue
+  160
 - **Date:** 2026-11-12
 - **Issue:** #15
 - **Amends:** ADR 0002's consequence on the serial console
@@ -63,6 +64,9 @@ transport to be read later:
 | a reboot, or a panic once the boot counted as good | pstore: `console-ramoops-0`, and `dmesg-ramoops-0` for a panic | the debug shell's `/sys/fs/pstore`, or TWRP's |
 | a panic in `/init`, which starts eRecovery (ADR 0005, D5) | `dfx`, `mmcblk0p41`; reaching TWRP with the keys empties pstore | TWRP, `dd if=/dev/block/by-name/dfx` |
 | a hang | nothing yet | the keys, TWRP, and `dfx` |
+
+**Amended by issue 160**: an image built after ADR 0018's rename prefixes
+`p20-bedside-clock:`, so a read matches both prefixes.
 
 pstore has 512 KiB for the console, 128 KiB for `pmsg` and three 128 KiB oops records. A
 sysrq panic in the ROM came back by itself in 39 s with all three kept and no eRecovery

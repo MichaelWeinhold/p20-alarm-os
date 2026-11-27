@@ -1,7 +1,7 @@
 [project]
-name = "p20-alarm-os-tools"
+name = "p20-bedside-clock-tools"
 version = "0.1.0"
-description = "Host tooling for p20-alarm-os: the repository's guards and the boot image scripts"
+description = "Host tooling for p20-bedside-clock: the repository's guards and the boot image scripts"
 requires-python = ">=3.12"
 dependencies = []
 

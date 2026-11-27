@@ -62,7 +62,7 @@ mod tests {
     fn a_short_cmdline_is_one_line() {
         assert_eq!(
             cmdline("console=ttyS0\n"),
-            vec!["<3>p20-alarm-os: cmdline 1/1: console=ttyS0\n".to_owned()]
+            vec!["<3>p20-bedside-clock: cmdline 1/1: console=ttyS0\n".to_owned()]
         );
     }
 }

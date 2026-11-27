@@ -152,11 +152,11 @@ mod tests {
     fn a_stop_logs_its_step_or_its_failure() {
         assert_eq!(
             stop(&Ok(ChargeStep::Stopped)),
-            "<3>p20-alarm-os: charge stop: Stopped\n"
+            "<3>p20-bedside-clock: charge stop: Stopped\n"
         );
         assert_eq!(
             stop(&Err(HardwareError::Absent("Battery/capacity"))),
-            "<3>p20-alarm-os: charge stop failed: Battery/capacity is not present on this device\n"
+            "<3>p20-bedside-clock: charge stop failed: Battery/capacity is not present on this device\n"
         );
     }
 
@@ -172,7 +172,7 @@ mod tests {
         ];
         assert_eq!(
             line("start", &readings),
-            "<3>p20-alarm-os: power start: status=Not_charging \
+            "<3>p20-bedside-clock: power start: status=Not_charging \
              modem=ERR(No_such_file_or_directory_(os_error_2)) backlight=-\n"
         );
     }
@@ -185,7 +185,7 @@ mod tests {
         ];
         assert_eq!(
             line("start", &readings),
-            "<3>p20-alarm-os: power start: modem=MODEM_STATE_OFF cpus=0-7\n"
+            "<3>p20-bedside-clock: power start: modem=MODEM_STATE_OFF cpus=0-7\n"
         );
     }
 
