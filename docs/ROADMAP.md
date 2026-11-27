@@ -111,3 +111,11 @@ and a timer wakes a suspended phone when it ends.
   Material Symbols, rasterised by `face` at the layout's unit and blended into the frame,
   12.9 ms per frame for a clock's worth of glyphs on the Kirin 659. Its two follow-ups are
   the figures (104) and the icons (105).
+
+## Research before the timer and settings redesign
+
+- **The timer list, the settings screen and longer lists.** **Decided** — in ADR 0017:
+  the timer's picker in a ring with a start and a save on it, lengths in the short form,
+  labelled and grouped settings with the battery, a scrolled sound list, and alarm and
+  timer lists that scroll under their ring up to 12 rows. Its five follow-ups are filed
+  under issue 143.
