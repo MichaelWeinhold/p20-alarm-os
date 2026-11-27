@@ -38,6 +38,7 @@ documentation, starting from the vendor kernel rather than from nothing.
 | Speaker | **Decided and proven.** The codec's class-D, after `alarmd` replays the HAL's DSP init recorded under the ROM; sounds are WAV files converted on the host — [ADR 0015](docs/adr/0015-ring-through-the-speaker-after-replaying-the-hals-dsp-init.md), issue 14. |
 | Type and icons | **Decided.** Inter at weight 300 and Material Symbols, rasterised on the phone at the layout's unit and blended into the frame, for about 59 KB of binary — [ADR 0016](docs/adr/0016-rasterise-light-type-and-icons-on-the-phone.md), issue 95. |
 | Timer and settings screens | **Decided.** The timer's picker sits in a ring like the alarm clock and runs a length without saving it; settings are labelled rows in three groups; the alarm and timer lists scroll under their ring, up to 12 rows each — [ADR 0017](docs/adr/0017-put-the-timer-in-a-ring-label-the-settings-and-scroll-the-lists.md), issue 143. |
+| Name and README | **Decided.** The project becomes `p20-bedside-clock`, and the README leads with its screens, rendered on the host — [ADR 0018](docs/adr/0018-name-the-project-for-the-bedside-clock-and-lead-the-readme-with-its-screens.md), issue 141. |
 
 ## How it works
 
