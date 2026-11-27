@@ -2771,3 +2771,23 @@ describes them, the length counted from below the time left. The image was still
 
 **Not read off the phone:** a ringing timer's halo and the paused `✕ ▷` pair; the host's
 `face-timer-ringing.txt` and `face-timer-paused.txt` cover them.
+
+## 2026-11-27 — the timer ring, labelled settings and scrolled lists, for issues 145 to 148
+
+**`alarmd` at `4b32794` is 699672 bytes**, sha256
+`e02c972594d593396c10c45fa1739a2b9229c2b5df2ad2e1d5d37884d9dddc7b`. Issues 145 to 148
+merged without a run on the phone, so the phone still ran issue 144's `acb186ef…5455`, and
+the operator read only the short form as changed. From TWRP the new binary was copied over
+`/init` on `system`, replacing `acb186ef…5455`, kept at
+`~/p20-backups/init-alarmd-acb186ef-before-145-148`. `init.rom` still hashed
+`e8e2768e…78ef`, `misc`'s first 32 bytes were zeroed, and the RTC read 1795792614 against
+the Mac's 1795792619, before `adb reboot` at 15:17:01 UTC.
+
+**The operator read the new screens as better.** The timer tab and the settings screen
+came up as issues 145 and 147 describe them.
+
+**Not read off the phone:** a scroll of the alarm or timer list past the screen, a list
+of 12, the ring's two-tap bin, and a scroll of the sound list; the host's
+`face-sheet-scrolled.txt`, `face-timer-scrolled.txt` and
+`face-settings-sounds-scrolled.txt` cover their frames. What still reads dated goes to
+issue 158.
