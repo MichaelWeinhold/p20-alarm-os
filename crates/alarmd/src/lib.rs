@@ -988,6 +988,7 @@ mod tests {
             volume: None,
             sound: None,
             listing: None,
+            scroll: 0,
         })
     }
 
@@ -1188,6 +1189,7 @@ mod tests {
             at(6, 0, 0).now()?,
             UtcOffset::UTC,
         );
+        after.lifted();
         assert_eq!(
             change(&before, &after),
             Some(kmsg::line(
@@ -1340,7 +1342,7 @@ mod tests {
             at(6, 0, 0).now()?,
             UtcOffset::UTC,
         );
-        after.dragged(400, 46);
+        after.dragged(400, 46, 0);
         assert_ne!(after.editing(), None);
         assert_eq!(change(&before, &after), None);
         Ok(())
@@ -2084,6 +2086,7 @@ mod tests {
         let mut ringer = started.ringer.clone();
         for target in [Target::Sound, Target::Vibration] {
             ringer.touched(target, Screen::Settings, 0, clock.now()?, UtcOffset::UTC);
+            ringer.lifted();
         }
         assert_eq!(
             change(&started.ringer, &ringer),
@@ -2144,6 +2147,7 @@ mod tests {
             clock.now()?,
             UtcOffset::UTC,
         );
+        ringer.lifted();
         assert_eq!(
             change(&started.ringer, &ringer),
             Some(kmsg::line(
@@ -2178,6 +2182,7 @@ mod tests {
                 clock.now()?,
                 UtcOffset::UTC,
             );
+            ringer.lifted();
         }
         assert_eq!(
             change(&started.ringer, &ringer),

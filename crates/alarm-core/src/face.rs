@@ -58,13 +58,15 @@ const VOLUME_TRACK_HALVES: usize = 24;
 pub const SAVED_ALARMS: usize = 5;
 pub const SAVED_TIMERS: usize = 4;
 
-const POWER_OFF_ROW: usize = 0;
-const LIT_ROW: usize = 1;
-const SOUND_ROW: usize = 2;
-const SOUND_NAME_ROW: usize = 3;
-const VIBRATION_ROW: usize = 4;
-const RAMP_ROW: usize = 5;
-const RECOVERY_ROW: usize = 6;
+const SETTINGS: [Target; 7] = [
+    Target::PowerOff,
+    Target::LitTime,
+    Target::Sound,
+    Target::SoundList,
+    Target::Vibration,
+    Target::Ramp,
+    Target::Recovery,
+];
 const NAME_UNITS: usize = 3;
 pub const SOUNDS_SHOWN: usize = 6;
 const TIME_FIELDS: [Field; 2] = [Field::Hours, Field::Minutes];
@@ -151,6 +153,7 @@ pub struct Face {
     pub volume: Option<Volume>,
     pub sound: Option<SoundName>,
     pub listing: Option<Listing>,
+    pub scroll: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -774,63 +777,85 @@ fn switch(frame: &mut Frame, (right, y): (usize, usize), unit: usize, on: bool) 
     );
 }
 
-fn settings_screen(frame: &mut Frame, sheet: Sheet, face: &Face) {
+fn settings_screen(frame: &mut Frame, sheet: Sheet, bar_top: usize, face: &Face, rows: &[Target]) {
+    let height = ROW_UNITS * sheet.unit;
+    for (index, &row) in rows.iter().enumerate() {
+        let Some(top) = sheet.setting_row(index).checked_sub(face.scroll) else {
+            continue;
+        };
+        if top + height > sheet.wheel_top && top < bar_top {
+            setting(frame, sheet, top, row, face);
+        }
+    }
+    let size = frame.size();
+    frame.fill(0, 0, size.width, sheet.wheel_top, BACKGROUND);
+    frame.fill(0, bar_top, size.width, size.height - bar_top, BACKGROUND);
+}
+
+fn setting(frame: &mut Frame, sheet: Sheet, top: usize, row: Target, face: &Face) {
     let unit = sheet.unit;
     let right = sheet.side + SIDE_UNITS * unit;
-    let top = sheet.setting_row(POWER_OFF_ROW);
-    symbol(
-        frame,
-        Icon::Power,
-        (sheet.left, top),
-        unit,
-        Ink::Flat(FOREGROUND),
-    );
-    switch(frame, (right, top), unit, face.power_off);
-    let top = sheet.setting_row(LIT_ROW);
-    symbol(
-        frame,
-        Icon::Light,
-        (sheet.left, top),
-        unit,
-        Ink::Flat(FOREGROUND),
-    );
-    let lit = Countdown::of(face.lit_seconds);
+    let at = (sheet.left, top);
+    let plain = Ink::Flat(FOREGROUND);
+    match row {
+        Target::PowerOff => {
+            symbol(frame, Icon::Power, at, unit, plain);
+            switch(frame, (right, top), unit, face.power_off);
+        }
+        Target::LitTime => {
+            symbol(frame, Icon::Light, at, unit, plain);
+            length(frame, (right, top), unit, face.lit_seconds);
+        }
+        Target::Sound => {
+            symbol(frame, Icon::Volume, at, unit, plain);
+            switch(frame, (right, top), unit, face.outputs.sound);
+        }
+        Target::SoundList => sound_name(frame, sheet, top, face),
+        Target::Vibration => {
+            symbol(frame, Icon::Vibration, at, unit, plain);
+            switch(frame, (right, top), unit, face.outputs.vibration);
+        }
+        Target::Ramp => {
+            symbol(frame, Icon::Ramp, at, unit, plain);
+            if face.ramp_seconds > 0 {
+                length(frame, (right, top), unit, face.ramp_seconds);
+            } else {
+                switch(frame, (right, top), unit, false);
+            }
+        }
+        Target::Recovery => {
+            let ink = Ink::Flat(if face.recovery_marked {
+                WARNING
+            } else {
+                FOREGROUND
+            });
+            symbol(frame, Icon::Recovery, at, unit, ink);
+            symbol(
+                frame,
+                Icon::Restart,
+                (right - ICON_UNITS * unit, top),
+                unit,
+                ink,
+            );
+        }
+        _ => {}
+    }
+}
+
+fn length(frame: &mut Frame, (right, top): (usize, usize), unit: usize, seconds: i64) {
+    let shown = Countdown::of(seconds);
     figures(
         frame,
         (right - UNITS_ACROSS * unit, top),
         unit,
-        &[lit.minutes(), lit.seconds()],
+        &[shown.minutes(), shown.seconds()],
         FOREGROUND,
     );
-    for (row, icon, on) in [
-        (SOUND_ROW, Icon::Volume, face.outputs.sound),
-        (VIBRATION_ROW, Icon::Vibration, face.outputs.vibration),
-    ] {
-        let top = sheet.setting_row(row);
-        symbol(frame, icon, (sheet.left, top), unit, Ink::Flat(FOREGROUND));
-        switch(frame, (right, top), unit, on);
-    }
-    let top = sheet.setting_row(RAMP_ROW);
-    symbol(
-        frame,
-        Icon::Ramp,
-        (sheet.left, top),
-        unit,
-        Ink::Flat(FOREGROUND),
-    );
-    if face.ramp_seconds > 0 {
-        let ramp = Countdown::of(face.ramp_seconds);
-        figures(
-            frame,
-            (right - UNITS_ACROSS * unit, top),
-            unit,
-            &[ramp.minutes(), ramp.seconds()],
-            FOREGROUND,
-        );
-    } else {
-        switch(frame, (right, top), unit, false);
-    }
-    let top = sheet.setting_row(SOUND_NAME_ROW);
+}
+
+fn sound_name(frame: &mut Frame, sheet: Sheet, top: usize, face: &Face) {
+    let unit = sheet.unit;
+    let right = sheet.side + SIDE_UNITS * unit;
     let (shown, colour) = face
         .sound
         .as_ref()
@@ -842,20 +867,6 @@ fn settings_screen(frame: &mut Frame, sheet: Sheet, face: &Face) {
         (right - ICON_UNITS * unit, top),
         unit,
         Ink::Flat(FOREGROUND),
-    );
-    let top = sheet.setting_row(RECOVERY_ROW);
-    let ink = Ink::Flat(if face.recovery_marked {
-        WARNING
-    } else {
-        FOREGROUND
-    });
-    symbol(frame, Icon::Recovery, (sheet.left, top), unit, ink);
-    symbol(
-        frame,
-        Icon::Restart,
-        (right - ICON_UNITS * unit, top),
-        unit,
-        ink,
     );
 }
 
@@ -1384,6 +1395,10 @@ fn volume_panel(frame: &mut Frame, unit: usize, volume: Option<Volume>) {
 
 #[must_use]
 pub fn render(size: Size, face: &Face) -> Frame {
+    drawn(size, face, &SETTINGS)
+}
+
+fn drawn(size: Size, face: &Face, rows: &[Target]) -> Frame {
     let mut frame = Frame::filled(size, BACKGROUND);
     let Some(layout) = layout(size) else {
         return frame;
@@ -1436,7 +1451,7 @@ pub fn render(size: Size, face: &Face) -> Frame {
             if let Some(sheet) = sheet(size, &layout, Arrangement::Rows) {
                 match &face.listing {
                     Some(listing) => listing_screen(&mut frame, sheet, listing),
-                    None => settings_screen(&mut frame, sheet, face),
+                    None => settings_screen(&mut frame, sheet, layout.bar_top, face, rows),
                 }
             }
         }
@@ -1449,6 +1464,20 @@ pub fn render(size: Size, face: &Face) -> Frame {
 #[must_use]
 pub fn pitch(size: Size) -> usize {
     layout(size).map_or(1, |layout| layout.unit.max(1))
+}
+
+#[must_use]
+pub fn reach(size: Size) -> usize {
+    reach_of(size, &SETTINGS)
+}
+
+fn reach_of(size: Size, rows: &[Target]) -> usize {
+    let Some(layout) = layout(size) else {
+        return 0;
+    };
+    sheet(size, &layout, Arrangement::Rows).map_or(0, |sheet| {
+        (sheet.setting_row(rows.len()).saturating_sub(sheet.unit)).saturating_sub(layout.bar_top)
+    })
 }
 
 fn wheel(sheet: Sheet, fields: &[Field], figure: usize, x: usize, y: usize) -> Target {
@@ -1551,8 +1580,25 @@ fn listing_target(sheet: Sheet, x: usize, y: usize) -> Target {
         .map_or(Target::Blank, Target::Choose)
 }
 
+fn settings_target(sheet: Sheet, rows: &[Target], y: usize, scroll: usize) -> Target {
+    if y + sheet.unit / 2 < sheet.wheel_top {
+        return Target::Blank;
+    }
+    (0..rows.len())
+        .find(|&index| sheet.band(sheet.setting_row(index), y + scroll))
+        .and_then(|index| rows.get(index).copied())
+        .unwrap_or(Target::Blank)
+}
+
 #[must_use]
-pub fn target(size: Size, screen: Screen, stage: Stage, x: usize, y: usize) -> Target {
+pub fn target(
+    size: Size,
+    screen: Screen,
+    stage: Stage,
+    x: usize,
+    y: usize,
+    scroll: usize,
+) -> Target {
     let Some(layout) = layout(size) else {
         return Target::Blank;
     };
@@ -1567,53 +1613,26 @@ pub fn target(size: Size, screen: Screen, stage: Stage, x: usize, y: usize) -> T
     }
     match (screen, stage) {
         (Screen::Timer, Stage::Running) => {
-            return dial(size, &layout).map_or(Target::Blank, |dial| dial_target(dial, x, y));
+            dial(size, &layout).map_or(Target::Blank, |dial| dial_target(dial, x, y))
         }
-        (Screen::Alarm, Stage::Editing) => {
-            return match (
-                sheet(size, &layout, Arrangement::Picker),
-                board(size, &layout),
-            ) {
-                (Some(sheet), Some(_)) => editor_target(sheet, x, y),
-                _ => Target::Blank,
-            };
-        }
+        (Screen::Alarm, Stage::Editing) => match (
+            sheet(size, &layout, Arrangement::Picker),
+            board(size, &layout),
+        ) {
+            (Some(sheet), Some(_)) => editor_target(sheet, x, y),
+            _ => Target::Blank,
+        },
         (Screen::Alarm, _) => {
-            return board(size, &layout).map_or(Target::Blank, |board| board_target(board, x, y));
+            board(size, &layout).map_or(Target::Blank, |board| board_target(board, x, y))
         }
-        (Screen::Timer, _) => {
-            return sheet(size, &layout, Arrangement::Picker)
-                .map_or(Target::Blank, |sheet| sheet_target(sheet, x, y));
-        }
-        (Screen::Settings, Stage::Choosing) => {
-            return sheet(size, &layout, Arrangement::Rows)
-                .map_or(Target::Blank, |sheet| listing_target(sheet, x, y));
-        }
-        (Screen::Settings, _) => {}
-    }
-    match (screen, sheet(size, &layout, Arrangement::Rows)) {
-        (Screen::Settings, Some(sheet)) if sheet.band(sheet.setting_row(POWER_OFF_ROW), y) => {
-            Target::PowerOff
-        }
-        (Screen::Settings, Some(sheet)) if sheet.band(sheet.setting_row(LIT_ROW), y) => {
-            Target::LitTime
-        }
-        (Screen::Settings, Some(sheet)) if sheet.band(sheet.setting_row(SOUND_ROW), y) => {
-            Target::Sound
-        }
-        (Screen::Settings, Some(sheet)) if sheet.band(sheet.setting_row(SOUND_NAME_ROW), y) => {
-            Target::SoundList
-        }
-        (Screen::Settings, Some(sheet)) if sheet.band(sheet.setting_row(VIBRATION_ROW), y) => {
-            Target::Vibration
-        }
-        (Screen::Settings, Some(sheet)) if sheet.band(sheet.setting_row(RAMP_ROW), y) => {
-            Target::Ramp
-        }
-        (Screen::Settings, Some(sheet)) if sheet.band(sheet.setting_row(RECOVERY_ROW), y) => {
-            Target::Recovery
-        }
-        _ => Target::Blank,
+        (Screen::Timer, _) => sheet(size, &layout, Arrangement::Picker)
+            .map_or(Target::Blank, |sheet| sheet_target(sheet, x, y)),
+        (Screen::Settings, Stage::Choosing) => sheet(size, &layout, Arrangement::Rows)
+            .map_or(Target::Blank, |sheet| listing_target(sheet, x, y)),
+        (Screen::Settings, _) => sheet(size, &layout, Arrangement::Rows)
+            .map_or(Target::Blank, |sheet| {
+                settings_target(sheet, &SETTINGS, y, scroll)
+            }),
     }
 }
 
@@ -1791,6 +1810,7 @@ mod tests {
             volume: None,
             sound: SoundName::new("ringtone.wav"),
             listing: None,
+            scroll: 0,
         })
     }
 
@@ -2180,7 +2200,7 @@ mod tests {
 
     #[test]
     fn a_tap_across_a_settings_row_is_its_setting_and_elsewhere_blank() {
-        let settings = |x, y| target(PANEL, Screen::Settings, Stage::List, x, y);
+        let settings = |x, y| target(PANEL, Screen::Settings, Stage::List, x, y, 0);
         assert_eq!(settings(0, 725), Target::PowerOff);
         assert_eq!(settings(540, 800), Target::PowerOff);
         assert_eq!(settings(1079, 908), Target::PowerOff);
@@ -2206,14 +2226,14 @@ mod tests {
         assert_eq!(settings(540, 2013), Target::Blank);
         assert_eq!(settings(540, 2092), Target::Blank);
         assert_eq!(
-            target(SMALL, Screen::Settings, Stage::List, 50, 20),
+            target(SMALL, Screen::Settings, Stage::List, 50, 20, 0),
             Target::Blank
         );
     }
 
     #[test]
     fn a_tap_on_the_sound_list_is_close_or_more_on_its_first_row_and_a_name_below() {
-        let listing = |x, y| target(PANEL, Screen::Settings, Stage::Choosing, x, y);
+        let listing = |x, y| target(PANEL, Screen::Settings, Stage::Choosing, x, y, 0);
         assert_eq!(listing(0, 725), Target::Close);
         assert_eq!(listing(500, 908), Target::Close);
         assert_eq!(listing(1079, 725), Target::More);
@@ -2540,11 +2560,11 @@ mod tests {
         let frame = render(short, &face(true, false, Gauge::UNREAD)?);
         assert_eq!(frame, Frame::filled(short, BACKGROUND));
         assert_eq!(
-            target(short, Screen::Alarm, Stage::List, 10, 10),
+            target(short, Screen::Alarm, Stage::List, 10, 10, 0),
             Target::Blank
         );
         assert_eq!(
-            target(short, Screen::Timer, Stage::List, 10, 10),
+            target(short, Screen::Timer, Stage::List, 10, 10, 0),
             Target::Blank
         );
         Ok(())
@@ -2560,7 +2580,7 @@ mod tests {
         assert_eq!(picture(&frame).len(), picture(&render(SMALL, &timer)).len());
         assert!(lit(&frame).iter().all(|&(_, y, _)| y > SMALL.height / 2));
         assert_eq!(
-            target(SMALL, Screen::Alarm, Stage::List, 50, 20),
+            target(SMALL, Screen::Alarm, Stage::List, 50, 20, 0),
             Target::Blank
         );
         Ok(())
@@ -2568,7 +2588,7 @@ mod tests {
 
     #[test]
     fn a_tap_on_the_alarm_screen_is_the_plus_a_row_or_its_switch() {
-        let alarm = |x, y| target(PANEL, Screen::Alarm, Stage::List, x, y);
+        let alarm = |x, y| target(PANEL, Screen::Alarm, Stage::List, x, y, 0);
         assert_eq!(alarm(775, 718), Target::Add);
         assert_eq!(alarm(672, 615), Target::Add);
         assert_eq!(alarm(878, 821), Target::Add);
@@ -2588,7 +2608,7 @@ mod tests {
 
     #[test]
     fn a_tap_on_the_editor_is_a_wheel_the_check_the_cross_or_a_day() {
-        let editor = |x, y| target(PANEL, Screen::Alarm, Stage::Editing, x, y);
+        let editor = |x, y| target(PANEL, Screen::Alarm, Stage::Editing, x, y, 0);
         assert_eq!(editor(200, 220), Target::Wheel(Field::Hours, Row::Above));
         assert_eq!(editor(308, 400), Target::Wheel(Field::Hours, Row::Picked));
         assert_eq!(editor(309, 400), Target::Wheel(Field::Minutes, Row::Picked));
@@ -2611,15 +2631,15 @@ mod tests {
         assert_eq!(editor(540, 1500), Target::Blank);
         assert_eq!(editor(540, 2200), Target::Tab(Screen::Timer));
         assert_eq!(
-            target(PANEL, Screen::Timer, Stage::Editing, 540, 820),
-            target(PANEL, Screen::Timer, Stage::List, 540, 820)
+            target(PANEL, Screen::Timer, Stage::Editing, 540, 820, 0),
+            target(PANEL, Screen::Timer, Stage::List, 540, 820, 0)
         );
     }
 
     #[test]
     fn a_tap_on_the_bar_picks_the_tab_in_its_third_on_every_screen() {
         for screen in Screen::ALL {
-            let tap = |x, y| target(PANEL, screen, Stage::List, x, y);
+            let tap = |x, y| target(PANEL, screen, Stage::List, x, y, 0);
             assert_eq!(tap(0, 2279), Target::Tab(Screen::Alarm));
             assert_eq!(tap(359, 2100), Target::Tab(Screen::Alarm));
             assert_eq!(tap(360, 2200), Target::Tab(Screen::Timer));
@@ -2631,7 +2651,7 @@ mod tests {
 
     #[test]
     fn a_tap_on_the_list_stage_is_the_slider_a_play_or_a_cross() {
-        let timer = |x, y| target(PANEL, Screen::Timer, Stage::List, x, y);
+        let timer = |x, y| target(PANEL, Screen::Timer, Stage::List, x, y, 0);
         assert_eq!(timer(140, 220), Target::Wheel(Field::Hours, Row::Above));
         assert_eq!(timer(214, 400), Target::Wheel(Field::Hours, Row::Picked));
         assert_eq!(timer(215, 400), Target::Wheel(Field::Minutes, Row::Picked));
@@ -2655,7 +2675,7 @@ mod tests {
 
     #[test]
     fn a_tap_on_the_running_stage_is_the_x_the_pause_or_blank() {
-        let running = |x, y| target(PANEL, Screen::Timer, Stage::Running, x, y);
+        let running = |x, y| target(PANEL, Screen::Timer, Stage::Running, x, y, 0);
         assert_eq!(running(0, 1506), Target::Close);
         assert_eq!(running(218, 1667), Target::Close);
         assert_eq!(running(378, 1827), Target::Close);
@@ -2668,7 +2688,7 @@ mod tests {
         assert_eq!(running(200, 820), Target::Blank);
         assert_eq!(running(540, 2200), Target::Tab(Screen::Timer));
         assert_eq!(
-            target(PANEL, Screen::Alarm, Stage::Running, 300, 1000),
+            target(PANEL, Screen::Alarm, Stage::Running, 300, 1000, 0),
             Target::Entry(0)
         );
     }
@@ -2696,5 +2716,88 @@ mod tests {
             }),
             1
         );
+    }
+
+    const LONG: [Target; 14] = [
+        Target::PowerOff,
+        Target::LitTime,
+        Target::Sound,
+        Target::SoundList,
+        Target::Vibration,
+        Target::Ramp,
+        Target::Recovery,
+        Target::PowerOff,
+        Target::LitTime,
+        Target::Sound,
+        Target::SoundList,
+        Target::Vibration,
+        Target::Ramp,
+        Target::Recovery,
+    ];
+
+    #[test]
+    fn the_rows_scroll_as_far_as_they_run_past_the_bar_and_not_at_all_when_they_fit() {
+        assert_eq!(reach(PANEL), 0);
+        assert_eq!(reach_of(PANEL, &SETTINGS[..1]), 0);
+        assert_eq!(reach_of(PANEL, &LONG), 736 + (14 * 8 - 1) * 23 - 2093);
+        assert_eq!(reach_of(SHEET, &LONG), 64 + (14 * 8 - 1) * 2 - 211);
+        assert_eq!(reach_of(SMALL, &LONG), 0);
+    }
+
+    #[test]
+    fn a_tap_after_a_scroll_hits_the_row_drawn_under_it() -> Outcome {
+        let layout = layout(PANEL).ok_or("no layout")?;
+        let sheet = sheet(PANEL, &layout, Arrangement::Rows).ok_or("no sheet")?;
+        let long = |y, scroll| settings_target(sheet, &LONG, y, scroll);
+        assert_eq!(long(800, 0), Target::PowerOff);
+        assert_eq!(long(800, 184), Target::LitTime);
+        assert_eq!(long(2050, 0), Target::PowerOff);
+        assert_eq!(long(2050, 184), Target::LitTime);
+        assert_eq!(long(725, 1196), Target::Recovery);
+        assert_eq!(long(1800, 1196), Target::Ramp);
+        assert_eq!(long(1960, 1196), Target::Recovery);
+        assert_eq!(long(2092, 1196), Target::Recovery);
+        assert_eq!(long(724, 100), Target::Blank);
+        assert_eq!(
+            target(PANEL, Screen::Settings, Stage::List, 540, 800, 184),
+            Target::LitTime
+        );
+        assert_eq!(
+            target(PANEL, Screen::Settings, Stage::List, 900, 2200, 184),
+            Target::Tab(Screen::Settings)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_scrolled_list_shows_its_rows_moved_up_and_cut_at_the_band_s_edges_as_recorded() -> Outcome
+    {
+        let scrolled = Face {
+            screen: Screen::Settings,
+            scroll: 40,
+            ..face(true, false, charged(80)?)?
+        };
+        assert_eq!(
+            picture(&drawn(SHEET, &scrolled, &LONG)),
+            include_str!("../testdata/face-settings-scrolled.txt")
+        );
+        assert_eq!(
+            drawn(
+                SHEET,
+                &Face {
+                    scroll: 0,
+                    ..scrolled.clone()
+                },
+                &SETTINGS
+            ),
+            render(
+                SHEET,
+                &Face {
+                    scroll: 0,
+                    ..scrolled
+                }
+            )
+        );
+        Ok(())
     }
 }

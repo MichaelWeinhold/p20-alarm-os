@@ -2717,3 +2717,40 @@ boot. No photos were taken.
 **Not read off the phone:** a volume key during the ramp, and the climb's steps one by one;
 the host covers both, in `ringer`'s and `alarmd`'s ramp tests. The phone was left in TWRP
 with `6da77e75…b595` on `/init`.
+
+## 2026-11-26 — the settings rows scroll, for issue 139
+
+**`alarmd` at `e7b8762` is 692752 bytes**, sha256
+`cc39cc34aa9ab01ed7fc8df567ad474a12b937d2abd4a12ba23c49d1b330a90c`. From TWRP it was
+copied over `/init` on `system`, replacing issue 135's `6da77e75…b595`, kept at
+`~/p20-backups/init-alarmd-6da77e75-before-139`. `init.rom` still hashed `e8e2768e…78ef`,
+`misc`'s first 32 bytes were zeroed, and the RTC read 1795730104 against the Mac's
+1795730109, before `adb reboot` at 21:55:13 UTC.
+
+**One flicker on the first drag of that boot, not seen again.** The operator reported
+every row going up by about 10 cm for a moment on the first drag on the settings screen,
+and nothing on later drags, after a change of tab, or after the panel went dark. With
+seven rows `reach` is 0 at 1080×2280, so no drag can draw the rows moved; the host's
+`rows_that_all_fit_stay_put_under_a_drag_and_the_drag_turns_nothing` drives that through
+`listen`. The loop redraws on every touch event, as it did before this change, so the
+flicker is more likely a page flip than the scroll; the cause was not found.
+
+**Taps turn the rows at their lift.** A second boot at 08:06:28 UTC on 2026-11-27 logged
+`lit 120 s`, `sound off` and `vibration off` from one tap each between 50.95 s and 54.54
+s. Four more steps of the lit time, `300 s`, `10 s`, `30 s` and `60 s` between 80.11 s and
+81.59 s, came back to the value before the first tap; they are read as taps putting it
+back, not as drags. The operator saw no flicker; `settings saved` came at 87.63 s.
+
+**A drag turns nothing.** A probe build logging every input event to the kernel log,
+`9af84e1d58c9826b856f86613d59324fcaeea1fb181b35b8e8c3b0bec9d76cd4`, 693680 bytes, kept at
+`~/p20-backups/init-alarmd-9af84e1d-probe-139`, replaced `cc39cc34…a90c`, kept at
+`~/p20-backups/init-alarmd-cc39cc34-before-139-probe`, for two boots at 08:12:12 and
+08:14:04 UTC. Seven drags and three flicks on the lit-time row, up, down and up and back,
+logged a `Touch`, a `Move` every 34 ms and a `Lift`, reaching 542 to 976 px from where
+they touched; none changed the lit time, and one tap on the vibration row did. The second
+frame of every touch repeats its first position. `cc39cc34…a90c` was copied back over
+`/init` the same way, with the RTC 1795767414 against 1795767419, and rebooted at 08:16:59
+UTC. `console-ramoops-0` read no `Kernel panic` in any boot.
+
+**Not read off the phone:** the rows moving under a drag, since all seven fit; the host
+covers it with a fourteen-row list, and it is read on the phone once an eighth row lands.
