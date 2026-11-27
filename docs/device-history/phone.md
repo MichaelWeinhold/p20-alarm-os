@@ -2754,3 +2754,20 @@ UTC. `console-ramoops-0` read no `Kernel panic` in any boot.
 
 **Not read off the phone:** the rows moving under a drag, since all seven fit; the host
 covers it with a fourteen-row list, and it is read on the phone once an eighth row lands.
+
+## 2026-11-27 — timer lengths in the short form, for issue 144
+
+**`alarmd` at `4bfe6d2` is 693792 bytes**, sha256
+`acb186ef4837a8b26e142aa5806b6f3726f7a6565aba5d2f08695b8efef65455`. From TWRP it was
+copied over `/init` on `system`, replacing issue 139's `cc39cc34…a90c`, kept at
+`~/p20-backups/init-alarmd-cc39cc34-before-144`. `init.rom` still hashed `e8e2768e…78ef`,
+`misc`'s first 32 bytes were zeroed, and the RTC read 1795771363 against the Mac's
+1795771368, before `adb reboot` at 09:22:54 UTC.
+
+**The operator read the short form on the screen.** The picker drew its leading `00`
+pairs grey while the hour was 0. The saved rows and a running countdown read as issue 144
+describes them, the length counted from below the time left. The image was still up at
+09:34:54 UTC.
+
+**Not read off the phone:** a ringing timer's halo and the paused `✕ ▷` pair; the host's
+`face-timer-ringing.txt` and `face-timer-paused.txt` cover them.
