@@ -767,6 +767,7 @@ mod tests {
         ringer.set_sound(ringtone());
         let before = UnixSeconds(clock.now()?.0 - 60);
         ringer.touched(Target::Switch(0), Screen::Alarm, 0, before, UtcOffset::UTC);
+        ringer.lifted(before, UtcOffset::UTC);
         ringer.tick(clock.now()?, UtcOffset::UTC);
         Ok(ringer)
     }
@@ -933,6 +934,7 @@ mod tests {
             clock.now()?,
             UtcOffset::UTC,
         );
+        ringer.lifted(clock.now()?, UtcOffset::UTC);
         Ok(ringer)
     }
 
@@ -945,6 +947,7 @@ mod tests {
             clock.now()?,
             UtcOffset::UTC,
         );
+        ringer.lifted(clock.now()?, UtcOffset::UTC);
         Ok(ringer)
     }
 
@@ -1133,6 +1136,7 @@ mod tests {
             before.now()?,
             UtcOffset::UTC,
         );
+        ringer.lifted(before.now()?, UtcOffset::UTC);
         minute(
             &before,
             UtcOffset::UTC,
@@ -1168,6 +1172,7 @@ mod tests {
             at(6, 0, 0).now()?,
             UtcOffset::UTC,
         );
+        after.lifted(at(6, 0, 0).now()?, UtcOffset::UTC);
         assert_eq!(
             change(&before, &after),
             Some(kmsg::line(&format!(
@@ -1189,7 +1194,7 @@ mod tests {
             at(6, 0, 0).now()?,
             UtcOffset::UTC,
         );
-        after.lifted();
+        after.lifted(at(6, 0, 0).now()?, UtcOffset::UTC);
         assert_eq!(
             change(&before, &after),
             Some(kmsg::line(
@@ -1295,6 +1300,7 @@ mod tests {
             clock.now()?,
             UtcOffset::UTC,
         );
+        running.lifted(clock.now()?, UtcOffset::UTC);
         let mut paused = running.clone();
         paused.touched(
             Target::Pause,
@@ -1333,7 +1339,7 @@ mod tests {
         let mut after = before.clone();
         for target in [Target::Entry(0), Target::Day(Weekday::Monday)] {
             after.touched(target, Screen::Alarm, 0, at(6, 0, 0).now()?, UtcOffset::UTC);
-            after.lifted();
+            after.lifted(at(6, 0, 0).now()?, UtcOffset::UTC);
         }
         after.touched(
             Target::Wheel(Field::Hours, Row::Picked),
@@ -1367,7 +1373,7 @@ mod tests {
             Target::Switch(0),
         ] {
             ringer.touched(target, Screen::Alarm, 0, clock.now()?, berlin()?);
-            ringer.lifted();
+            ringer.lifted(clock.now()?, berlin()?);
         }
         let current = choices(&ringer, berlin()?, WINDOW_SECONDS);
         let shown: Vec<_> = current
@@ -2086,7 +2092,7 @@ mod tests {
         let mut ringer = started.ringer.clone();
         for target in [Target::Sound, Target::Vibration] {
             ringer.touched(target, Screen::Settings, 0, clock.now()?, UtcOffset::UTC);
-            ringer.lifted();
+            ringer.lifted(clock.now()?, UtcOffset::UTC);
         }
         assert_eq!(
             change(&started.ringer, &ringer),
@@ -2147,7 +2153,7 @@ mod tests {
             clock.now()?,
             UtcOffset::UTC,
         );
-        ringer.lifted();
+        ringer.lifted(clock.now()?, UtcOffset::UTC);
         assert_eq!(
             change(&started.ringer, &ringer),
             Some(kmsg::line(
@@ -2182,7 +2188,7 @@ mod tests {
                 clock.now()?,
                 UtcOffset::UTC,
             );
-            ringer.lifted();
+            ringer.lifted(clock.now()?, UtcOffset::UTC);
         }
         assert_eq!(
             change(&started.ringer, &ringer),
@@ -2570,6 +2576,7 @@ mod tests {
         ringer.set_sound(ringtone());
         let before = UnixSeconds(at(7, 0, 0).now()?.0 - 60);
         ringer.touched(Target::Switch(0), Screen::Alarm, 0, before, UtcOffset::UTC);
+        ringer.lifted(before, UtcOffset::UTC);
         let mut battery: Result<FakeBattery, HardwareError> =
             Err(HardwareError::Absent("Battery/capacity"));
         let mut buzz = buzz(Ok(FakeVibrator::default()));

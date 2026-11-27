@@ -59,8 +59,10 @@ const COUNTDOWN_PARTS: usize = 46;
 const MINUTES_PARTS: usize = 30;
 const HOURS_PARTS: usize = 22;
 
-pub const SAVED_ALARMS: usize = 5;
-pub const SAVED_TIMERS: usize = 4;
+pub const SAVED_ALARMS: usize = 12;
+pub const SAVED_TIMERS: usize = 12;
+const BOARD_ROWS: usize = 5;
+const SHEET_ROWS: usize = 4;
 
 const SETTINGS: [Target; 7] = [
     Target::PowerOff,
@@ -421,7 +423,7 @@ fn sheet(size: Size, layout: &Layout, arrangement: Arrangement) -> Option<Sheet>
         ),
     };
     let list_top = wheel_top + (2 * ROW_UNITS + DIGIT_HEIGHT_UNITS + SECTION_GAP_UNITS) * unit;
-    let list_bottom = list_top + (SAVED_TIMERS * ROW_UNITS - 1) * unit;
+    let list_bottom = list_top + (SHEET_ROWS * ROW_UNITS - 1) * unit;
     let across = (UNITS_ACROSS + columns * (SIDE_GAP_UNITS + SIDE_UNITS)) * unit;
     if list_bottom > layout.bar_top || across > size.width {
         return None;
@@ -532,6 +534,7 @@ struct Board {
     left: usize,
     right: usize,
     list_top: usize,
+    bottom: usize,
 }
 
 impl Board {
@@ -568,6 +571,43 @@ impl Board {
         self.list_top + index * ROW_UNITS * self.unit
     }
 
+    fn clip(self) -> usize {
+        self.list_top - self.unit
+    }
+
+    fn shown(self, index: usize, scroll: usize) -> Option<usize> {
+        let top = self.row(index).checked_sub(scroll)?;
+        (top + ROW_UNITS * self.unit > self.clip() && top < self.bottom).then_some(top)
+    }
+
+    fn listed(self, rows: usize, y: usize, scroll: usize) -> Option<usize> {
+        if y < self.clip() {
+            return None;
+        }
+        (0..rows).find(|&index| band(self.unit, self.row(index), y + scroll))
+    }
+
+    fn reach(self, rows: usize) -> usize {
+        (self.row(rows).saturating_sub(self.unit)).saturating_sub(self.bottom)
+    }
+
+    fn into_view(self, index: usize, scroll: usize) -> usize {
+        let lowest = (self.row(index) + DIGIT_HEIGHT_UNITS * self.unit).saturating_sub(self.bottom);
+        scroll.max(lowest).min(index * ROW_UNITS * self.unit)
+    }
+
+    fn cut(self, frame: &mut Frame) {
+        let size = frame.size();
+        frame.fill(0, 0, size.width, self.clip(), BACKGROUND);
+        frame.fill(
+            0,
+            self.bottom,
+            size.width,
+            size.height - self.bottom,
+            BACKGROUND,
+        );
+    }
+
     fn switch(self) -> usize {
         self.right - ICON_UNITS * self.unit
     }
@@ -591,7 +631,7 @@ fn board(size: Size, layout: &Layout) -> Option<Board> {
     let ring = FACE_UNITS * layout.unit;
     let list_top = top + ring + 2 * layout.unit;
     let across = LIST_UNITS * unit;
-    if list_top + (SAVED_ALARMS * ROW_UNITS - 1) * unit > layout.bar_top
+    if list_top + (BOARD_ROWS * ROW_UNITS - 1) * unit > layout.bar_top
         || across > size.width
         || ring > size.width
     {
@@ -606,6 +646,7 @@ fn board(size: Size, layout: &Layout) -> Option<Board> {
         left,
         right: left + across,
         list_top,
+        bottom: layout.bar_top,
     })
 }
 
@@ -1275,10 +1316,13 @@ fn alarm_row(frame: &mut Frame, board: Board, top: usize, listed: Listed) {
 }
 
 fn alarm_screen(frame: &mut Frame, board: Board, face: &Face) {
-    clock_face(frame, board, face);
     for (index, &listed) in face.alarms.iter().take(SAVED_ALARMS).enumerate() {
-        alarm_row(frame, board, board.row(index), listed);
+        if let Some(top) = board.shown(index, face.scroll) {
+            alarm_row(frame, board, top, listed);
+        }
     }
+    board.cut(frame);
+    clock_face(frame, board, face);
 }
 
 fn editor(frame: &mut Frame, sheet: Sheet, alarm: Alarm, marked: bool) {
@@ -1310,10 +1354,13 @@ fn editor(frame: &mut Frame, sheet: Sheet, alarm: Alarm, marked: bool) {
 }
 
 fn list_stage(frame: &mut Frame, board: Board, face: &Face) {
-    timer_ring(frame, board, face);
     for (index, &length) in face.timers.iter().take(SAVED_TIMERS).enumerate() {
-        timer_row(frame, board, board.row(index), length);
+        if let Some(top) = board.shown(index, face.scroll) {
+            timer_row(frame, board, top, length);
+        }
     }
+    board.cut(frame);
+    timer_ring(frame, board, face);
 }
 
 fn running_stage(frame: &mut Frame, dial: Dial, running: Running) {
@@ -1540,21 +1587,8 @@ fn drawn(size: Size, face: &Face, rows: &[Target]) -> Frame {
         Screen::Alarm | Screen::Timer => board.is_some(),
         Screen::Settings => false,
     };
-    if face.ringing || shown {
-        let status = if face.battery.level == Level::Low {
-            WARNING
-        } else {
-            FOREGROUND
-        };
-        battery_symbol(
-            &mut frame,
-            layout.symbol,
-            layout.status_unit,
-            face.battery,
-            status,
-        );
-    }
     if face.ringing {
+        status(&mut frame, &layout, face.battery);
         if let Some(halo) = halo(size, &layout) {
             ringing_screen(&mut frame, halo, face);
         }
@@ -1586,9 +1620,21 @@ fn drawn(size: Size, face: &Face, rows: &[Target]) -> Frame {
             }
         }
     }
+    if shown {
+        status(&mut frame, &layout, face.battery);
+    }
     bar(&mut frame, &layout, face.screen);
     volume_panel(&mut frame, layout.unit, face.volume);
     frame
+}
+
+fn status(frame: &mut Frame, layout: &Layout, battery: Gauge) {
+    let colour = if battery.level == Level::Low {
+        WARNING
+    } else {
+        FOREGROUND
+    };
+    battery_symbol(frame, layout.symbol, layout.status_unit, battery, colour);
 }
 
 #[must_use]
@@ -1597,8 +1643,20 @@ pub fn pitch(size: Size) -> usize {
 }
 
 #[must_use]
-pub fn reach(size: Size) -> usize {
-    reach_of(size, &SETTINGS)
+pub fn reach(size: Size, screen: Screen, listed: usize) -> usize {
+    match screen {
+        Screen::Alarm | Screen::Timer => layout(size)
+            .and_then(|layout| board(size, &layout))
+            .map_or(0, |board| board.reach(listed)),
+        Screen::Settings => reach_of(size, &SETTINGS),
+    }
+}
+
+#[must_use]
+pub fn into_view(size: Size, index: usize, scroll: usize) -> usize {
+    layout(size)
+        .and_then(|layout| board(size, &layout))
+        .map_or(0, |board| board.into_view(index, scroll))
 }
 
 fn reach_of(size: Size, rows: &[Target]) -> usize {
@@ -1628,7 +1686,7 @@ fn wheel(sheet: Sheet, fields: &[Field], figure: usize, x: usize, y: usize) -> T
     Target::Wheel(field, row)
 }
 
-fn ring_target(board: Board, x: usize, y: usize) -> Target {
+fn ring_target(board: Board, x: usize, y: usize, scroll: usize) -> Target {
     let unit = board.unit;
     let reach = ICON_UNITS * unit / 2;
     let near = |(centre, middle): (usize, usize)| {
@@ -1644,7 +1702,7 @@ fn ring_target(board: Board, x: usize, y: usize) -> Target {
     if sheet.wheels(y) {
         return wheel(sheet, &COUNTDOWN_FIELDS, sheet.unit, x, y);
     }
-    match (0..SAVED_TIMERS).find(|&index| band(unit, board.row(index), y)) {
+    match board.listed(SAVED_TIMERS, y, scroll) {
         Some(index) if x + 3 * unit / 2 >= board.switch() => Target::Play(index),
         Some(index) => Target::Entry(index),
         None => Target::Blank,
@@ -1677,14 +1735,14 @@ fn editor_target(sheet: Sheet, x: usize, y: usize) -> Target {
         .map_or(Target::Blank, |&day| Target::Day(day))
 }
 
-fn board_target(board: Board, x: usize, y: usize) -> Target {
+fn board_target(board: Board, x: usize, y: usize, scroll: usize) -> Target {
     let unit = board.unit;
     let (centre, middle) = board.add();
     let reach = (ICON_UNITS + 2) * unit / 2;
     if x.abs_diff(centre) <= reach && y.abs_diff(middle) <= reach {
         return Target::Add;
     }
-    match (0..SAVED_ALARMS).find(|&index| band(unit, board.row(index), y)) {
+    match board.listed(SAVED_ALARMS, y, scroll) {
         Some(index) if x + 3 * unit / 2 >= board.switch() => Target::Switch(index),
         Some(index) => Target::Entry(index),
         None => Target::Blank,
@@ -1758,10 +1816,10 @@ pub fn target(
             _ => Target::Blank,
         },
         (Screen::Alarm, _) => {
-            board(size, &layout).map_or(Target::Blank, |board| board_target(board, x, y))
+            board(size, &layout).map_or(Target::Blank, |board| board_target(board, x, y, scroll))
         }
         (Screen::Timer, _) => {
-            board(size, &layout).map_or(Target::Blank, |board| ring_target(board, x, y))
+            board(size, &layout).map_or(Target::Blank, |board| ring_target(board, x, y, scroll))
         }
         (Screen::Settings, Stage::Choosing) => sheet(size, &layout, Arrangement::Rows)
             .map_or(Target::Blank, |sheet| listing_target(sheet, x, y)),
@@ -1972,10 +2030,7 @@ mod tests {
     #[test]
     fn with_nothing_armed_and_a_full_list_the_ring_and_the_plus_are_dim() -> Outcome {
         let full = Face {
-            alarms: [(5, 0), (6, 45), (7, 30), (9, 0), (22, 10)]
-                .into_iter()
-                .map(|(hour, minute)| listed(hour, minute, Weekdays::NONE, None))
-                .collect::<Result<_, _>>()?,
+            alarms: unarmed()?,
             ..face(false, false, charged(7)?)?
         };
         let frame = render(SHEET, &full);
@@ -2115,6 +2170,32 @@ mod tests {
         Ok(())
     }
 
+    fn unarmed() -> Result<Vec<Listed>, Box<dyn std::error::Error>> {
+        [
+            (5, 0),
+            (6, 45),
+            (7, 30),
+            (9, 0),
+            (10, 5),
+            (12, 0),
+            (13, 30),
+            (15, 15),
+            (17, 0),
+            (18, 40),
+            (20, 0),
+            (22, 10),
+        ]
+        .into_iter()
+        .map(|(hour, minute)| listed(hour, minute, Weekdays::NONE, None))
+        .collect()
+    }
+
+    fn lengths() -> Result<Vec<Countdown>, Box<dyn std::error::Error>> {
+        Ok((1..=12)
+            .map(|minutes| Countdown::new(0, minutes, 0))
+            .collect::<Result<_, _>>()?)
+    }
+
     fn timer(running: Option<Running>, ringing: bool) -> Result<Face, Box<dyn std::error::Error>> {
         Ok(Face {
             screen: Screen::Timer,
@@ -2171,10 +2252,7 @@ mod tests {
     #[test]
     fn an_unsaved_length_with_a_full_list_shows_a_dim_plus_as_recorded() -> Outcome {
         let full = Face {
-            timers: [(1, 0), (2, 0), (3, 0), (4, 0)]
-                .into_iter()
-                .map(|(minutes, seconds)| Countdown::new(0, minutes, seconds))
-                .collect::<Result<_, _>>()?,
+            timers: lengths()?,
             countdown: Countdown::new(0, 25, 0)?,
             ..timer(None, false)?
         };
@@ -2829,8 +2907,71 @@ mod tests {
         assert_eq!(alarm(300, 1093), Target::Entry(1));
         assert_eq!(alarm(1079, 1736), Target::Switch(4));
         assert_eq!(alarm(0, 1828), Target::Entry(4));
-        assert_eq!(alarm(540, 1829), Target::Blank);
-        assert_eq!(alarm(540, 2092), Target::Blank);
+        assert_eq!(alarm(540, 1829), Target::Entry(5));
+        assert_eq!(alarm(540, 2092), Target::Entry(6));
+    }
+
+    #[test]
+    fn a_tap_on_a_scrolled_list_hits_the_row_drawn_under_it_and_the_ring_stays_put() {
+        let alarm = |x, y| target(PANEL, Screen::Alarm, Stage::List, x, y, 1012);
+        assert_eq!(alarm(775, 718), Target::Add);
+        assert_eq!(alarm(540, 400), Target::Blank);
+        assert_eq!(alarm(300, 896), Target::Blank);
+        assert_eq!(alarm(300, 897), Target::Entry(5));
+        assert_eq!(alarm(1079, 1000), Target::Switch(5));
+        assert_eq!(alarm(300, 2092), Target::Entry(11));
+        let timer = |x, y| target(PANEL, Screen::Timer, Stage::List, x, y, 1012);
+        assert_eq!(timer(437, 480), Target::Wheel(Field::Hours, Row::Picked));
+        assert_eq!(timer(775, 718), Target::Start);
+        assert_eq!(timer(305, 718), Target::Add);
+        assert_eq!(timer(300, 896), Target::Blank);
+        assert_eq!(timer(300, 897), Target::Entry(5));
+        assert_eq!(timer(1079, 2092), Target::Play(11));
+    }
+
+    #[test]
+    fn a_list_scrolls_as_far_as_its_rows_run_past_the_bar_and_a_saved_row_is_brought_into_view() {
+        assert_eq!(reach(PANEL, Screen::Alarm, 12), 1012);
+        assert_eq!(reach(PANEL, Screen::Timer, 12), 1012);
+        assert_eq!(reach(PANEL, Screen::Alarm, 7), 92);
+        assert_eq!(reach(PANEL, Screen::Timer, 6), 0);
+        assert_eq!(reach(PANEL, Screen::Alarm, 0), 0);
+        assert_eq!(reach(SMALL, Screen::Alarm, 12), 0);
+        assert_eq!(into_view(PANEL, 11, 0), 1012);
+        assert_eq!(into_view(PANEL, 6, 0), 92);
+        assert_eq!(into_view(PANEL, 6, 500), 500);
+        assert_eq!(into_view(PANEL, 0, 500), 0);
+        assert_eq!(into_view(PANEL, 2, 500), 368);
+    }
+
+    #[test]
+    fn a_scrolled_alarm_list_moves_its_rows_up_under_a_fixed_ring_and_cuts_them_as_recorded()
+    -> Outcome {
+        let scrolled = Face {
+            alarms: unarmed()?,
+            scroll: 40,
+            ..face(true, false, charged(80)?)?
+        };
+        assert_eq!(
+            picture(&render(SHEET, &scrolled)),
+            include_str!("../testdata/face-sheet-scrolled.txt")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_scrolled_timer_list_moves_its_rows_up_under_a_fixed_ring_and_cuts_them_as_recorded()
+    -> Outcome {
+        let scrolled = Face {
+            timers: lengths()?,
+            scroll: 40,
+            ..timer(None, false)?
+        };
+        assert_eq!(
+            picture(&render(SHEET, &scrolled)),
+            include_str!("../testdata/face-timer-scrolled.txt")
+        );
+        Ok(())
     }
 
     #[test]
@@ -2899,7 +3040,7 @@ mod tests {
         assert_eq!(timer(816, 1092), Target::Play(0));
         assert_eq!(timer(1079, 1093), Target::Play(1));
         assert_eq!(timer(0, 1644), Target::Entry(3));
-        assert_eq!(timer(540, 1645), Target::Blank);
+        assert_eq!(timer(540, 1645), Target::Entry(4));
         assert_eq!(timer(540, 100), Target::Blank);
     }
 
@@ -2970,7 +3111,7 @@ mod tests {
 
     #[test]
     fn the_rows_scroll_as_far_as_they_run_past_the_bar_and_not_at_all_when_they_fit() {
-        assert_eq!(reach(PANEL), 0);
+        assert_eq!(reach(PANEL, Screen::Settings, 0), 0);
         assert_eq!(reach_of(PANEL, &SETTINGS[..1]), 0);
         assert_eq!(reach_of(PANEL, &LONG), 736 + (14 * 8 - 1) * 23 - 2093);
         assert_eq!(reach_of(SHEET, &LONG), 64 + (14 * 8 - 1) * 2 - 211);
