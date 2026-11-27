@@ -1,8 +1,8 @@
 use crate::alarm::{Alarm, Weekdays, earliest};
 use crate::battery::Gauge;
 use crate::face::{
-    Face, Field, Listed, Listing, Row, Running, SAVED_ALARMS, SAVED_TIMERS, SOUNDS_SHOWN, Screen,
-    Size, Stage, Target, into_view, pitch, reach, render, target,
+    Face, Field, Listed, Listing, Row, Running, SAVED_ALARMS, SAVED_TIMERS, Screen, Size, Stage,
+    Target, into_view, pitch, reach, render, target,
 };
 use crate::hardware::{Clock, Display, HardwareError, Input};
 use crate::input::{InputEvent, Key};
@@ -326,33 +326,32 @@ impl Ringer {
         self.listing = None;
     }
 
-    fn pages(&self) -> usize {
-        self.sounds.len().div_ceil(SOUNDS_SHOWN).max(1)
+    fn open_list(&mut self) {
+        self.listing = Some(std::mem::take(&mut self.scroll));
     }
 
-    fn choose(&mut self, index: usize) {
-        if let Some(page) = self.listing
-            && let Some(sound) = self.sounds.get(page * SOUNDS_SHOWN + index)
-        {
-            self.sound = Some(sound.clone());
-            self.listing = None;
+    fn close_list(&mut self) {
+        if let Some(scroll) = self.listing.take() {
+            self.scroll = scroll;
         }
     }
 
-    fn listed_page(&self, page: usize) -> Listing {
-        let sounds: Vec<SoundName> = self
-            .sounds
-            .iter()
-            .skip(page * SOUNDS_SHOWN)
-            .take(SOUNDS_SHOWN)
-            .cloned()
-            .collect();
+    fn choose(&mut self, index: usize) {
+        if self.listing.is_some()
+            && let Some(sound) = self.sounds.get(index)
+        {
+            self.sound = Some(sound.clone());
+            self.close_list();
+        }
+    }
+
+    fn sound_listing(&self) -> Listing {
         Listing {
-            chosen: sounds
+            sounds: self.sounds.clone(),
+            chosen: self
+                .sounds
                 .iter()
                 .position(|sound| Some(sound) == self.sound.as_ref()),
-            sounds,
-            more: self.pages() > 1,
         }
     }
 
@@ -569,7 +568,7 @@ impl Ringer {
             self.marked = None;
             self.recovery_marked = false;
             self.draft = None;
-            self.listing = None;
+            self.close_list();
         } else {
             self.ramp = None;
         }
@@ -597,6 +596,7 @@ impl Ringer {
         self.grab = None;
         self.swipe = None;
         self.scroll = 0;
+        self.listing = self.listing.map(|_| 0);
         self.saved = None;
         self.marked = None;
         self.recovery_marked = false;
@@ -648,7 +648,7 @@ impl Ringer {
             self.draft = None;
             self.listing = None;
             self.scroll = 0;
-        } else if (screen == Screen::Settings && self.listing.is_none())
+        } else if screen == Screen::Settings
             || matches!(
                 target,
                 Target::Entry(_) | Target::Switch(_) | Target::Play(_)
@@ -685,12 +685,9 @@ impl Ringer {
             Target::PowerOff => self.power_off = !self.power_off,
             Target::LitTime => self.lit_seconds = next_lit_seconds(self.lit_seconds),
             Target::Sound => self.outputs.sound = !self.outputs.sound,
-            Target::SoundList => self.listing = Some(0),
+            Target::SoundList => self.open_list(),
             Target::Choose(index) => self.choose(index),
-            Target::More => {
-                self.listing = self.listing.map(|page| (page + 1) % self.pages());
-            }
-            Target::Close => self.listing = None,
+            Target::Close => self.close_list(),
             Target::Vibration => self.outputs.vibration = !self.outputs.vibration,
             Target::Ramp => self.ramp_seconds = next_ramp_seconds(self.ramp_seconds),
             Target::Recovery if recovery_marked => self.recovery = true,
@@ -756,6 +753,7 @@ impl Ringer {
         match screen {
             Screen::Alarm => self.alarms.len(),
             Screen::Timer => self.timers.len(),
+            Screen::Settings if self.listing.is_some() => self.sounds.len(),
             Screen::Settings => 0,
         }
     }
@@ -765,7 +763,8 @@ impl Ringer {
             .saved
             .take()
             .map_or(self.scroll, |index| into_view(size, index, self.scroll));
-        self.scroll = scroll.min(reach(size, screen, self.rows(screen)));
+        let reach = reach(size, screen, self.stage(screen), self.rows(screen));
+        self.scroll = scroll.min(reach);
     }
 
     #[must_use]
@@ -814,7 +813,7 @@ impl Ringer {
             rung: self.rung.filter(|_| self.ring != Ring::Ringing),
             volume: None,
             sound: self.sound.clone(),
-            listing: self.listing.map(|page| self.listed_page(page)),
+            listing: self.listing.map(|_| self.sound_listing()),
             scroll: self.scroll,
         }
     }
@@ -878,7 +877,8 @@ pub fn listen(
             }
             InputEvent::Move { y, .. } => {
                 let screen = light.screen();
-                ringer.dragged(y, pitch(size), reach(size, screen, ringer.rows(screen)));
+                let reach = reach(size, screen, ringer.stage(screen), ringer.rows(screen));
+                ringer.dragged(y, pitch(size), reach);
             }
             InputEvent::Lift => ringer.lifted(now, offset),
         }
@@ -2278,11 +2278,10 @@ mod tests {
             Some(Listing {
                 sounds: names(&["Argon.wav", "Carbon.wav", "ringtone.wav"]),
                 chosen: Some(2),
-                more: false,
             })
         );
         drain_lit(
-            &mut FakeInput::with(&[&tap(540, 1180)]),
+            &mut FakeInput::with(&[&tap(540, 600)]),
             &clock,
             &mut ringer,
             &mut light,
@@ -2290,7 +2289,7 @@ mod tests {
         assert_eq!(ringer.sound(), SoundName::new("Carbon.wav").as_ref());
         assert_eq!(ringer.stage(Screen::Settings), Stage::List);
         drain_lit(
-            &mut FakeInput::with(&[&SOUND_LIST, &tap(540, 2000), &tap(0, 800)]),
+            &mut FakeInput::with(&[&SOUND_LIST, &tap(540, 2000), &tap(0, 200)]),
             &clock,
             &mut ringer,
             &mut light,
@@ -2308,62 +2307,93 @@ mod tests {
     }
 
     #[test]
-    fn the_sound_list_turns_its_pages_round_and_closes_when_the_alarm_rings()
+    fn a_drag_scrolls_the_sound_list_so_a_name_past_the_sixth_is_chosen_and_a_ring_closes_it()
     -> Result<(), Box<dyn std::error::Error>> {
         let clock = FakeClock::at(6, 59, 0);
         let mut ringer = ringer(7, 0)?;
         drain(&mut FakeInput::with(&[&FIRST]), &clock, &mut ringer)?;
         let sounds = names(&[
-            "a.wav", "b.wav", "c.wav", "d.wav", "e.wav", "f.wav", "g.wav", "h.wav",
+            "a.wav", "b.wav", "c.wav", "d.wav", "e.wav", "f.wav", "g.wav", "h.wav", "i.wav",
+            "j.wav", "k.wav", "l.wav", "m.wav", "n.wav", "o.wav", "p.wav",
         ]);
         ringer.set_sounds(Vec::clone(&sounds));
         let mut light = always();
-        drain_lit(
-            &mut FakeInput::with(&[&SETTINGS_TAB, &SOUND_LIST, &tap(1079, 800)]),
-            &clock,
-            &mut ringer,
-            &mut light,
-        )?;
-        let page = |ringer: &Ringer| {
-            ringer
-                .face(
-                    UnixSeconds(0),
-                    UtcOffset::UTC,
-                    Gauge::UNREAD,
-                    Screen::Settings,
-                )
-                .listing
+        let mut lit = |events: &[&[InputEvent]], ringer: &mut Ringer| {
+            drain_lit(&mut FakeInput::with(events), &clock, ringer, &mut light)
         };
+        lit(&[&SETTINGS_TAB, &SOUND_LIST], &mut ringer)?;
+        let listing = ringer
+            .face(
+                clock.now()?,
+                UtcOffset::UTC,
+                Gauge::UNREAD,
+                Screen::Settings,
+            )
+            .listing;
         assert_eq!(
-            page(&ringer),
+            listing,
             Some(Listing {
-                sounds: names(&["g.wav", "h.wav"]),
+                sounds: Vec::clone(&sounds),
                 chosen: None,
-                more: true,
             })
         );
-        drain_lit(
-            &mut FakeInput::with(&[&tap(540, 1828)]),
-            &clock,
-            &mut ringer,
-            &mut light,
-        )?;
+        lit(&[&drag(540, 1500, &[1400, 1000])], &mut ringer)?;
+        assert_eq!(scroll_on(&ringer, Screen::Settings)?, 500);
         assert_eq!(ringer.sound(), None);
+        lit(&[&drag(540, 2000, &[100])], &mut ringer)?;
+        assert_eq!(scroll_on(&ringer, Screen::Settings)?, 1150);
+        lit(&[&drag(540, 100, &[600])], &mut ringer)?;
+        assert_eq!(scroll_on(&ringer, Screen::Settings)?, 650);
+        lit(&[&tap(540, 1040)], &mut ringer)?;
+        assert_eq!(ringer.sound(), sounds.get(7));
+        assert_eq!(ringer.stage(Screen::Settings), Stage::List);
+        assert_eq!(scroll_on(&ringer, Screen::Settings)?, 0);
+        lit(&[&SOUND_LIST, &drag(540, 1200, &[1177])], &mut ringer)?;
+        assert_eq!(ringer.sound(), sounds.get(7));
         assert_eq!(ringer.stage(Screen::Settings), Stage::Choosing);
-        drain_lit(
-            &mut FakeInput::with(&[&tap(1079, 800)]),
-            &clock,
-            &mut ringer,
-            &mut light,
-        )?;
-        assert_eq!(
-            page(&ringer).map(|listing| listing.sounds),
-            Some(sounds.into_iter().take(SOUNDS_SHOWN).collect())
-        );
+        assert_eq!(scroll_on(&ringer, Screen::Settings)?, 23);
+        lit(&[&drag(540, 1200, &[1180])], &mut ringer)?;
+        assert_eq!(ringer.sound(), sounds.get(4));
+        lit(&[&SOUND_LIST, &drag(540, 1500, &[1000])], &mut ringer)?;
+        assert_eq!(scroll_on(&ringer, Screen::Settings)?, 500);
         clock.pass(60);
         ringer.tick(clock.now()?, UtcOffset::UTC);
         assert_eq!(ringer.ring(), Ring::Ringing);
         assert_eq!(ringer.stage(Screen::Settings), Stage::List);
+        assert_eq!(scroll_on(&ringer, Screen::Settings)?, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn the_sound_list_opens_at_its_top_and_closing_it_returns_the_settings_to_their_scroll()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let now = FakeClock::at(6, 59, 0).now()?;
+        let mut ringer = ringer(7, 0)?;
+        ringer.set_sounds(names(&["a.wav", "b.wav"]));
+        let swiped = |ringer: &mut Ringer, target: Target, to: usize| {
+            ringer.touched(target, Screen::Settings, 1500, now, UtcOffset::UTC);
+            ringer.dragged(to, PITCH, 300);
+            ringer.lifted(now, UtcOffset::UTC);
+        };
+        swiped(&mut ringer, Target::Sound, 1300);
+        assert_eq!(scroll_on(&ringer, Screen::Settings)?, 200);
+        swiped(&mut ringer, Target::SoundList, 1500);
+        assert_eq!(ringer.stage(Screen::Settings), Stage::Choosing);
+        assert_eq!(scroll_on(&ringer, Screen::Settings)?, 0);
+        swiped(&mut ringer, Target::Choose(0), 1400);
+        assert_eq!(scroll_on(&ringer, Screen::Settings)?, 100);
+        swiped(&mut ringer, Target::Close, 1500);
+        assert_eq!(ringer.stage(Screen::Settings), Stage::List);
+        assert_eq!(scroll_on(&ringer, Screen::Settings)?, 200);
+        swiped(&mut ringer, Target::SoundList, 1500);
+        swiped(&mut ringer, Target::Choose(1), 1500);
+        assert_eq!(ringer.sound(), SoundName::new("b.wav").as_ref());
+        assert_eq!(scroll_on(&ringer, Screen::Settings)?, 200);
+        swiped(&mut ringer, Target::SoundList, 1500);
+        ringer.darkened();
+        swiped(&mut ringer, Target::Close, 1500);
+        assert_eq!(scroll_on(&ringer, Screen::Settings)?, 0);
+        assert_eq!(ringer.sound(), SoundName::new("b.wav").as_ref());
         Ok(())
     }
 
