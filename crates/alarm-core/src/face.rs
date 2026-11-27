@@ -234,7 +234,7 @@ pub enum Target {
     Wheel(Field, Row),
     Add,
     Entry(usize),
-    Remove(usize),
+    Start,
     Play(usize),
     Pause,
     Close,
@@ -399,14 +399,6 @@ impl Sheet {
     fn days(self) -> (usize, usize) {
         (self.left, self.far + SIDE_UNITS * self.unit - self.left)
     }
-
-    fn figure(self) -> usize {
-        squeezed(self.unit)
-    }
-}
-
-fn squeezed(unit: usize) -> usize {
-    unit * UNITS_ACROSS / COUNTDOWN_UNITS
 }
 
 fn centred_in(unit: usize, figure: usize) -> usize {
@@ -550,6 +542,26 @@ impl Board {
     fn add(self) -> (usize, usize) {
         let along = (self.size - self.unit) / 2 * DIAGONAL_PER_MILLE / 1_000;
         (self.centre + along, self.middle() + along)
+    }
+
+    fn save(self) -> (usize, usize) {
+        let (x, y) = self.add();
+        ((2 * self.centre).saturating_sub(x), y)
+    }
+
+    fn picker(self) -> Sheet {
+        let unit = self.unit * 3 / 4;
+        let left = self.centre.saturating_sub(COUNTDOWN_UNITS * unit / 2);
+        let picked = self.middle().saturating_sub(DIGIT_HEIGHT_UNITS * unit / 2);
+        let side = left + COUNTDOWN_UNITS * unit;
+        Sheet {
+            unit,
+            left,
+            side,
+            far: side,
+            wheel_top: picked.saturating_sub(ROW_UNITS * unit),
+            list_top: self.list_top,
+        }
     }
 
     fn row(self, index: usize) -> usize {
@@ -817,15 +829,43 @@ fn centred(
         middle2,
         size,
     };
-    let left = centre2.saturating_sub(size) / 2;
-    let top = middle2.saturating_sub(size) / 2;
     glyph::icon(icon, square, |x, y, alpha| {
-        let colour = match ink {
-            Ink::Flat(colour) => colour,
-            Ink::Accent => ACCENT.at(x.saturating_sub(left) + y.saturating_sub(top), 2 * size),
-        };
-        frame.blend(x, y, colour, alpha);
+        frame.blend(x, y, inked(ink, square, x, y), alpha);
     });
+}
+
+fn inked(ink: Ink, square: Square, x: usize, y: usize) -> Colour {
+    match ink {
+        Ink::Flat(colour) => colour,
+        Ink::Accent => {
+            let left = square.centre2.saturating_sub(square.size) / 2;
+            let top = square.middle2.saturating_sub(square.size) / 2;
+            ACCENT.at(
+                x.saturating_sub(left) + y.saturating_sub(top),
+                2 * square.size,
+            )
+        }
+    }
+}
+
+fn badge(frame: &mut Frame, (x, y): (usize, usize), unit: usize, icon: Icon, ink: Ink) {
+    let size = ICON_UNITS * unit;
+    let mask = Square {
+        centre2: 2 * x,
+        middle2: 2 * y,
+        size: size + unit,
+    };
+    glyph::ring(mask, mask.size / 2, (1, 1), |x, y, alpha, _| {
+        frame.blend(x, y, BACKGROUND, alpha);
+    });
+    let circle = Square {
+        size: size * 5 / 6,
+        ..mask
+    };
+    glyph::ring(circle, (unit / 3).max(1), (1, 1), |x, y, alpha, _| {
+        frame.blend(x, y, inked(ink, circle, x, y), alpha);
+    });
+    centred(frame, icon, (2 * x, 2 * y), size * 4 / 5, ink);
 }
 
 fn symbol(frame: &mut Frame, icon: Icon, (x, y): (usize, usize), unit: usize, ink: Ink) {
@@ -1026,47 +1066,50 @@ fn accent(on: bool) -> Ink {
     if on { Ink::Accent } else { Ink::Flat(DIM) }
 }
 
-fn slider(
-    frame: &mut Frame,
-    sheet: Sheet,
-    picked: [u8; 3],
-    addable: bool,
-    entries: &[Countdown],
-    marked: Option<usize>,
-) {
-    let unit = sheet.unit;
-    wheels(
+fn timer_ring(frame: &mut Frame, board: Board, face: &Face) {
+    let square = Square {
+        centre2: 2 * board.centre,
+        middle2: 2 * board.middle(),
+        size: board.size,
+    };
+    glyph::ring(square, board.unit, (0, 1), |x, y, band, _| {
+        frame.blend(x, y, DIM, band);
+    });
+    let sheet = board.picker();
+    let picked = of_countdown(face.countdown);
+    wheels(frame, sheet, &picked, sheet.unit, leading_zeros(&picked));
+    badge(
         frame,
-        sheet,
-        &picked,
-        sheet.figure(),
-        leading_zeros(&picked),
+        board.add(),
+        board.unit,
+        Icon::Play,
+        accent(!face.countdown.is_zero()),
     );
-    symbol(
+    let (icon, ink) = if face.timers.contains(&face.countdown) {
+        let mark = if face.marked.is_some() { WARNING } else { DIM };
+        (Icon::Delete, Ink::Flat(mark))
+    } else {
+        (Icon::Add, accent(face.timer_addable()))
+    };
+    badge(frame, board.save(), board.unit, icon, ink);
+}
+
+fn timer_row(frame: &mut Frame, board: Board, top: usize, length: Countdown) {
+    let unit = board.unit;
+    let figure = board.figure();
+    let right = board.left + written_width(WIDEST_LENGTH, figure);
+    let text = short(length);
+    written(
         frame,
-        Icon::Add,
-        (sheet.side, sheet.wheel_row(Row::Picked)),
-        unit,
-        accent(addable),
+        (
+            right.saturating_sub(written_width(&text, figure)),
+            top + centred_in(unit, figure),
+        ),
+        figure,
+        &text,
+        FOREGROUND,
     );
-    let figure = row_figure(unit);
-    let right = sheet.left + written_width(WIDEST_LENGTH, figure);
-    for (index, &entry) in entries.iter().take(SAVED_TIMERS).enumerate() {
-        let top = sheet.list_row(index);
-        let text = short(entry);
-        written(
-            frame,
-            (
-                right.saturating_sub(written_width(&text, figure)),
-                top + centred_in(unit, figure),
-            ),
-            figure,
-            &text,
-            FOREGROUND,
-        );
-        let mark = if marked == Some(index) { WARNING } else { DIM };
-        symbol(frame, Icon::Close, (sheet.far, top), unit, Ink::Flat(mark));
-    }
+    symbol(frame, Icon::Play, (board.switch(), top), unit, Ink::Accent);
 }
 
 const WEEKDAY_NAMES: [&str; 7] = [
@@ -1266,23 +1309,10 @@ fn editor(frame: &mut Frame, sheet: Sheet, alarm: Alarm, marked: bool) {
     }
 }
 
-fn list_stage(frame: &mut Frame, sheet: Sheet, face: &Face) {
-    slider(
-        frame,
-        sheet,
-        of_countdown(face.countdown),
-        face.timer_addable(),
-        &face.timers,
-        face.marked,
-    );
-    for index in 0..face.timers.len().min(SAVED_TIMERS) {
-        symbol(
-            frame,
-            Icon::Play,
-            (sheet.side, sheet.list_row(index)),
-            sheet.unit,
-            Ink::Accent,
-        );
+fn list_stage(frame: &mut Frame, board: Board, face: &Face) {
+    timer_ring(frame, board, face);
+    for (index, &length) in face.timers.iter().take(SAVED_TIMERS).enumerate() {
+        timer_row(frame, board, board.row(index), length);
     }
 }
 
@@ -1438,11 +1468,11 @@ fn ringing_screen(frame: &mut Frame, halo: Halo, face: &Face) {
     );
 }
 
-fn timer_screen(frame: &mut Frame, layout: &Layout, sheet: Sheet, face: &Face) {
+fn timer_screen(frame: &mut Frame, layout: &Layout, board: Board, face: &Face) {
     match (face.running, dial(frame.size(), layout)) {
         (Some(running), Some(dial)) => running_stage(frame, dial, running),
         (Some(_), None) => {}
-        (None, _) => list_stage(frame, sheet, face),
+        (None, _) => list_stage(frame, board, face),
     }
 }
 
@@ -1507,8 +1537,7 @@ fn drawn(size: Size, face: &Face, rows: &[Target]) -> Frame {
     let picker = sheet(size, &layout, Arrangement::Picker);
     let board = board(size, &layout);
     let shown = match face.screen {
-        Screen::Alarm => board.is_some(),
-        Screen::Timer => picker.is_some(),
+        Screen::Alarm | Screen::Timer => board.is_some(),
         Screen::Settings => false,
     };
     if face.ringing || shown {
@@ -1544,8 +1573,8 @@ fn drawn(size: Size, face: &Face, rows: &[Target]) -> Frame {
             }
         }
         (Screen::Timer, _) => {
-            if let Some(sheet) = picker {
-                timer_screen(&mut frame, &layout, sheet, face);
+            if let Some(board) = board {
+                timer_screen(&mut frame, &layout, board, face);
             }
         }
         (Screen::Settings, _) => {
@@ -1599,19 +1628,24 @@ fn wheel(sheet: Sheet, fields: &[Field], figure: usize, x: usize, y: usize) -> T
     Target::Wheel(field, row)
 }
 
-fn sheet_target(sheet: Sheet, x: usize, y: usize) -> Target {
-    let unit = sheet.unit;
-    let side = x + 3 * unit / 2 >= sheet.side;
-    if sheet.wheels(y) {
-        return match (side, sheet.band(sheet.wheel_row(Row::Picked), y)) {
-            (false, _) => wheel(sheet, &COUNTDOWN_FIELDS, sheet.figure(), x, y),
-            (true, true) => Target::Add,
-            (true, false) => Target::Blank,
-        };
+fn ring_target(board: Board, x: usize, y: usize) -> Target {
+    let unit = board.unit;
+    let reach = ICON_UNITS * unit / 2;
+    let near = |(centre, middle): (usize, usize)| {
+        x.abs_diff(centre) <= reach && y.abs_diff(middle) <= reach
+    };
+    if near(board.add()) {
+        return Target::Start;
     }
-    match (0..SAVED_TIMERS).find(|&index| sheet.band(sheet.list_row(index), y)) {
-        Some(index) if x + 3 * unit / 2 >= sheet.far => Target::Remove(index),
-        Some(index) if side => Target::Play(index),
+    if near(board.save()) {
+        return Target::Add;
+    }
+    let sheet = board.picker();
+    if sheet.wheels(y) {
+        return wheel(sheet, &COUNTDOWN_FIELDS, sheet.unit, x, y);
+    }
+    match (0..SAVED_TIMERS).find(|&index| band(unit, board.row(index), y)) {
+        Some(index) if x + 3 * unit / 2 >= board.switch() => Target::Play(index),
         Some(index) => Target::Entry(index),
         None => Target::Blank,
     }
@@ -1726,8 +1760,9 @@ pub fn target(
         (Screen::Alarm, _) => {
             board(size, &layout).map_or(Target::Blank, |board| board_target(board, x, y))
         }
-        (Screen::Timer, _) => sheet(size, &layout, Arrangement::Picker)
-            .map_or(Target::Blank, |sheet| sheet_target(sheet, x, y)),
+        (Screen::Timer, _) => {
+            board(size, &layout).map_or(Target::Blank, |board| ring_target(board, x, y))
+        }
         (Screen::Settings, Stage::Choosing) => sheet(size, &layout, Arrangement::Rows)
             .map_or(Target::Blank, |sheet| listing_target(sheet, x, y)),
         (Screen::Settings, _) => sheet(size, &layout, Arrangement::Rows)
@@ -2126,10 +2161,28 @@ mod tests {
     }
 
     #[test]
-    fn the_list_stage_shows_the_slider_and_each_saved_timer_with_a_play_and_a_cross_as_recorded()
+    fn the_list_stage_shows_the_picker_in_a_ring_its_bin_and_each_saved_timer_with_a_play_as_recorded()
     -> Outcome {
         let frame = render(SHEET, &timer(None, false)?);
         assert_eq!(picture(&frame), include_str!("../testdata/face-timer.txt"));
+        Ok(())
+    }
+
+    #[test]
+    fn an_unsaved_length_with_a_full_list_shows_a_dim_plus_as_recorded() -> Outcome {
+        let full = Face {
+            timers: [(1, 0), (2, 0), (3, 0), (4, 0)]
+                .into_iter()
+                .map(|(minutes, seconds)| Countdown::new(0, minutes, seconds))
+                .collect::<Result<_, _>>()?,
+            countdown: Countdown::new(0, 25, 0)?,
+            ..timer(None, false)?
+        };
+        let frame = render(SHEET, &full);
+        assert_eq!(
+            picture(&frame),
+            include_str!("../testdata/face-timer-unsaved.txt")
+        );
         Ok(())
     }
 
@@ -2227,35 +2280,46 @@ mod tests {
     }
 
     #[test]
-    fn a_zero_countdown_dims_the_add() -> Outcome {
+    fn a_zero_countdown_dims_both_badges_on_the_ring() -> Outcome {
         let idle = render(
-            SHEET,
+            PANEL,
             &Face {
                 countdown: Countdown::new(0, 4, 0)?,
                 ..timer(None, false)?
             },
         );
         let zero = render(
-            SHEET,
+            PANEL,
             &Face {
                 countdown: Countdown::default(),
                 ..timer(None, false)?
             },
         );
-        let layout = layout(SHEET).ok_or("no layout")?;
-        let sheet = sheet(SHEET, &layout, Arrangement::Picker).ok_or("no sheet")?;
-        let across = SIDE_UNITS * sheet.unit;
-        let shown = |frame: &Frame, top: usize| {
-            (top..top + across)
-                .flat_map(|y| frame.row(y)[sheet.side..sheet.side + across].to_vec())
+        let layout = layout(PANEL).ok_or("no layout")?;
+        let board = board(PANEL, &layout).ok_or("no board")?;
+        let half = ICON_UNITS * board.unit * 5 / 12;
+        let shown = |frame: &Frame, (x, y): (usize, usize)| {
+            (y - half..=y + half)
+                .flat_map(|row| {
+                    (x - half..=x + half)
+                        .filter(move |&column| {
+                            column.abs_diff(x).pow(2) + row.abs_diff(y).pow(2) <= half * half
+                        })
+                        .map(move |column| frame.row(row)[column])
+                })
                 .filter(|&colour| colour != BACKGROUND)
                 .collect::<Vec<_>>()
         };
-        let top = sheet.wheel_row(Row::Picked);
-        assert_ne!(shown(&idle, top), []);
-        assert!(shown(&idle, top).iter().all(|&colour| accented(colour)));
-        assert_ne!(shown(&zero, top), []);
-        assert!(shown(&zero, top).iter().all(|&colour| blended(colour, DIM)));
+        for badge in [board.add(), board.save()] {
+            assert_ne!(shown(&idle, badge), []);
+            assert!(shown(&idle, badge).iter().all(|&colour| accented(colour)));
+            assert_ne!(shown(&zero, badge), []);
+            assert!(
+                shown(&zero, badge)
+                    .iter()
+                    .all(|&colour| blended(colour, DIM))
+            );
+        }
         Ok(())
     }
 
@@ -2813,26 +2877,29 @@ mod tests {
     }
 
     #[test]
-    fn a_tap_on_the_list_stage_is_the_slider_a_play_or_a_cross() {
+    fn a_tap_on_the_list_stage_is_a_wheel_a_badge_on_the_ring_a_row_or_its_play() {
         let timer = |x, y| target(PANEL, Screen::Timer, Stage::List, x, y, 0);
-        assert_eq!(timer(140, 220), Target::Wheel(Field::Hours, Row::Above));
-        assert_eq!(timer(214, 400), Target::Wheel(Field::Hours, Row::Picked));
-        assert_eq!(timer(215, 400), Target::Wheel(Field::Minutes, Row::Picked));
-        assert_eq!(timer(382, 220), Target::Wheel(Field::Minutes, Row::Above));
-        assert_eq!(timer(383, 220), Target::Wheel(Field::Seconds, Row::Above));
-        assert_eq!(timer(585, 400), Target::Wheel(Field::Seconds, Row::Picked));
-        assert_eq!(timer(450, 678), Target::Wheel(Field::Seconds, Row::Below));
-        assert_eq!(timer(586, 400), Target::Add);
-        assert_eq!(timer(1079, 311), Target::Add);
-        assert_eq!(timer(700, 220), Target::Blank);
-        assert_eq!(timer(300, 725), Target::Entry(0));
-        assert_eq!(timer(585, 820), Target::Entry(0));
-        assert_eq!(timer(586, 820), Target::Play(0));
-        assert_eq!(timer(815, 908), Target::Play(0));
-        assert_eq!(timer(815, 909), Target::Play(1));
-        assert_eq!(timer(816, 1000), Target::Remove(1));
-        assert_eq!(timer(1079, 1460), Target::Remove(3));
-        assert_eq!(timer(540, 1461), Target::Blank);
+        assert_eq!(timer(340, 271), Target::Wheel(Field::Hours, Row::Above));
+        assert_eq!(timer(437, 480), Target::Wheel(Field::Hours, Row::Picked));
+        assert_eq!(timer(438, 480), Target::Wheel(Field::Minutes, Row::Picked));
+        assert_eq!(timer(641, 340), Target::Wheel(Field::Minutes, Row::Above));
+        assert_eq!(timer(642, 340), Target::Wheel(Field::Seconds, Row::Above));
+        assert_eq!(timer(740, 600), Target::Wheel(Field::Seconds, Row::Below));
+        assert_eq!(timer(340, 270), Target::Blank);
+        assert_eq!(timer(775, 718), Target::Start);
+        assert_eq!(timer(695, 638), Target::Start);
+        assert_eq!(timer(855, 798), Target::Start);
+        assert_eq!(timer(305, 718), Target::Add);
+        assert_eq!(timer(225, 798), Target::Add);
+        assert_eq!(timer(385, 638), Target::Add);
+        assert_eq!(timer(540, 718), Target::Blank);
+        assert_eq!(timer(856, 718), Target::Blank);
+        assert_eq!(timer(300, 909), Target::Entry(0));
+        assert_eq!(timer(815, 1092), Target::Entry(0));
+        assert_eq!(timer(816, 1092), Target::Play(0));
+        assert_eq!(timer(1079, 1093), Target::Play(1));
+        assert_eq!(timer(0, 1644), Target::Entry(3));
+        assert_eq!(timer(540, 1645), Target::Blank);
         assert_eq!(timer(540, 100), Target::Blank);
     }
 
@@ -2857,12 +2924,15 @@ mod tests {
     }
 
     #[test]
-    fn a_timer_s_three_pairs_fit_where_an_alarm_s_two_do() -> Outcome {
+    fn a_timer_s_three_pairs_and_their_wheels_fit_inside_the_ring() -> Outcome {
         for size in [SHEET, PANEL] {
             let layout = layout(size).ok_or("no layout")?;
-            let sheet = sheet(size, &layout, Arrangement::Picker).ok_or("no sheet")?;
-            assert!(COUNTDOWN_UNITS * sheet.figure() <= UNITS_ACROSS * sheet.unit);
-            assert!(COUNTDOWN_UNITS * squeezed(layout.unit * 3 / 4) <= RING_UNITS * layout.unit);
+            let board = board(size, &layout).ok_or("no board")?;
+            let picker = board.picker();
+            let bottom = picker.wheel_row(Row::Below) + DIGIT_HEIGHT_UNITS * picker.unit;
+            assert!(COUNTDOWN_UNITS * picker.unit <= board.size - 2 * board.unit);
+            assert!(picker.wheel_top >= board.top);
+            assert!(bottom <= board.top + board.size);
             assert!(COUNTDOWN_UNITS * layout.alarm_unit <= size.width);
         }
         Ok(())
