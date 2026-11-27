@@ -119,3 +119,11 @@ and a timer wakes a suspended phone when it ends.
   labelled and grouped settings with the battery, a scrolled sound list, and alarm and
   timer lists that scroll under their ring up to 12 rows. Its five follow-ups are filed
   under issue 143.
+
+## Research before presenting the repository
+
+- **The name, the description and the README.** **Decided** — in ADR 0018: the project
+  becomes `p20-bedside-clock`, on the phone as well, the history excepted; the README
+  leads with what it does and host renders of its three tabs, tied to the fixtures, and
+  this file stays the only place the status is kept. Its three follow-ups are filed under
+  issue 141.

@@ -1,6 +1,6 @@
 # 18. Name the project for the bedside clock, and lead the README with its screens
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-27
 - **Issue:** #141
 
