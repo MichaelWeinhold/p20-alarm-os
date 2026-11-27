@@ -54,6 +54,10 @@ const BAR_HEIGHT: usize = 260;
 const VOLUME_HALVES: usize = 4;
 const VOLUME_ICON_HALVES: usize = 3;
 const VOLUME_TRACK_HALVES: usize = 24;
+const WIDEST_LENGTH: &str = "0:00:00";
+const COUNTDOWN_PARTS: usize = 46;
+const MINUTES_PARTS: usize = 30;
+const HOURS_PARTS: usize = 22;
 
 pub const SAVED_ALARMS: usize = 5;
 pub const SAVED_TIMERS: usize = 4;
@@ -448,6 +452,7 @@ struct Dial {
     centre: usize,
     top: usize,
     controls: usize,
+    label: usize,
 }
 
 impl Dial {
@@ -470,6 +475,7 @@ fn dial(size: Size, layout: &Layout) -> Option<Dial> {
         centre: size.width / 2,
         top,
         controls: top + (RING_UNITS + CONTROL_GAP_UNITS) * unit,
+        label: DATE_UNITS * layout.alarm_unit / 2,
     })
 }
 
@@ -555,12 +561,16 @@ impl Board {
     }
 
     fn figure(self) -> usize {
-        self.unit * 2 / 3
+        row_figure(self.unit)
     }
 
     fn label(self) -> usize {
         (self.unit * 4 / 3).max(1)
     }
+}
+
+fn row_figure(unit: usize) -> usize {
+    unit * 2 / 3
 }
 
 fn board(size: Size, layout: &Layout) -> Option<Board> {
@@ -639,6 +649,23 @@ fn of_countdown(countdown: Countdown) -> [u8; 3] {
     [countdown.hours(), countdown.minutes(), countdown.seconds()]
 }
 
+fn short(countdown: Countdown) -> String {
+    let (hours, minutes, seconds) = (countdown.hours(), countdown.minutes(), countdown.seconds());
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes}:{seconds:02}")
+    }
+}
+
+fn leading_zeros(value: &[u8]) -> usize {
+    value
+        .iter()
+        .take(value.len().saturating_sub(1))
+        .take_while(|&&pair_value| pair_value == 0)
+        .count()
+}
+
 fn time(
     frame: &mut Frame,
     at: (usize, usize),
@@ -652,13 +679,53 @@ fn time(
     }
 }
 
-fn figures(frame: &mut Frame, (x, y): (usize, usize), unit: usize, value: &[u8], colour: Colour) {
+fn figures(frame: &mut Frame, at: (usize, usize), unit: usize, value: &[u8], colour: Colour) {
+    faded(frame, at, unit, value, 0, colour);
+}
+
+fn faded(
+    frame: &mut Frame,
+    (x, y): (usize, usize),
+    unit: usize,
+    value: &[u8],
+    dimmed: usize,
+    colour: Colour,
+) {
     for (index, &pair_value) in value.iter().enumerate() {
         let start = x + index * MINUTE_UNITS * unit;
         if index > 0 {
-            colon(frame, (start - 2 * unit, y), unit, colour);
+            let shown = if index <= dimmed { DIM } else { colour };
+            colon(frame, (start - 2 * unit, y), unit, shown);
         }
-        pair(frame, (start, y), unit, pair_value, colour);
+        let shown = if index < dimmed { DIM } else { colour };
+        pair(frame, (start, y), unit, pair_value, shown);
+    }
+}
+
+fn advance(character: char) -> usize {
+    if character == ':' { 2 } else { DIGIT_UNITS + 1 }
+}
+
+fn written_width(text: &str, unit: usize) -> usize {
+    text.chars().map(advance).sum::<usize>().saturating_sub(1) * unit
+}
+
+fn written(frame: &mut Frame, (x, y): (usize, usize), unit: usize, text: &str, colour: Colour) {
+    let mut left = x;
+    for character in text.chars() {
+        if character == ':' {
+            colon(frame, (left, y), unit, colour);
+        } else {
+            glyph(
+                frame,
+                character,
+                (left, y),
+                DIGIT_UNITS * unit,
+                unit,
+                colour,
+            );
+        }
+        left += advance(character) * unit;
     }
 }
 
@@ -929,14 +996,15 @@ fn fitted(text: &str, height: usize, room: usize) -> &str {
         .unwrap_or("")
 }
 
-fn wheels(frame: &mut Frame, sheet: Sheet, picked: &[u8], figure: usize) {
+fn wheels(frame: &mut Frame, sheet: Sheet, picked: &[u8], figure: usize, dimmed: usize) {
     let unit = sheet.unit;
     let y = sheet.wheel_row(Row::Picked);
-    figures(
+    faded(
         frame,
         (sheet.left, y + centred_in(unit, figure)),
         figure,
         picked,
+        dimmed,
         FOREGROUND,
     );
     let above = 2 * (y - (ARROW_UNITS + ARROW_GAP_UNITS) * unit) + ARROW_UNITS * unit;
@@ -963,12 +1031,17 @@ fn slider(
     sheet: Sheet,
     picked: [u8; 3],
     addable: bool,
-    entries: &[[u8; 3]],
+    entries: &[Countdown],
     marked: Option<usize>,
 ) {
     let unit = sheet.unit;
-    let figure = sheet.figure();
-    wheels(frame, sheet, &picked, figure);
+    wheels(
+        frame,
+        sheet,
+        &picked,
+        sheet.figure(),
+        leading_zeros(&picked),
+    );
     symbol(
         frame,
         Icon::Add,
@@ -976,13 +1049,19 @@ fn slider(
         unit,
         accent(addable),
     );
-    for (index, entry) in entries.iter().take(SAVED_TIMERS).enumerate() {
+    let figure = row_figure(unit);
+    let right = sheet.left + written_width(WIDEST_LENGTH, figure);
+    for (index, &entry) in entries.iter().take(SAVED_TIMERS).enumerate() {
         let top = sheet.list_row(index);
-        figures(
+        let text = short(entry);
+        written(
             frame,
-            (sheet.left, top + centred_in(unit, figure)),
+            (
+                right.saturating_sub(written_width(&text, figure)),
+                top + centred_in(unit, figure),
+            ),
             figure,
-            entry,
+            &text,
             FOREGROUND,
         );
         let mark = if marked == Some(index) { WARNING } else { DIM };
@@ -1161,7 +1240,7 @@ fn alarm_screen(frame: &mut Frame, board: Board, face: &Face) {
 
 fn editor(frame: &mut Frame, sheet: Sheet, alarm: Alarm, marked: bool) {
     let unit = sheet.unit;
-    wheels(frame, sheet, &of_day(alarm.time), sheet.unit);
+    wheels(frame, sheet, &of_day(alarm.time), sheet.unit, 0);
     let top = sheet.wheel_row(Row::Picked);
     symbol(frame, Icon::Check, (sheet.side, top), unit, Ink::Accent);
     let mark = if marked { WARNING } else { DIM };
@@ -1188,16 +1267,15 @@ fn editor(frame: &mut Frame, sheet: Sheet, alarm: Alarm, marked: bool) {
 }
 
 fn list_stage(frame: &mut Frame, sheet: Sheet, face: &Face) {
-    let entries: Vec<_> = face.timers.iter().copied().map(of_countdown).collect();
     slider(
         frame,
         sheet,
         of_countdown(face.countdown),
         face.timer_addable(),
-        &entries,
+        &face.timers,
         face.marked,
     );
-    for index in 0..entries.len().min(SAVED_TIMERS) {
+    for index in 0..face.timers.len().min(SAVED_TIMERS) {
         symbol(
             frame,
             Icon::Play,
@@ -1228,16 +1306,36 @@ fn running_stage(frame: &mut Frame, dial: Dial, running: Running) {
             frame.blend(x, y, colour, arc);
         }
     });
-    let figure = squeezed(unit * 3 / 4);
-    figures(
+    let parts = if running.left.hours() > 0 {
+        HOURS_PARTS
+    } else {
+        MINUTES_PARTS
+    };
+    let figure = unit * parts / COUNTDOWN_PARTS;
+    let left_text = short(running.left);
+    let figures_top = (dial.top + size / 2).saturating_sub(DIGIT_HEIGHT_UNITS * figure / 2);
+    written(
         frame,
         (
-            dial.centre.saturating_sub(COUNTDOWN_UNITS * figure / 2),
-            (dial.top + size / 2).saturating_sub(DIGIT_HEIGHT_UNITS * figure / 2),
+            dial.centre
+                .saturating_sub(written_width(&left_text, figure) / 2),
+            figures_top,
         ),
         figure,
-        &of_countdown(running.left),
+        &left_text,
         FOREGROUND,
+    );
+    let length = short(running.length);
+    let across = glyph::width(&length, dial.label);
+    line(
+        frame,
+        &length,
+        (
+            dial.centre.saturating_sub(across / 2),
+            figures_top + DIGIT_HEIGHT_UNITS * figure + 2 * dial.label,
+        ),
+        dial.label,
+        DIM,
     );
     let control = CONTROL_UNITS * unit;
     let middle2 = 2 * dial.controls + control;
@@ -1307,16 +1405,19 @@ fn ringing_screen(frame: &mut Frame, halo: Halo, face: &Face) {
     );
     let small = halo.small();
     match (face.rung, face.rang) {
-        (Some(rung), _) => figures(
-            frame,
-            (
-                halo.centre.saturating_sub(COUNTDOWN_UNITS * small / 2),
-                halo.rung(),
-            ),
-            small,
-            &of_countdown(rung),
-            DIM,
-        ),
+        (Some(rung), _) => {
+            let text = short(rung);
+            written(
+                frame,
+                (
+                    halo.centre.saturating_sub(written_width(&text, small) / 2),
+                    halo.rung(),
+                ),
+                small,
+                &text,
+                DIM,
+            );
+        }
         (None, rang) => time(
             frame,
             (
@@ -1998,6 +2099,33 @@ mod tests {
     }
 
     #[test]
+    fn a_length_reads_minutes_under_an_hour_and_hours_from_one() -> Outcome {
+        assert_eq!(short(Countdown::new(0, 0, 5)?), "0:05");
+        assert_eq!(short(Countdown::new(0, 59, 59)?), "59:59");
+        assert_eq!(short(Countdown::new(1, 0, 0)?), "1:00:00");
+        assert_eq!(short(Countdown::LONGEST), "23:59:59");
+        Ok(())
+    }
+
+    #[test]
+    fn a_written_length_spaces_its_figures_as_the_pairs_do() {
+        assert_eq!(written_width("00:00", 3), UNITS_ACROSS * 3);
+        assert_eq!(written_width("00:00:00", 3), COUNTDOWN_UNITS * 3);
+        assert_eq!(
+            written_width(WIDEST_LENGTH, 1),
+            COUNTDOWN_UNITS - DIGIT_UNITS - 1
+        );
+    }
+
+    #[test]
+    fn the_picker_dims_its_leading_zero_pairs_but_never_the_last() {
+        assert_eq!(leading_zeros(&[0, 25, 0]), 1);
+        assert_eq!(leading_zeros(&[0, 0, 30]), 2);
+        assert_eq!(leading_zeros(&[0, 0, 0]), 2);
+        assert_eq!(leading_zeros(&[1, 0, 0]), 0);
+    }
+
+    #[test]
     fn the_list_stage_shows_the_slider_and_each_saved_timer_with_a_play_and_a_cross_as_recorded()
     -> Outcome {
         let frame = render(SHEET, &timer(None, false)?);
@@ -2012,6 +2140,41 @@ mod tests {
         assert_eq!(
             picture(&frame),
             include_str!("../testdata/face-timer-running.txt")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn the_running_stage_shows_the_length_it_counts_from_below_the_time_left() -> Outcome {
+        let from = |minutes| -> Result<Face, Box<dyn std::error::Error>> {
+            Ok(Face {
+                running: Some(Running {
+                    left: Countdown::new(0, 1, 7)?,
+                    length: Countdown::new(0, minutes, 0)?,
+                    paused: false,
+                }),
+                ..timer(None, false)?
+            })
+        };
+        let dial = layout(PANEL)
+            .and_then(|layout| dial(PANEL, &layout))
+            .ok_or("no dial")?;
+        let middle = dial.top + RING_UNITS * dial.unit / 2;
+        let inside = |x: usize, y: usize| {
+            x.abs_diff(dial.centre) < 4 * dial.unit && y.abs_diff(middle) < 7 * dial.unit
+        };
+        let three = render(PANEL, &from(3)?);
+        let five = render(PANEL, &from(5)?);
+        let changed: Vec<(usize, usize)> = (0..PANEL.height)
+            .flat_map(|y| (0..PANEL.width).map(move |x| (x, y)))
+            .filter(|&(x, y)| inside(x, y) && three.row(y)[x] != five.row(y)[x])
+            .collect();
+        assert_ne!(changed, []);
+        assert!(changed.iter().all(|&(_, y)| y > middle));
+        assert!(
+            changed
+                .iter()
+                .all(|&(x, y)| blended(three.row(y)[x], DIM) || blended(five.row(y)[x], DIM))
         );
         Ok(())
     }
